@@ -1,0 +1,5 @@
+# PDF-Manager – root-level requirements
+# Convenience file for tools that expect a top-level requirements.txt
+# The canonical backend dependencies are in backend/requirements.txt
+
+-r backend/requirements.txt

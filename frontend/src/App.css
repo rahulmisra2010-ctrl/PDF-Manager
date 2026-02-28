@@ -1,0 +1,321 @@
+/* ============================================================
+   PDF-Manager – Global Styles
+   ============================================================ */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
+    Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  background: #f0f2f5;
+  color: #1a1a2e;
+}
+
+/* ── Layout ── */
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.app-header {
+  background: #1a1a2e;
+  color: #ffffff;
+  padding: 1.25rem 2rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.app-header h1 {
+  font-size: 1.6rem;
+  flex: 1;
+}
+
+.app-subtitle {
+  color: #a0aec0;
+  font-size: 0.9rem;
+}
+
+.app-main {
+  flex: 1;
+  max-width: 960px;
+  width: 100%;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+
+.app-footer {
+  text-align: center;
+  padding: 1rem;
+  color: #718096;
+  font-size: 0.85rem;
+}
+
+/* ── Buttons ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1.2rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn:not(:disabled):hover {
+  opacity: 0.88;
+  transform: translateY(-1px);
+}
+
+.btn-primary {
+  background: #4f46e5;
+  color: #fff;
+}
+
+.btn-secondary {
+  background: #e2e8f0;
+  color: #1a202c;
+}
+
+/* ── Upload ── */
+.upload-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 3rem 2rem;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.drop-zone {
+  width: 100%;
+  max-width: 480px;
+  border: 2.5px dashed #4f46e5;
+  border-radius: 10px;
+  padding: 3rem 2rem;
+  text-align: center;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.drop-zone.drag-over,
+.drop-zone:hover {
+  background: #eef2ff;
+  border-color: #312e81;
+}
+
+.drop-zone-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.drop-icon {
+  font-size: 3rem;
+}
+
+.selected-file {
+  font-weight: 600;
+  color: #4f46e5;
+}
+
+.or-text {
+  color: #718096;
+  font-size: 0.9rem;
+}
+
+/* ── Data Display ── */
+.data-display {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  padding: 2rem;
+}
+
+.document-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.document-info h2 {
+  font-size: 1.25rem;
+}
+
+.badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.badge-success {
+  background: #c6f6d5;
+  color: #276749;
+}
+
+.section {
+  margin-top: 1.75rem;
+}
+
+.section h3 {
+  margin-bottom: 0.75rem;
+  font-size: 1.05rem;
+  color: #2d3748;
+}
+
+.detected-table {
+  margin-bottom: 1.25rem;
+}
+
+.detected-table h4 {
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+  color: #718096;
+}
+
+/* ── Tables ── */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.data-table th,
+.data-table td {
+  padding: 0.55rem 0.75rem;
+  border: 1px solid #e2e8f0;
+  text-align: left;
+}
+
+.data-table th {
+  background: #f7fafc;
+  font-weight: 600;
+}
+
+.data-table tr:nth-child(even) {
+  background: #f7fafc;
+}
+
+/* ── Confidence indicator ── */
+.confidence {
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.82rem;
+}
+
+.confidence.high   { background: #c6f6d5; color: #276749; }
+.confidence.medium { background: #fefcbf; color: #744210; }
+.confidence.low    { background: #fed7d7; color: #822727; }
+
+/* ── Text preview ── */
+.text-preview {
+  background: #f7fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 1rem;
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Edit form ── */
+.edit-data {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  padding: 2rem;
+}
+
+.edit-data h2 {
+  margin-bottom: 0.25rem;
+}
+
+.edit-subtitle {
+  color: #718096;
+  margin-bottom: 1.5rem;
+  font-size: 0.9rem;
+}
+
+.edit-table .field-input {
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #cbd5e0;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.edit-table .field-input:focus {
+  border-color: #4f46e5;
+}
+
+.empty-state {
+  color: #718096;
+  padding: 2rem;
+  text-align: center;
+}
+
+/* ── Action bar ── */
+.action-bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.export-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.export-group select {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #cbd5e0;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  background: #fff;
+  cursor: pointer;
+}
+
+.download-link {
+  color: #4f46e5;
+  font-weight: 600;
+  text-decoration: underline;
+  font-size: 0.9rem;
+}
+
+/* ── Error message ── */
+.error-message {
+  background: #fff5f5;
+  border: 1px solid #fc8181;
+  border-radius: 6px;
+  padding: 0.6rem 1rem;
+  color: #822727;
+  font-size: 0.9rem;
+  margin-bottom: 0.75rem;
+}
