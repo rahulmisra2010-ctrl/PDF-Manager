@@ -61,6 +61,7 @@ async def upload_pdf(file: UploadFile = File(...)):
         "filename": file.filename,
         "file_path": str(file_path),
         "status": "uploaded",
+        "upload_time": datetime.now(timezone.utc),
         "file_size_bytes": len(content),
     }
 
