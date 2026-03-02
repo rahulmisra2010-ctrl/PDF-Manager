@@ -74,6 +74,53 @@ PDF-Manager/
 
 ---
 
+## Direct Python Usage
+
+You can use `PDFManagerApp` as a standalone Python library without starting the web server.
+
+### Prerequisites
+
+```bash
+# Install backend dependencies (run once)
+cd backend
+pip install -r requirements.txt
+```
+
+### Running the example
+
+```bash
+# Must be run from the backend/ directory so Python can find the modules
+cd backend
+python - <<'EOF'
+from pdf_manager_app import PDFManagerApp
+
+app = PDFManagerApp()
+
+# Upload – replace "invoice.pdf" with the path to your own PDF file
+with open("invoice.pdf", "rb") as f:
+    resp = app.upload("invoice.pdf", f.read())
+
+# Extract
+result = app.extract(resp.document_id)
+print(result.fields)
+
+# Export to JSON
+path = app.export(resp.document_id, fmt="json")
+print("Saved to:", path)
+EOF
+```
+
+> **Tip:** `pdf_manager_app.py` adds the `backend/` directory to Python's module
+> search path automatically, so you can also import it from outside `backend/` as
+> long as you provide the full path or have installed the package:
+>
+> ```bash
+> # From the repo root
+> PYTHONPATH=backend python my_script.py
+> ```
+
+---
+
 ## Documentation
 
 | Document | Description |

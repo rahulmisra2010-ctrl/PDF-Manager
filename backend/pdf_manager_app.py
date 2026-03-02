@@ -5,7 +5,23 @@ Consolidated application logic for PDF management operations.
 Provides a high-level interface for uploading, extracting, editing,
 and exporting PDF documents, integrating with the existing FastAPI
 services (PDFService and MLService).
+
+Note: This module inserts its own directory (``backend/``) onto
+``sys.path`` at import time so that sibling modules (``config``,
+``models``, ``services``) can be resolved when this file is imported
+from outside the ``backend/`` directory.  The preferred long-term
+alternative is to install the backend as a package via ``pip install -e
+backend/`` once a ``pyproject.toml`` is added.
 """
+
+import sys
+import os
+
+# Ensure the backend directory is on sys.path so this module can be imported
+# from any working directory (e.g. the repo root).
+_BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+if _BACKEND_DIR not in sys.path:
+    sys.path.insert(0, _BACKEND_DIR)
 
 import uuid
 from datetime import datetime, timezone
