@@ -43,6 +43,7 @@ PDF-Manager/
 │   ├── app.py                  # FastAPI application
 │   ├── models.py               # Pydantic models
 │   ├── config.py               # Environment-based configuration
+│   ├── pdf_manager_app.py      # Core PDFManagerApp class
 │   ├── routes/
 │   │   └── pdf_routes.py       # REST endpoints
 │   ├── services/
@@ -68,6 +69,7 @@ PDF-Manager/
 │   ├── API_DOCS.md             # REST API reference
 │   └── SETUP.md                # Local development setup
 ├── docker-compose.yml
+├── pdf_manager_app.py          # Root-level entry point (run or import from here)
 ├── requirements.txt            # Root-level (delegates to backend/)
 └── .gitignore
 ```
@@ -78,46 +80,55 @@ PDF-Manager/
 
 You can use `PDFManagerApp` as a standalone Python library without starting the web server.
 
-### Prerequisites
+### Step 1 – Clone the full repository
 
 ```bash
-# Install backend dependencies (run once)
-cd backend
+git clone https://github.com/rahulmisra2010-ctrl/PDF-Manager.git
+cd PDF-Manager
+```
+
+### Step 2 – Install dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-### Running the example
+### Step 3 – Create your script
 
-```bash
-# Must be run from the backend/ directory so Python can find the modules
-cd backend
-python - <<'EOF'
+> ⚠️ **Do NOT name your script `pdf_manager_app.py`** – that is the same name as the
+> library and will cause a circular-import error.  Use any other name, e.g. `my_script.py`.
+
+```python
+# my_script.py  (save this file inside the PDF-Manager repo root)
 from pdf_manager_app import PDFManagerApp
 
 app = PDFManagerApp()
 
-# Upload – replace "invoice.pdf" with the path to your own PDF file
+# Upload – replace "invoice.pdf" with the path to your PDF file
 with open("invoice.pdf", "rb") as f:
     resp = app.upload("invoice.pdf", f.read())
 
-# Extract
+# Extract text and fields
 result = app.extract(resp.document_id)
 print(result.fields)
 
-# Export to JSON
+# Export (supports "json", "csv", or "pdf")
 path = app.export(resp.document_id, fmt="json")
 print("Saved to:", path)
-EOF
 ```
 
-> **Tip:** `pdf_manager_app.py` adds the `backend/` directory to Python's module
-> search path automatically, so you can also import it from outside `backend/` as
-> long as you provide the full path or have installed the package:
->
-> ```bash
-> # From the repo root
-> PYTHONPATH=backend python my_script.py
-> ```
+### Step 4 – Run from the repo root
+
+```bash
+# Windows
+python my_script.py
+
+# macOS / Linux
+python3 my_script.py
+```
+
+> **Tip:** Running `python pdf_manager_app.py` from the repo root prints these
+> same setup instructions.
 
 ---
 

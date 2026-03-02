@@ -124,6 +124,7 @@ npm test
 |---------|---------|
 | `ModuleNotFoundError: fitz` | Run `pip install PyMuPDF` |
 | `ModuleNotFoundError: pdf_manager_app` | Run your script from the `backend/` directory, or prefix with `PYTHONPATH=backend python your_script.py` |
+| `ImportError: cannot import name 'PDFManagerApp' from 'pdf_manager_app'` | Your script is named `pdf_manager_app.py` — rename it to something else (e.g. `my_script.py`) to avoid the circular import |
 | Port 8000 already in use | Change `PORT` in `.env` or kill the process |
 | CORS error in browser | Ensure `ALLOWED_ORIGINS` includes your frontend URL |
 | DB connection refused | Check `DATABASE_URL` and that PostgreSQL is running |
