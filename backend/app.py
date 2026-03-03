@@ -1,58 +1,78 @@
-"""
-PDF-Manager FastAPI Application
-Main application entry point
-"""
+import os
+from flask import Flask, redirect, url_for
+from flask_login import LoginManager
+from flask_bcrypt import Bcrypt
+from flask_wtf.csrf import CSRFProtect
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
+from config import Config
+from models import db, User, AuditLog
 
-from config import settings
-from routes.pdf_routes import router as pdf_router
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan handler."""
-    # Startup
-    print(f"Starting PDF-Manager API v{settings.API_VERSION}")
-    yield
-    # Shutdown
-    print("Shutting down PDF-Manager API")
+login_manager = LoginManager()
+bcrypt = Bcrypt()
+csrf = CSRFProtect()
 
 
-app = FastAPI(
-    title=settings.APP_NAME,
-    version=settings.API_VERSION,
-    description="PDF Manager API for uploading, extracting, editing, and exporting PDF data",
-    lifespan=lifespan,
-)
+def create_app(config_class=Config):
+    app = Flask(__name__)
+    app.config.from_object(config_class)
 
-# Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    # Ensure upload/export dirs exist
+    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+    os.makedirs(app.config['EXPORT_FOLDER'], exist_ok=True)
 
-# Include routers
-app.include_router(pdf_router, prefix="/api/v1", tags=["PDF"])
+    # Init extensions
+    db.init_app(app)
+    login_manager.init_app(app)
+    bcrypt.init_app(app)
+    csrf.init_app(app)
+
+    login_manager.login_view = 'auth.login'
+    login_manager.login_message_category = 'info'
+
+    @login_manager.user_loader
+    def load_user(user_id):
+        return User.query.get(int(user_id))
+
+    # Register blueprints
+    from routes.auth_routes import auth_bp
+    from routes.pdf_routes import pdf_bp
+    from routes.dashboard_routes import dashboard_bp
+    from routes.search_routes import search_bp
+    from routes.user_routes import user_bp
+
+    app.register_blueprint(auth_bp)
+    app.register_blueprint(pdf_bp)
+    app.register_blueprint(dashboard_bp)
+    app.register_blueprint(search_bp)
+    app.register_blueprint(user_bp)
+
+    @app.route('/')
+    def index():
+        return redirect(url_for('dashboard.index'))
+
+    # Create tables and default admin
+    with app.app_context():
+        db.create_all()
+        _create_default_admin(app)
+
+    return app
 
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy", "version": settings.API_VERSION}
+def _create_default_admin(app):
+    if not User.query.filter_by(role='Admin').first():
+        admin = User(
+            username='admin',
+            email='admin@pdfmanager.local',
+            password_hash=bcrypt.generate_password_hash('admin123').decode('utf-8'),
+            role='Admin',
+            is_active=True
+        )
+        db.session.add(admin)
+        db.session.commit()
+        print('Default admin created: admin / admin123')
 
 
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(
-        "app:app",
-        host=settings.HOST,
-        port=settings.PORT,
-        reload=settings.DEBUG,
-    )
+if __name__ == '__main__':
+    app = create_app()
+    debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+    app.run(debug=debug, host='0.0.0.0', port=5000)

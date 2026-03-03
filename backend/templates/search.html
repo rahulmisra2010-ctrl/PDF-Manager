@@ -1,0 +1,79 @@
+{% extends 'base.html' %}
+{% block title %}Search - PDF Manager{% endblock %}
+{% block content %}
+<h2 class="mb-4"><i class="bi bi-search me-2"></i>Advanced Search</h2>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <form method="GET" action="{{ url_for('search.search') }}" class="row g-3">
+            <div class="col-md-5">
+                <label class="form-label fw-semibold">Search Query</label>
+                <input type="text" name="q" class="form-control" value="{{ query }}" placeholder="Search filenames or field values..." autofocus>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Status</label>
+                <select name="status" class="form-select">
+                    <option value="">All statuses</option>
+                    {% for s in ['uploaded','extracted','approved','rejected'] %}
+                    <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s.capitalize() }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Field Type</label>
+                <select name="field_name" class="form-select">
+                    <option value="">All fields</option>
+                    {% for fn in field_names %}
+                    <option value="{{ fn }}" {% if field_filter == fn %}selected{% endif %}>{{ fn }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-1 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary w-100"><i class="bi bi-search"></i></button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if query %}
+    {% if pagination and pagination.total > 0 %}
+    <p class="text-muted">Found <strong>{{ pagination.total }}</strong> document(s) matching "<strong>{{ query }}</strong>"</p>
+    <div class="card shadow-sm">
+        <div class="card-body p-0">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr><th>Filename</th><th>Status</th><th>Pages</th><th>Uploaded</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                {% for doc in pagination.items %}
+                <tr>
+                    <td><a href="{{ url_for('pdf.detail', doc_id=doc.id) }}">{{ doc.filename }}</a></td>
+                    <td><span class="badge bg-{{ 'success' if doc.status == 'approved' else 'warning text-dark' if doc.status == 'extracted' else 'danger' if doc.status == 'rejected' else 'secondary' }}">{{ doc.status }}</span></td>
+                    <td>{{ doc.page_count or '-' }}</td>
+                    <td class="text-muted small">{{ doc.created_at.strftime('%Y-%m-%d') }}</td>
+                    <td><a href="{{ url_for('pdf.detail', doc_id=doc.id) }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-eye"></i></a></td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if pagination.pages > 1 %}
+        <div class="card-footer">
+            <nav><ul class="pagination pagination-sm mb-0 justify-content-center">
+                {% if pagination.has_prev %}<li class="page-item"><a class="page-link" href="?q={{ query }}&page={{ pagination.prev_num }}&status={{ status_filter }}&field_name={{ field_filter }}">Previous</a></li>{% endif %}
+                <li class="page-item disabled"><a class="page-link">{{ pagination.page }}/{{ pagination.pages }}</a></li>
+                {% if pagination.has_next %}<li class="page-item"><a class="page-link" href="?q={{ query }}&page={{ pagination.next_num }}&status={{ status_filter }}&field_name={{ field_filter }}">Next</a></li>{% endif %}
+            </ul></nav>
+        </div>
+        {% endif %}
+    </div>
+    {% else %}
+    <div class="alert alert-info"><i class="bi bi-info-circle me-1"></i>No results found for "<strong>{{ query }}</strong>".</div>
+    {% endif %}
+{% else %}
+<div class="text-center text-muted py-5">
+    <i class="bi bi-search fs-1"></i>
+    <p class="mt-2">Enter a search term to find documents and extracted data.</p>
+</div>
+{% endif %}
+{% endblock %}
