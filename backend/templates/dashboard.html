@@ -112,17 +112,19 @@
 {% endblock %}
 {% block scripts %}
 <script>
-fetch('/api/stats').then(r=>r.json()).then(data=>{
-    new Chart(document.getElementById('docsPerDayChart'),{
-        type:'bar',
-        data:{labels:data.days,datasets:[{label:'Documents',data:data.counts,backgroundColor:'rgba(13,110,253,0.7)',borderColor:'rgba(13,110,253,1)',borderWidth:1}]},
-        options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{stepSize:1}}}}
+if (typeof Chart !== 'undefined') {
+    fetch('/api/stats').then(r=>r.json()).then(data=>{
+        new Chart(document.getElementById('docsPerDayChart'),{
+            type:'bar',
+            data:{labels:data.days,datasets:[{label:'Documents',data:data.counts,backgroundColor:'rgba(13,110,253,0.7)',borderColor:'rgba(13,110,253,1)',borderWidth:1}]},
+            options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{stepSize:1}}}}
+        });
+        new Chart(document.getElementById('statusPieChart'),{
+            type:'pie',
+            data:{labels:data.status_labels,datasets:[{data:data.status_values,backgroundColor:['#198754','#ffc107','#dc3545','#6c757d','#0dcaf0']}]},
+            options:{responsive:true}
+        });
     });
-    new Chart(document.getElementById('statusPieChart'),{
-        type:'pie',
-        data:{labels:data.status_labels,datasets:[{data:data.status_values,backgroundColor:['#198754','#ffc107','#dc3545','#6c757d','#0dcaf0']}]},
-        options:{responsive:true}
-    });
-});
+}
 </script>
 {% endblock %}

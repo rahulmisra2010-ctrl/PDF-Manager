@@ -51,6 +51,9 @@ def create_user():
         if not username or not email or not password:
             flash('All fields are required.', 'danger')
             return render_template('users/list.html', users=User.query.all(), show_create=True)
+        if len(password) < 8:
+            flash('Password must be at least 8 characters.', 'danger')
+            return render_template('users/list.html', users=User.query.all(), show_create=True)
         if User.query.filter_by(username=username).first():
             flash('Username already exists.', 'danger')
             return render_template('users/list.html', users=User.query.all(), show_create=True)
