@@ -1,20 +1,18 @@
 import os
+import secrets
 from flask import Flask, redirect, url_for
-from flask_login import LoginManager
-from flask_bcrypt import Bcrypt
-from flask_wtf.csrf import CSRFProtect
-
+from extensions import bcrypt, login_manager, csrf
 from config import Config
 from models import db, User, AuditLog
-
-login_manager = LoginManager()
-bcrypt = Bcrypt()
-csrf = CSRFProtect()
 
 
 def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
+
+    # Warn if using default secret key
+    if app.config['SECRET_KEY'] == 'dev-secret-key-change-in-prod':
+        app.logger.warning('WARNING: Using default SECRET_KEY. Set SECRET_KEY env var in production.')
 
     # Ensure upload/export dirs exist
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -53,26 +51,28 @@ def create_app(config_class=Config):
     # Create tables and default admin
     with app.app_context():
         db.create_all()
-        _create_default_admin(app)
+        _create_default_admin()
 
     return app
 
 
-def _create_default_admin(app):
+def _create_default_admin():
     if not User.query.filter_by(role='Admin').first():
+        # Use env var password or generate a random one
+        password = os.environ.get('ADMIN_PASSWORD') or secrets.token_urlsafe(12)
         admin = User(
             username='admin',
             email='admin@pdfmanager.local',
-            password_hash=bcrypt.generate_password_hash('admin123').decode('utf-8'),
+            password_hash=bcrypt.generate_password_hash(password).decode('utf-8'),
             role='Admin',
             is_active=True
         )
         db.session.add(admin)
         db.session.commit()
-        print('Default admin created: admin / admin123')
+        print(f'Default admin created. Username: admin  Password: {password}')
 
 
 if __name__ == '__main__':
-    app = create_app()
-    debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
-    app.run(debug=debug, host='0.0.0.0', port=5000)
+    _app = create_app()
+    _debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+    _app.run(debug=_debug, host='0.0.0.0', port=5000)

@@ -1,8 +1,8 @@
 from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_user, logout_user, login_required, current_user
+from extensions import bcrypt
 from models import db, User, AuditLog
 from datetime import datetime
-import app as app_module
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
 
@@ -28,7 +28,7 @@ def login():
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
         user = User.query.filter_by(username=username).first()
-        if user and user.is_active and app_module.bcrypt.check_password_hash(user.password_hash, password):
+        if user and user.is_active and bcrypt.check_password_hash(user.password_hash, password):
             login_user(user)
             log_action(user.id, 'login', 'User', user.id, f'User {username} logged in')
             next_page = request.args.get('next')

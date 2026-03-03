@@ -87,7 +87,8 @@ def upload():
             _extract_document(doc)
             flash(f'"{filename}" uploaded and extracted successfully.', 'success')
         except Exception as e:
-            flash(f'Uploaded but extraction failed: {e}', 'warning')
+            current_app.logger.error(f'Extraction failed for {filename}: {e}')
+            flash('Uploaded but text extraction failed. You can still view the document.', 'warning')
         return redirect(url_for('pdf.detail', doc_id=doc.id))
     return render_template('documents/upload.html')
 

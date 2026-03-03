@@ -1,8 +1,8 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from flask_login import login_required, current_user
+from extensions import bcrypt
 from models import db, User, AuditLog
 from datetime import datetime
-import app as app_module
 
 user_bp = Blueprint('users', __name__, url_prefix='/users')
 
@@ -59,7 +59,7 @@ def create_user():
         user = User(
             username=username,
             email=email,
-            password_hash=app_module.bcrypt.generate_password_hash(password).decode('utf-8'),
+            password_hash=bcrypt.generate_password_hash(password).decode('utf-8'),
             role=role,
             is_active=True
         )
