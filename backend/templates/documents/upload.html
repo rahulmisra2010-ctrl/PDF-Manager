@@ -1,0 +1,68 @@
+{% extends 'base.html' %}
+{% block title %}Upload PDF - PDF Manager{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card shadow-sm">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="bi bi-upload me-2"></i>Upload PDF Document</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" enctype="multipart/form-data" id="uploadForm">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-4">
+                        <label for="file" class="form-label fw-semibold">Select PDF File</label>
+                        <div class="upload-area border rounded p-5 text-center" id="dropZone">
+                            <i class="bi bi-cloud-upload fs-1 text-muted"></i>
+                            <p class="mt-2 text-muted">Drag & drop your PDF here, or</p>
+                            <input type="file" name="file" id="file" accept=".pdf" class="d-none" required>
+                            <button type="button" class="btn btn-outline-primary" onclick="document.getElementById('file').click()">
+                                <i class="bi bi-folder2-open me-1"></i>Browse File
+                            </button>
+                            <div id="fileInfo" class="mt-2 text-success d-none"></div>
+                        </div>
+                        <div class="form-text">Maximum file size: 50MB. Only PDF files accepted.</div>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary" id="submitBtn">
+                            <i class="bi bi-upload me-1"></i>Upload & Extract
+                        </button>
+                        <a href="{{ url_for('pdf.list_documents') }}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const fileInput = document.getElementById('file');
+const fileInfo = document.getElementById('fileInfo');
+const dropZone = document.getElementById('dropZone');
+fileInput.addEventListener('change', function() {
+    if (this.files[0]) {
+        fileInfo.textContent = 'Selected: ' + this.files[0].name + ' (' + (this.files[0].size/1024).toFixed(1) + ' KB)';
+        fileInfo.classList.remove('d-none');
+    }
+});
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('border-primary'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('border-primary'));
+dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('border-primary');
+    const files = e.dataTransfer.files;
+    if (files[0] && files[0].name.endsWith('.pdf')) {
+        const dt = new DataTransfer();
+        dt.items.add(files[0]);
+        fileInput.files = dt.files;
+        fileInfo.textContent = 'Selected: ' + files[0].name;
+        fileInfo.classList.remove('d-none');
+    }
+});
+document.getElementById('uploadForm').addEventListener('submit', function() {
+    document.getElementById('submitBtn').disabled = true;
+    document.getElementById('submitBtn').innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Uploading...';
+});
+</script>
+{% endblock %}

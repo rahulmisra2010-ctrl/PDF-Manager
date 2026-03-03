@@ -1,228 +1,213 @@
-"""
-PDF API routes for upload, extraction, editing, and export
-"""
-
 import os
 import uuid
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
-
-from fastapi import APIRouter, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
-
-from config import settings
-from models import (
-    DocumentListResponse,
-    DocumentMetadata,
-    EditRequest,
-    EditResponse,
-    ExportRequest,
-    ExportResponse,
-    ExtractionResult,
-    PDFUploadResponse,
-)
+from flask import Blueprint, render_template, request, redirect, url_for, flash, send_file, jsonify, current_app
+from flask_login import login_required, current_user
+from werkzeug.utils import secure_filename
+from models import db, Document, ExtractedField, AuditLog
 from services.pdf_service import PDFService
-from services.ml_service import MLService
+from services.export_service import ExportService
 
-router = APIRouter()
+pdf_bp = Blueprint('pdf', __name__, url_prefix='/documents')
 pdf_service = PDFService()
-ml_service = MLService()
+export_service = ExportService()
 
-# In-memory document store (replace with DB in production)
-documents: dict = {}
+ALLOWED_EXTENSIONS = {'pdf'}
 
 
-@router.post("/upload", response_model=PDFUploadResponse)
-async def upload_pdf(file: UploadFile = File(...)):
-    """Upload a PDF file for processing."""
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are accepted")
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-    # Check file size
-    content = await file.read()
-    max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
-    if len(content) > max_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File size exceeds maximum of {settings.MAX_UPLOAD_SIZE_MB} MB",
+
+def log_action(user_id, action, resource_type, resource_id=None, details=None):
+    entry = AuditLog(
+        user_id=user_id,
+        action=action,
+        resource_type=resource_type,
+        resource_id=str(resource_id) if resource_id else None,
+        details=details,
+        timestamp=datetime.utcnow()
+    )
+    db.session.add(entry)
+    db.session.commit()
+
+
+@pdf_bp.route('/')
+@login_required
+def list_documents():
+    status_filter = request.args.get('status', '')
+    page = request.args.get('page', 1, type=int)
+    if current_user.role == 'Admin':
+        query = Document.query
+    else:
+        query = Document.query.filter_by(user_id=current_user.id)
+    if status_filter:
+        query = query.filter_by(status=status_filter)
+    pagination = query.order_by(Document.created_at.desc()).paginate(page=page, per_page=20, error_out=False)
+    return render_template('documents/list.html', pagination=pagination, status_filter=status_filter)
+
+
+@pdf_bp.route('/upload', methods=['GET', 'POST'])
+@login_required
+def upload():
+    if current_user.role == 'Viewer':
+        flash('You do not have permission to upload documents.', 'danger')
+        return redirect(url_for('pdf.list_documents'))
+    if request.method == 'POST':
+        if 'file' not in request.files:
+            flash('No file selected.', 'danger')
+            return redirect(request.url)
+        file = request.files['file']
+        if file.filename == '':
+            flash('No file selected.', 'danger')
+            return redirect(request.url)
+        if not allowed_file(file.filename):
+            flash('Only PDF files are allowed.', 'danger')
+            return redirect(request.url)
+        filename = secure_filename(file.filename)
+        unique_name = f"{uuid.uuid4()}_{filename}"
+        upload_folder = current_app.config['UPLOAD_FOLDER']
+        os.makedirs(upload_folder, exist_ok=True)
+        file_path = os.path.join(upload_folder, unique_name)
+        file.save(file_path)
+        file_size = os.path.getsize(file_path)
+        doc = Document(
+            user_id=current_user.id,
+            filename=filename,
+            file_path=file_path,
+            file_size=file_size,
+            status='uploaded'
         )
-
-    # Save file
-    document_id = str(uuid.uuid4())
-    upload_dir = Path(settings.UPLOAD_DIR)
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    file_path = upload_dir / f"{document_id}.pdf"
-    file_path.write_bytes(content)
-
-    # Store metadata
-    documents[document_id] = {
-        "document_id": document_id,
-        "filename": file.filename,
-        "file_path": str(file_path),
-        "status": "uploaded",
-        "file_size_bytes": len(content),
-    }
-
-    return PDFUploadResponse(
-        document_id=document_id,
-        filename=file.filename,
-        status="uploaded",
-        message="PDF uploaded successfully. Use /extract to process the document.",
-    )
+        db.session.add(doc)
+        db.session.commit()
+        log_action(current_user.id, 'upload', 'Document', doc.id, f'Uploaded {filename}')
+        # Auto-extract
+        try:
+            _extract_document(doc)
+            flash(f'"{filename}" uploaded and extracted successfully.', 'success')
+        except Exception as e:
+            current_app.logger.error(f'Extraction failed for {filename}: {e}')
+            flash('Uploaded but text extraction failed. You can still view the document.', 'warning')
+        return redirect(url_for('pdf.detail', doc_id=doc.id))
+    return render_template('documents/upload.html')
 
 
-@router.post("/extract/{document_id}", response_model=ExtractionResult)
-async def extract_data(document_id: str):
-    """Extract text, tables, and structured data from an uploaded PDF."""
-    if document_id not in documents:
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    doc = documents[document_id]
-    file_path = doc["file_path"]
-
-    start_time = time.time()
-
-    # Extract text and tables using PDF service
-    text, tables, page_count = pdf_service.extract(file_path)
-
-    # Run ML-based field extraction
-    fields = ml_service.extract_fields(text, tables)
-
-    elapsed = time.time() - start_time
-
-    # Update document status
-    documents[document_id]["status"] = "extracted"
-    documents[document_id]["page_count"] = page_count
-    documents[document_id]["extracted_text"] = text
-    documents[document_id]["fields"] = [f.model_dump() for f in fields]
-    documents[document_id]["tables"] = tables
-
-    return ExtractionResult(
-        document_id=document_id,
-        filename=doc["filename"],
-        total_pages=page_count,
-        fields=fields,
-        extracted_text=text,
-        tables=tables,
-        extraction_time_seconds=round(elapsed, 3),
-    )
-
-
-@router.put("/edit", response_model=EditResponse)
-async def edit_data(request: EditRequest):
-    """Update extracted fields for a document."""
-    if request.document_id not in documents:
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    documents[request.document_id]["fields"] = [
-        f.model_dump() for f in request.fields
-    ]
-    documents[request.document_id]["status"] = "edited"
-
-    return EditResponse(
-        document_id=request.document_id,
-        status="updated",
-        updated_fields=len(request.fields),
-    )
-
-
-@router.post("/export", response_model=ExportResponse)
-async def export_document(request: ExportRequest):
-    """Export the document with updated data."""
-    if request.document_id not in documents:
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    doc = documents[request.document_id]
-    export_path = pdf_service.export(
-        document_id=request.document_id,
-        file_path=doc["file_path"],
-        fields=doc.get("fields", []),
-        fmt=request.format,
-    )
-
-    from datetime import datetime, timedelta
-
-    return ExportResponse(
-        document_id=request.document_id,
-        download_url=f"/api/v1/download/{request.document_id}?format={request.format}",
-        format=request.format,
-        expires_at=datetime.utcnow() + timedelta(hours=24),
-    )
-
-
-@router.get("/download/{document_id}")
-async def download_document(document_id: str, format: str = "pdf"):
-    """Download an exported document."""
-    if document_id not in documents:
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    export_dir = Path(settings.EXPORT_DIR)
-    export_file = export_dir / f"{document_id}.{format}"
-
-    if not export_file.exists():
-        raise HTTPException(
-            status_code=404,
-            detail="Export not found. Please call /export first.",
+def _extract_document(doc):
+    text, fields_data, page_count = pdf_service.extract(doc.file_path)
+    doc.page_count = page_count
+    doc.status = 'extracted'
+    # Remove existing fields
+    ExtractedField.query.filter_by(document_id=doc.id).delete()
+    for fd in fields_data:
+        field = ExtractedField(
+            document_id=doc.id,
+            field_name=fd['field_name'],
+            field_value=fd['field_value'],
+            confidence=fd['confidence'],
+            page_number=fd.get('page_number', 1),
+            bbox_json=str(fd.get('bbox', {}))
         )
-
-    media_types = {
-        "pdf": "application/pdf",
-        "json": "application/json",
-        "csv": "text/csv",
-    }
-
-    return FileResponse(
-        path=str(export_file),
-        media_type=media_types.get(format, "application/octet-stream"),
-        filename=f"{documents[document_id]['filename'].rsplit('.', 1)[0]}_export.{format}",
-    )
+        db.session.add(field)
+    db.session.commit()
 
 
-@router.get("/documents", response_model=DocumentListResponse)
-async def list_documents(page: int = 1, page_size: int = 20):
-    """List all uploaded documents with pagination."""
-    all_docs = list(documents.values())
-    start = (page - 1) * page_size
-    end = start + page_size
-
-    metadata_list = [
-        DocumentMetadata(
-            document_id=d["document_id"],
-            filename=d["filename"],
-            upload_time=d.get("upload_time", __import__("datetime").datetime.utcnow()),
-            status=d["status"],
-            page_count=d.get("page_count"),
-            file_size_bytes=d.get("file_size_bytes"),
-        )
-        for d in all_docs[start:end]
-    ]
-
-    return DocumentListResponse(
-        documents=metadata_list,
-        total=len(all_docs),
-        page=page,
-        page_size=page_size,
-    )
+@pdf_bp.route('/<int:doc_id>')
+@login_required
+def detail(doc_id):
+    doc = Document.query.get_or_404(doc_id)
+    if current_user.role != 'Admin' and doc.user_id != current_user.id:
+        flash('Access denied.', 'danger')
+        return redirect(url_for('pdf.list_documents'))
+    fields = ExtractedField.query.filter_by(document_id=doc_id).all()
+    return render_template('documents/detail.html', doc=doc, fields=fields)
 
 
-@router.get("/documents/{document_id}")
-async def get_document(document_id: str):
-    """Get details for a specific document."""
-    if document_id not in documents:
-        raise HTTPException(status_code=404, detail="Document not found")
-    return documents[document_id]
+@pdf_bp.route('/<int:doc_id>/edit', methods=['POST'])
+@login_required
+def edit_fields(doc_id):
+    if current_user.role == 'Viewer':
+        flash('Access denied.', 'danger')
+        return redirect(url_for('pdf.detail', doc_id=doc_id))
+    doc = Document.query.get_or_404(doc_id)
+    if current_user.role != 'Admin' and doc.user_id != current_user.id:
+        flash('Access denied.', 'danger')
+        return redirect(url_for('pdf.list_documents'))
+    fields = ExtractedField.query.filter_by(document_id=doc_id).all()
+    for field in fields:
+        new_value = request.form.get(f'field_{field.id}', field.field_value)
+        if new_value != field.field_value:
+            field.field_value = new_value
+            field.is_edited = True
+            field.updated_at = datetime.utcnow()
+    doc.status = 'extracted'
+    doc.updated_at = datetime.utcnow()
+    db.session.commit()
+    log_action(current_user.id, 'edit_fields', 'Document', doc_id, f'Edited fields for doc {doc_id}')
+    flash('Fields updated successfully.', 'success')
+    return redirect(url_for('pdf.detail', doc_id=doc_id))
 
 
-@router.delete("/documents/{document_id}")
-async def delete_document(document_id: str):
-    """Delete a document and its associated files."""
-    if document_id not in documents:
-        raise HTTPException(status_code=404, detail="Document not found")
+@pdf_bp.route('/<int:doc_id>/approve', methods=['POST'])
+@login_required
+def approve(doc_id):
+    if current_user.role not in ('Admin', 'Verifier'):
+        flash('Access denied.', 'danger')
+        return redirect(url_for('pdf.detail', doc_id=doc_id))
+    doc = Document.query.get_or_404(doc_id)
+    doc.status = 'approved'
+    doc.updated_at = datetime.utcnow()
+    ExtractedField.query.filter_by(document_id=doc_id).update({'is_approved': True})
+    db.session.commit()
+    log_action(current_user.id, 'approve', 'Document', doc_id, f'Approved doc {doc_id}')
+    flash('Document approved.', 'success')
+    return redirect(url_for('pdf.detail', doc_id=doc_id))
 
-    doc = documents.pop(document_id)
-    file_path = Path(doc["file_path"])
-    if file_path.exists():
-        os.remove(file_path)
 
-    return {"status": "deleted", "document_id": document_id}
+@pdf_bp.route('/<int:doc_id>/reject', methods=['POST'])
+@login_required
+def reject(doc_id):
+    if current_user.role not in ('Admin', 'Verifier'):
+        flash('Access denied.', 'danger')
+        return redirect(url_for('pdf.detail', doc_id=doc_id))
+    doc = Document.query.get_or_404(doc_id)
+    doc.status = 'rejected'
+    doc.updated_at = datetime.utcnow()
+    db.session.commit()
+    log_action(current_user.id, 'reject', 'Document', doc_id, f'Rejected doc {doc_id}')
+    flash('Document rejected.', 'warning')
+    return redirect(url_for('pdf.detail', doc_id=doc_id))
+
+
+@pdf_bp.route('/<int:doc_id>/export/<fmt>')
+@login_required
+def export(doc_id, fmt):
+    if fmt not in ('csv', 'xlsx', 'json'):
+        flash('Invalid export format.', 'danger')
+        return redirect(url_for('pdf.detail', doc_id=doc_id))
+    doc = Document.query.get_or_404(doc_id)
+    fields = ExtractedField.query.filter_by(document_id=doc_id).all()
+    export_folder = current_app.config['EXPORT_FOLDER']
+    os.makedirs(export_folder, exist_ok=True)
+    file_path = export_service.export(doc, fields, fmt, export_folder)
+    log_action(current_user.id, 'export', 'Document', doc_id, f'Exported doc {doc_id} as {fmt}')
+    return send_file(file_path, as_attachment=True, download_name=f'{doc.filename}_{doc_id}.{fmt}')
+
+
+@pdf_bp.route('/<int:doc_id>/delete', methods=['POST'])
+@login_required
+def delete(doc_id):
+    if current_user.role not in ('Admin',):
+        flash('Access denied.', 'danger')
+        return redirect(url_for('pdf.detail', doc_id=doc_id))
+    doc = Document.query.get_or_404(doc_id)
+    try:
+        if os.path.exists(doc.file_path):
+            os.remove(doc.file_path)
+    except Exception:
+        pass
+    db.session.delete(doc)
+    db.session.commit()
+    log_action(current_user.id, 'delete', 'Document', doc_id, f'Deleted doc {doc_id}')
+    flash('Document deleted.', 'success')
+    return redirect(url_for('pdf.list_documents'))
