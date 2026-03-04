@@ -9,7 +9,7 @@ PyMuPDF==1.25.3
 
 # Image processing
 opencv-python-headless==4.11.0.86
-numpy==2.2.3
+numpy>=1.26.0,<3
 Pillow==11.1.0
 
 # ML / Deep Learning
