@@ -63,6 +63,16 @@ class FieldClassifier(nn.Module):
 # Regex patterns for common field types
 # ---------------------------------------------------------------------------
 
+# Maximum lengths for key-value label and value extraction
+_KV_MAX_LABEL_LEN = 40   # characters – keeps matches tight to field labels
+_KV_MAX_VALUE_LEN = 200  # characters – prevents runaway matches on long lines
+
+# Pre-compiled pattern for "Label: Value" and "Label\tValue" style lines
+_KV_PATTERN = re.compile(
+    rf"^([A-Za-z][A-Za-z0-9 _\-/]{{1,{_KV_MAX_LABEL_LEN}}})\s*[:\t]\s*(.{{1,{_KV_MAX_VALUE_LEN}}})$",
+    re.MULTILINE,
+)
+
 _PATTERNS: list[tuple[str, str, re.Pattern]] = [
     ("date", r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b", re.compile(
         r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b"
@@ -119,6 +129,8 @@ class MLService:
         seen: set[str] = set()
 
         # --- Regex-based extraction ---
+        # Regex matches are deterministic, so assign high confidence directly
+        # rather than consulting the untrained classifier.
         for field_type, _, pattern in _PATTERNS:
             for match in pattern.finditer(text):
                 value = match.group(0).strip()
@@ -130,18 +142,34 @@ class MLService:
                 # Estimate page from character offset (rough heuristic)
                 approx_page = max(1, text[:match.start()].count("\f") + 1)
 
-                # Use the classifier to refine confidence
-                confidence = self._classifier_confidence(value, field_type)
-
-                if confidence >= settings.ML_CONFIDENCE_THRESHOLD:
-                    fields.append(
-                        ExtractedField(
-                            field_name=field_type,
-                            value=value,
-                            confidence=round(confidence, 3),
-                            page_number=approx_page,
-                        )
+                fields.append(
+                    ExtractedField(
+                        field_name=field_type,
+                        value=value,
+                        confidence=0.9,
+                        page_number=approx_page,
                     )
+                )
+
+        # --- Key-value pair extraction (Label: Value patterns) ---
+        for match in _KV_PATTERN.finditer(text):
+            label = match.group(1).strip()
+            value = match.group(2).strip()
+            if not value:
+                continue
+            key = f"kv:{label}:{value}"
+            if key in seen:
+                continue
+            seen.add(key)
+            approx_page = max(1, text[:match.start()].count("\f") + 1)
+            fields.append(
+                ExtractedField(
+                    field_name=label,
+                    value=value,
+                    confidence=0.8,
+                    page_number=approx_page,
+                )
+            )
 
         # --- Table-based extraction ---
         for table_idx, table in enumerate(tables):
