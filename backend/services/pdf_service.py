@@ -209,4 +209,4 @@ class PDFService:
                 )
 
         doc.save(output_path)
-        doc.close().
+        doc.close()
