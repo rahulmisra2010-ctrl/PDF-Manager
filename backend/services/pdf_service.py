@@ -2,9 +2,10 @@
 PDF processing service using PyMuPDF and OpenCV
 """
 
+import io
 import json
 import csv
-import io
+import logging
 import re
 from pathlib import Path
 
@@ -13,6 +14,31 @@ import cv2
 import numpy as np
 
 from config import settings
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Optional OCR support
+# ---------------------------------------------------------------------------
+try:
+    import pytesseract
+    from PIL import Image as _PILImage
+    _PYTESSERACT_AVAILABLE = True
+except ImportError:
+    _PYTESSERACT_AVAILABLE = False
+
+# Address Book fields to extract
+ADDRESS_BOOK_FIELDS = [
+    "Name",
+    "Street Address",
+    "City",
+    "State",
+    "Zip Code",
+    "Home Phone",
+    "Cell Phone",
+    "Work Phone",
+    "Email",
+]
 
 
 class PDFService:
@@ -34,7 +60,24 @@ class PDFService:
 
         for page in doc:
             # Extract plain text
-            full_text_parts.append(page.get_text())
+            text = page.get_text()
+
+            # OCR fallback for scanned/image-based pages
+            if not text.strip() and _PYTESSERACT_AVAILABLE:
+                try:
+                    pytesseract.pytesseract.tesseract_cmd = (
+                        r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+                    )
+                    mat = fitz.Matrix(2, 2)
+                    pix = page.get_pixmap(matrix=mat)
+                    img = _PILImage.open(io.BytesIO(pix.tobytes("png")))
+                    text = pytesseract.image_to_string(img)
+                    logger.info("OCR fallback produced %d chars", len(text))
+                except Exception as exc:
+                    logger.warning("OCR fallback failed: %s", exc)
+                    text = ""
+
+            full_text_parts.append(text)
 
             # Attempt to find table-like structures using bounding boxes
             page_tables = self._extract_tables_from_page(page)
@@ -166,4 +209,4 @@ class PDFService:
                 )
 
         doc.save(output_path)
-        doc.close()
+        doc.close().
