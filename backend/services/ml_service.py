@@ -97,6 +97,37 @@ _PATTERNS: list[tuple[str, str, re.Pattern]] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Address Book field labels to detect in OCR text
+# ---------------------------------------------------------------------------
+
+ADDRESS_BOOK_FIELDS = [
+    "Name",
+    "Street Address",
+    "City",
+    "State",
+    "Zip Code",
+    "Home Phone",
+    "Cell Phone",
+    "Work Phone",
+    "Email",
+]
+
+# Pre-compiled patterns for each Address Book field label.
+# Matches the label followed by optional underscores/spaces and any trailing
+# value on the same line.
+_ADDRESS_BOOK_PATTERNS: list[tuple[str, re.Pattern]] = [
+    (
+        label,
+        re.compile(
+            rf"^{re.escape(label)}\s*[_\s]*(.*)$",
+            re.MULTILINE | re.IGNORECASE,
+        ),
+    )
+    for label in ADDRESS_BOOK_FIELDS
+]
+
+
 class MLService:
     """
     Service that combines regex heuristics with a lightweight PyTorch model
@@ -194,6 +225,25 @@ class MLService:
                                     page_number=1,
                                 )
                             )
+
+        # --- Address Book field extraction ---
+        # Detect labelled fields from OCR text (e.g. scanned address book forms).
+        for label, pattern in _ADDRESS_BOOK_PATTERNS:
+            for match in pattern.finditer(text):
+                value = match.group(1).strip().lstrip("_")
+                key = f"ab:{label}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                approx_page = max(1, text[:match.start()].count("\f") + 1)
+                fields.append(
+                    ExtractedField(
+                        field_name=label,
+                        value=value,
+                        confidence=0.85,
+                        page_number=approx_page,
+                    )
+                )
 
         return fields
 

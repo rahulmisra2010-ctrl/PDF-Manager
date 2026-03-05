@@ -5,6 +5,7 @@ PDF processing service using PyMuPDF and OpenCV
 import json
 import csv
 import io
+import logging
 import re
 from pathlib import Path
 
@@ -12,7 +13,16 @@ import fitz  # PyMuPDF
 import cv2
 import numpy as np
 
+try:
+    import pytesseract
+    from PIL import Image
+    _PYTESSERACT_AVAILABLE = True
+except ImportError:
+    _PYTESSERACT_AVAILABLE = False
+
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class PDFService:
@@ -34,7 +44,20 @@ class PDFService:
 
         for page in doc:
             # Extract plain text
-            full_text_parts.append(page.get_text())
+            text = page.get_text()
+            if not text.strip():
+                # OCR fallback for scanned/image-based pages
+                if _PYTESSERACT_AVAILABLE:
+                    try:
+                        pytesseract.pytesseract.tesseract_cmd = settings.TESSERACT_CMD
+                        mat = fitz.Matrix(2, 2)
+                        pix = page.get_pixmap(matrix=mat)
+                        img = Image.open(io.BytesIO(pix.tobytes("png")))
+                        text = pytesseract.image_to_string(img)
+                    except Exception as e:
+                        logger.warning("OCR fallback failed: %s", e)
+                        text = ""
+            full_text_parts.append(text)
 
             # Attempt to find table-like structures using bounding boxes
             page_tables = self._extract_tables_from_page(page)

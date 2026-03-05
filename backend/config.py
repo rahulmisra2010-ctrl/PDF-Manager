@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     ML_CONFIDENCE_THRESHOLD: float = 0.75
     USE_GPU: bool = False
 
+    # OCR settings
+    TESSERACT_CMD: str = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
