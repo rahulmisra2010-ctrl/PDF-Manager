@@ -169,9 +169,12 @@ def extract(doc_id: int):
         _log(current_user.id, "extract", "document", str(doc_id))
         db.session.commit()
         flash("Extraction complete.", "success")
-    except Exception as exc:  # pylint: disable=broad-except
+    except (OSError, RuntimeError, ValueError) as exc:
         db.session.rollback()
         flash(f"Extraction failed: {exc}", "danger")
+    except ImportError as exc:
+        db.session.rollback()
+        flash(f"Extraction failed — missing dependency: {exc}", "danger")
 
     return redirect(url_for("pdf.detail", doc_id=doc_id))
 

@@ -65,7 +65,17 @@ def create_app(config: dict | None = None) -> Flask:
     # ------------------------------------------------------------------
     # Configuration
     # ------------------------------------------------------------------
-    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", secrets.token_hex(32))
+    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "")
+    if not app.config["SECRET_KEY"]:
+        import warnings
+        _generated_key = secrets.token_hex(32)
+        app.config["SECRET_KEY"] = _generated_key
+        warnings.warn(
+            "SECRET_KEY is not set — a random key was generated. "
+            "All sessions and CSRF tokens will be invalidated on restart. "
+            "Set the SECRET_KEY environment variable in production.",
+            stacklevel=2,
+        )
 
     # Build a default absolute SQLite URL so the db file is always
     # created next to the application, regardless of the working directory.
@@ -151,7 +161,7 @@ def _create_default_admin(app: Flask) -> None:
     admin_password = (
         app.config.get("ADMIN_PASSWORD")
         or os.environ.get("ADMIN_PASSWORD")
-        or secrets.token_urlsafe(16)
+        or secrets.token_urlsafe(24)
     )
     admin = User(
         username="admin",

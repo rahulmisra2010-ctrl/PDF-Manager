@@ -26,7 +26,8 @@ try:
     from config import settings
     from models import ExtractedField
 except ImportError:
-    import sys, os as _os
+    import sys
+    import os as _os
     sys.path.insert(0, _os.path.abspath(_os.path.join(_os.path.dirname(__file__), "..", "..")))
     from backend.config import settings  # type: ignore[import]
     from backend.models import ExtractedField  # type: ignore[import]
