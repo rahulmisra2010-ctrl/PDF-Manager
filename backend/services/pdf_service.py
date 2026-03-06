@@ -11,9 +11,16 @@ import sys
 import os
 from pathlib import Path
 
+import shutil
+
 import fitz  # PyMuPDF
-import cv2
-import numpy as np
+
+try:
+    import cv2
+    import numpy as np
+    _CV2_AVAILABLE = True
+except ImportError:
+    _CV2_AVAILABLE = False
 
 # Support both direct execution (backend/ on sys.path) and package import
 try:
@@ -94,9 +101,9 @@ class PDFService:
             # OCR fallback for scanned/image-based pages
             if not text.strip() and _PYTESSERACT_AVAILABLE:
                 try:
-                    pytesseract.pytesseract.tesseract_cmd = (
-                        r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-                    )
+                    _custom_cmd = os.environ.get("TESSERACT_CMD") or shutil.which("tesseract")
+                    if _custom_cmd:
+                        pytesseract.pytesseract.tesseract_cmd = _custom_cmd
                     mat = fitz.Matrix(2, 2)
                     pix = page.get_pixmap(matrix=mat)
                     img = _PILImage.open(io.BytesIO(pix.tobytes("png")))
@@ -109,8 +116,9 @@ class PDFService:
             full_text_parts.append(text)
 
             # Attempt to find table-like structures using bounding boxes
-            page_tables = self._extract_tables_from_page(page)
-            tables.extend(page_tables)
+            if _CV2_AVAILABLE:
+                page_tables = self._extract_tables_from_page(page)
+                tables.extend(page_tables)
 
         doc.close()
         return "\n".join(full_text_parts), tables, page_count
@@ -121,6 +129,9 @@ class PDFService:
         Returns a list of tables found on the page.
         """
         tables: list[list[list[str]]] = []
+
+        if not _CV2_AVAILABLE:
+            return tables
 
         # Render page to an image for OpenCV processing
         mat = fitz.Matrix(2, 2)  # 2x zoom for better accuracy
@@ -251,7 +262,7 @@ class PDFService:
 
         def _is_field_label(line: str) -> bool:
             """Return True if line starts with a known address-book field label."""
-            stripped = line.lstrip('"\''_ )
+            stripped = line.lstrip('"\'_ ')
             for field in ADDRESS_BOOK_FIELDS:
                 if stripped.startswith(field):
                     return True
