@@ -116,6 +116,13 @@ class AIExtractionService:
 
     def __init__(self) -> None:
         self._easyocr_reader: Any = None  # initialised lazily
+        self._tesseract_cmd: str | None = self._find_tesseract_cmd()
+
+    @staticmethod
+    def _find_tesseract_cmd() -> str | None:
+        """Locate the tesseract binary (env override or PATH lookup)."""
+        import shutil
+        return os.environ.get("TESSERACT_CMD") or shutil.which("tesseract")
 
     # ------------------------------------------------------------------
     # Public API
@@ -289,10 +296,8 @@ class AIExtractionService:
         if not _PYTESSERACT_AVAILABLE:
             return []
         try:
-            import shutil
-            _custom_cmd = os.environ.get("TESSERACT_CMD") or shutil.which("tesseract")
-            if _custom_cmd:
-                pytesseract.pytesseract.tesseract_cmd = _custom_cmd
+            if self._tesseract_cmd:
+                pytesseract.pytesseract.tesseract_cmd = self._tesseract_cmd
             mat = fitz.Matrix(zoom, zoom)
             pix = page.get_pixmap(matrix=mat)
             img = _PILImage.open(io.BytesIO(pix.tobytes("png")))
@@ -336,10 +341,8 @@ class AIExtractionService:
     def _ocr_region(self, page, pdf_rect: fitz.Rect) -> str:
         """OCR a specific region of a PDF page."""
         try:
-            import shutil
-            _custom_cmd = os.environ.get("TESSERACT_CMD") or shutil.which("tesseract")
-            if _custom_cmd:
-                pytesseract.pytesseract.tesseract_cmd = _custom_cmd
+            if self._tesseract_cmd:
+                pytesseract.pytesseract.tesseract_cmd = self._tesseract_cmd
             mat = fitz.Matrix(2, 2)
             pix = page.get_pixmap(matrix=mat, clip=pdf_rect)
             img = _PILImage.open(io.BytesIO(pix.tobytes("png")))

@@ -1,17 +1,16 @@
 /**
  * static/js/interactive-pdf-viewer.js
  *
- * Interactive PDF viewer built on PDF.js.
+ * Interactive PDF viewer using server-side page image rendering.
  *
  * Responsibilities:
- *  - Load and render PDF pages onto an HTML5 canvas
+ *  - Load and display server-rendered PDF page images on an HTML5 canvas
  *  - Support zoom in / zoom out / fit-width
  *  - Provide page navigation (prev / next / jump-to)
- *  - Emit events so the AI extractor can overlay field highlights
+ *  - Overlay field highlights with confidence-based colours
  *  - Expose a page-render-complete callback
  */
 
-/* global pdfjsLib */
 /* exported InteractivePDFViewer */
 
 'use strict';
