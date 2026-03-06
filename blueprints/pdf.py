@@ -68,6 +68,9 @@ def _get_pdf_service():
         return PDFService()
     except ImportError:
         return None
+    except Exception:
+        current_app.logger.exception("Failed to initialize PDFService")
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +152,10 @@ def extract(doc_id: int):
         return redirect(url_for("pdf.detail", doc_id=doc_id))
 
     try:
+        if not os.path.exists(doc.file_path):
+            flash("Extraction failed: uploaded file not found on disk.", "danger")
+            return redirect(url_for("pdf.detail", doc_id=doc_id))
+
         text, _tables, page_count = svc.extract(doc.file_path)
         mapped = svc.map_address_book_fields(text)
 
@@ -175,6 +182,10 @@ def extract(doc_id: int):
     except ImportError as exc:
         db.session.rollback()
         flash(f"Extraction failed — missing dependency: {exc}", "danger")
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Unexpected error during extraction for doc %s", doc_id)
+        flash(f"Extraction failed (unexpected error): {exc}", "danger")
 
     return redirect(url_for("pdf.detail", doc_id=doc_id))
 
