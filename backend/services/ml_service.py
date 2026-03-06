@@ -1,62 +1,97 @@
 """
-ML service for intelligent data extraction using PyTorch and regex heuristics.
+ML service for intelligent data extraction using regex heuristics and an
+optional PyTorch classifier.  If ``torch`` is not installed the service
+falls back to pure-regex extraction.
 """
 
 import re
+import logging
 from dataclasses import dataclass, field
 
-import torch
-import torch.nn as nn
+logger = logging.getLogger(__name__)
 
-from config import settings
-from models import ExtractedField
+# ---------------------------------------------------------------------------
+# Optional PyTorch support
+# ---------------------------------------------------------------------------
+try:
+    import torch
+    import torch.nn as nn
+    _TORCH_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _TORCH_AVAILABLE = False
+    logger.info("torch not installed – ML classifier disabled, regex-only mode active")
 
+# Support both direct (backend/ on sys.path) and package imports
+try:
+    from config import settings
+    from models import ExtractedField
+except ImportError:
+    import sys, os as _os
+    sys.path.insert(0, _os.path.abspath(_os.path.join(_os.path.dirname(__file__), "..", "..")))
+    from backend.config import settings  # type: ignore[import]
+    from backend.models import ExtractedField  # type: ignore[import]
 
 # ---------------------------------------------------------------------------
 # Lightweight PyTorch classifier for field-type detection
 # ---------------------------------------------------------------------------
 
 
-class FieldClassifier(nn.Module):
-    """
-    Simple feed-forward network that classifies a text token as one of the
-    known field types.  Input: bag-of-char-level n-gram features (256-d).
-    Output: logit per field type.
-    """
+if _TORCH_AVAILABLE:
+    class FieldClassifier(nn.Module):
+        """
+        Simple feed-forward network that classifies a text token as one of the
+        known field types.  Input: bag-of-char-level n-gram features (256-d).
+        Output: logit per field type.
+        """
 
-    FIELD_TYPES = [
-        "name",
-        "date",
-        "amount",
-        "address",
-        "phone",
-        "email",
-        "invoice_number",
-        "unknown",
-    ]
+        FIELD_TYPES = [
+            "name",
+            "date",
+            "amount",
+            "address",
+            "phone",
+            "email",
+            "invoice_number",
+            "unknown",
+        ]
 
-    def __init__(self, input_dim: int = 256, hidden_dim: int = 128):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(hidden_dim, len(self.FIELD_TYPES)),
-        )
+        def __init__(self, input_dim: int = 256, hidden_dim: int = 128):
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(input_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(0.2),
+                nn.Linear(hidden_dim, len(self.FIELD_TYPES)),
+            )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return self.net(x)
 
-    @classmethod
-    def featurize(cls, text: str) -> torch.Tensor:
-        """Convert text to a 256-d bag-of-characters feature vector."""
-        vec = torch.zeros(256)
-        for ch in text[:512]:
-            vec[ord(ch) % 256] += 1
-        norm = vec.norm()
-        if norm > 0:
-            vec = vec / norm
-        return vec
+        @classmethod
+        def featurize(cls, text: str) -> torch.Tensor:
+            """Convert text to a 256-d bag-of-characters feature vector."""
+            vec = torch.zeros(256)
+            for ch in text[:512]:
+                vec[ord(ch) % 256] += 1
+            norm = vec.norm()
+            if norm > 0:
+                vec = vec / norm
+            return vec
+
+else:  # Stub when torch is not available
+    class FieldClassifier:  # type: ignore[no-redef]
+        """Stub classifier used when torch is not installed."""
+
+        FIELD_TYPES = [
+            "name",
+            "date",
+            "amount",
+            "address",
+            "phone",
+            "email",
+            "invoice_number",
+            "unknown",
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -99,18 +134,23 @@ _PATTERNS: list[tuple[str, str, re.Pattern]] = [
 
 class MLService:
     """
-    Service that combines regex heuristics with a lightweight PyTorch model
-    to extract structured fields from PDF text.
+    Service that combines regex heuristics with an optional lightweight
+    PyTorch model to extract structured fields from PDF text.  If PyTorch is
+    not installed the service operates in regex-only mode.
     """
 
     def __init__(self):
-        self.device = torch.device(
-            "cuda" if settings.USE_GPU and torch.cuda.is_available() else "cpu"
-        )
-        self.classifier = FieldClassifier().to(self.device)
-        self.classifier.eval()
-        # In production, load pre-trained weights here:
-        # self.classifier.load_state_dict(torch.load(settings.ML_MODEL_DIR + "/field_classifier.pt"))
+        if _TORCH_AVAILABLE:
+            self.device = torch.device(
+                "cuda" if settings.USE_GPU and torch.cuda.is_available() else "cpu"
+            )
+            self.classifier = FieldClassifier().to(self.device)
+            self.classifier.eval()
+            # In production, load pre-trained weights here:
+            # self.classifier.load_state_dict(torch.load(settings.ML_MODEL_DIR + "/field_classifier.pt"))
+        else:
+            self.device = None
+            self.classifier = None
 
     def extract_fields(
         self, text: str, tables: list[list[list[str]]]
@@ -198,7 +238,9 @@ class MLService:
         return fields
 
     def _classify_text(self, text: str) -> str:
-        """Use the neural classifier to determine field type."""
+        """Use the neural classifier to determine field type (falls back to 'unknown')."""
+        if not _TORCH_AVAILABLE or self.classifier is None:
+            return "unknown"
         with torch.no_grad():
             features = FieldClassifier.featurize(text).unsqueeze(0).to(self.device)
             logits = self.classifier(features)
@@ -208,8 +250,10 @@ class MLService:
     def _classifier_confidence(self, text: str, expected_type: str) -> float:
         """
         Return a confidence score in [0, 1] for the given text belonging to
-        the expected_type field class.
+        the expected_type field class.  Returns 0.0 when torch is not available.
         """
+        if not _TORCH_AVAILABLE or self.classifier is None:
+            return 0.0
         with torch.no_grad():
             features = FieldClassifier.featurize(text).unsqueeze(0).to(self.device)
             logits = self.classifier(features)

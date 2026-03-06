@@ -1,58 +1,47 @@
 """
-PDF-Manager FastAPI Application
-Main application entry point
+backend/app.py — Backend application entry point (Flask).
+
+Thin wrapper that imports and runs the root Flask application.
+For historical reasons this file exists alongside the root app.py;
+both ultimately run the same Flask application.
 """
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
+from __future__ import annotations
 
-from config import settings
-from routes.pdf_routes import router as pdf_router
+import importlib.util
+import os
+import sys
 
+# ---------------------------------------------------------------------------
+# Path setup
+# ---------------------------------------------------------------------------
+_BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+_ROOT_DIR = os.path.dirname(_BACKEND_DIR)
+_ROOT_APP = os.path.join(_ROOT_DIR, "app.py")
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan handler."""
-    # Startup
-    print(f"Starting PDF-Manager API v{settings.API_VERSION}")
-    yield
-    # Shutdown
-    print("Shutting down PDF-Manager API")
+if _BACKEND_DIR not in sys.path:
+    sys.path.insert(0, _BACKEND_DIR)
+if _ROOT_DIR not in sys.path:
+    sys.path.insert(0, _ROOT_DIR)
 
-
-app = FastAPI(
-    title=settings.APP_NAME,
-    version=settings.API_VERSION,
-    description="PDF Manager API for uploading, extracting, editing, and exporting PDF data",
-    lifespan=lifespan,
-)
-
-# Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Include routers
-app.include_router(pdf_router, prefix="/api/v1", tags=["PDF"])
-
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy", "version": settings.API_VERSION}
-
+# ---------------------------------------------------------------------------
+# Load root app.py via importlib to avoid circular-import when backend/ is
+# earlier on sys.path than the repo root.
+# ---------------------------------------------------------------------------
+try:
+    _spec = importlib.util.spec_from_file_location("_root_app", _ROOT_APP)
+    _root_module = importlib.util.module_from_spec(_spec)  # type: ignore[arg-type]
+    _spec.loader.exec_module(_root_module)  # type: ignore[union-attr]
+    app = _root_module.app
+    create_app = _root_module.create_app
+except Exception as _exc:
+    raise ImportError(
+        f"Could not load root app.py from {_ROOT_APP}: {_exc}\n"
+        "Ensure all dependencies are installed: pip install -r backend/requirements.txt"
+    ) from _exc
 
 if __name__ == "__main__":
-    import uvicorn
+    port = int(os.environ.get("PORT", 5000))
+    debug = os.environ.get("DEBUG", "false").lower() == "true"
+    app.run(host="0.0.0.0", port=port, debug=debug)
 
-    uvicorn.run(
-        "app:app",
-        host=settings.HOST,
-        port=settings.PORT,
-        reload=settings.DEBUG,
-    )

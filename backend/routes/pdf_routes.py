@@ -90,6 +90,9 @@ async def extract_data(document_id: str):
     # Run ML-based field extraction
     fields = ml_service.extract_fields(text, tables)
 
+    # Run address-book field mapping on the extracted text
+    mapped_fields = pdf_service.map_address_book_fields(text)
+
     elapsed = time.time() - start_time
 
     # Update document status
@@ -98,6 +101,7 @@ async def extract_data(document_id: str):
     documents[document_id]["extracted_text"] = text
     documents[document_id]["fields"] = [f.model_dump() for f in fields]
     documents[document_id]["tables"] = tables
+    documents[document_id]["mapped_fields"] = mapped_fields
 
     return ExtractionResult(
         document_id=document_id,
@@ -107,6 +111,7 @@ async def extract_data(document_id: str):
         extracted_text=text,
         tables=tables,
         extraction_time_seconds=round(elapsed, 3),
+        mapped_fields=mapped_fields,
     )
 
 

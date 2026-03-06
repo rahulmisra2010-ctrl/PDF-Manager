@@ -1,26 +1,24 @@
-# Core
-fastapi>=0.115.6
-uvicorn[standard]>=0.34.0
-pydantic>=2.11.0
-pydantic-settings>=2.7.1
-
 # PDF processing
 PyMuPDF==1.25.3
 
+# OCR
+pytesseract>=0.3.10
+
 # Image processing
 opencv-python-headless==4.11.0.86
-numpy==2.3.5
+numpy>=1.26.0,<3
 Pillow>=11.3.0
 
-# ML / Deep Learning
-torch>=2.6.0
-torchvision>=0.20.0
+# Web framework
+flask>=3.0.0
+flask-sqlalchemy>=3.1.0
+flask-wtf>=1.2.0
+flask-bcrypt>=1.0.1
+flask-login>=0.6.3
 
-# Database
-asyncpg>=0.31.0
-sqlalchemy[asyncio]>=2.0.38
+# Export
+openpyxl>=3.1.0
 
 # Utilities
 python-multipart>=0.0.20
 python-dotenv>=1.0.1
-aiofiles>=24.1.0

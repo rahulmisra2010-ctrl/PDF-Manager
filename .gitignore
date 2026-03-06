@@ -54,6 +54,8 @@ uploads/
 exports/
 models/
 *.log
+*.db
+instance/
 
 # --- Docker ---
 *.override.yml

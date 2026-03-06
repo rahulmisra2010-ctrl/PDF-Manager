@@ -1,44 +1,23 @@
 services:
-  postgres:
-    image: postgres:15-alpine
-    container_name: pdfmanager-postgres
-    environment:
-      POSTGRES_USER: pdfmanager
-      POSTGRES_PASSWORD: pdfmanager
-      POSTGRES_DB: pdfmanager
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
-      - ./database/init.sql:/docker-entrypoint-initdb.d/02_init.sql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pdfmanager"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: pdfmanager-backend
     ports:
-      - "8000:8000"
+      - "5000:5000"
     environment:
-      - DEBUG=true
-      - DATABASE_URL=postgresql://pdfmanager:pdfmanager@postgres:5432/pdfmanager
-      - ALLOWED_ORIGINS=["http://localhost:3000"]
+      - DEBUG=false
+      - DATABASE_URL=sqlite:///instance/pdf_manager.db
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - UPLOAD_DIR=/app/uploads
       - EXPORT_DIR=/app/exports
     volumes:
-      - ./backend:/app
+      - .:/app
       - uploads_data:/app/uploads
       - exports_data:/app/exports
-    depends_on:
-      postgres:
-        condition: service_healthy
-    command: uvicorn app:app --host 0.0.0.0 --port 8000 --reload
+      - instance_data:/app/instance
 
   frontend:
     build:
@@ -48,13 +27,14 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - REACT_APP_API_URL=http://localhost:8000/api/v1
+      - REACT_APP_API_URL=http://localhost:5000
     volumes:
       - ./frontend/src:/app/src
     depends_on:
       - backend
 
 volumes:
-  postgres_data:
   uploads_data:
   exports_data:
+  instance_data:
+
