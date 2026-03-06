@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block title %}AI Extract — {{ doc.filename }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/ai-extraction.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <div>
+    <h5 class="mb-0">
+      <i class="bi bi-cpu text-primary me-2"></i>AI Extraction
+      <span class="text-muted fw-normal">— {{ doc.filename }}</span>
+    </h5>
+    <small class="text-muted">
+      Engines: {% for e in engines %}<span class="badge bg-secondary me-1">{{ e }}</span>{% endfor %}
+    </small>
+  </div>
+  <a href="{{ url_for('pdf.detail', doc_id=doc.id) }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-arrow-left me-1"></i>Back to Document
+  </a>
+</div>
+
+<!-- Status bar -->
+<div id="status-bar" class="alert alert-secondary py-1 px-2 mb-2 small" style="display:none"></div>
+
+<!-- Main layout -->
+<div class="ai-extraction-layout">
+
+  <!-- ===== Left: PDF viewer ===== -->
+  <div class="pdf-viewer-panel">
+
+    <!-- Toolbar -->
+    <div class="pdf-toolbar">
+      <div class="toolbar-group">
+        <button id="btn-prev" class="btn-toolbar" title="Previous page">
+          <i class="bi bi-chevron-left"></i>
+        </button>
+        <input id="page-input" type="number" value="1" min="1"
+               max="{{ doc.page_count or 1 }}" title="Page number">
+        <span style="color:#ccc;font-size:0.8rem">/</span>
+        <span id="page-count" style="color:#ccc;font-size:0.8rem">{{ doc.page_count or '?' }}</span>
+        <button id="btn-next" class="btn-toolbar" title="Next page">
+          <i class="bi bi-chevron-right"></i>
+        </button>
+      </div>
+
+      <div class="toolbar-sep"></div>
+
+      <div class="toolbar-group">
+        <button id="btn-zoom-out" class="btn-toolbar" title="Zoom out">
+          <i class="bi bi-zoom-out"></i>
+        </button>
+        <select id="zoom-select" style="
+          background:#444;color:#eee;border:1px solid #555;
+          border-radius:4px;padding:0.15rem 0.4rem;font-size:0.8rem;cursor:pointer">
+          <option value="0.75">75%</option>
+          <option value="1.0">100%</option>
+          <option value="1.5" selected>150%</option>
+          <option value="2.0">200%</option>
+          <option value="2.5">250%</option>
+          <option value="3.0">300%</option>
+        </select>
+        <button id="btn-zoom-in" class="btn-toolbar" title="Zoom in">
+          <i class="bi bi-zoom-in"></i>
+        </button>
+      </div>
+
+      <div class="toolbar-sep"></div>
+
+      <div class="toolbar-group">
+        <button id="btn-mode-view" class="btn-toolbar active" title="View mode">
+          <i class="bi bi-hand-index"></i> View
+        </button>
+        <button id="btn-mode-select" class="btn-toolbar" title="Selection mode — drag to extract">
+          <i class="bi bi-bounding-box-circles"></i> Select
+        </button>
+      </div>
+
+      <div class="toolbar-sep"></div>
+
+      <div class="toolbar-group">
+        <button id="btn-detect" class="btn-toolbar" title="Auto-detect all fields on current page">
+          <i class="bi bi-magic"></i> Auto-Detect
+        </button>
+        <button id="btn-clear" class="btn-toolbar" title="Clear all fields">
+          <i class="bi bi-x-circle"></i> Clear
+        </button>
+      </div>
+
+      <div class="ms-auto">
+        <span id="mode-label" class="mode-indicator">View</span>
+      </div>
+    </div>
+
+    <!-- Canvas area -->
+    <div class="pdf-canvas-area">
+      <div class="canvas-wrapper" id="canvas-wrapper">
+        <!-- Loading overlay -->
+        <div id="pdf-loading-overlay" class="loading-overlay" style="display:none">
+          <div class="spinner-border text-light"></div>
+        </div>
+
+        <!-- Main rendered PDF page -->
+        <canvas id="pdf-canvas"></canvas>
+
+        <!-- Highlights overlay (drawn by InteractivePDFViewer) -->
+        <canvas id="overlay-canvas" style="position:absolute;top:0;left:0;pointer-events:none"></canvas>
+
+        <!-- Selection layer (captures mouse events in select mode) -->
+        <canvas id="selection-canvas" style="position:absolute;top:0;left:0"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Right: Fields panel ===== -->
+  <div class="fields-panel">
+    <div class="fields-panel-header">
+      <h6><i class="bi bi-list-ul me-1"></i>Extracted Fields</h6>
+      <span id="field-count" class="badge bg-primary">{{ fields | length }}</span>
+    </div>
+
+    <div class="fields-list" id="fields-list">
+      {% if fields %}
+        {% for field in fields %}
+        <div class="field-card" data-field-name="{{ field.field_name }}">
+          <div class="field-header">
+            <span class="field-name">{{ field.field_name }}</span>
+            <span class="field-type-badge field-type-text">text</span>
+          </div>
+          <input class="field-value-input" type="text"
+                 data-field-name="{{ field.field_name }}"
+                 value="{{ field.value or '' }}">
+          {% set conf_pct = (field.confidence * 100) | int %}
+          <div class="confidence-bar" style="--pct: {{ conf_pct }}%"></div>
+          <div class="confidence-label">Confidence: {{ conf_pct }}%</div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <p class="text-muted small p-2">
+          No fields extracted yet. Use <strong>Auto-Detect</strong> to find all fields,
+          or switch to <strong>Selection</strong> mode and drag to extract individual regions.
+        </p>
+      {% endif %}
+    </div>
+
+    <div class="fields-panel-footer">
+      <button id="btn-save" class="btn btn-primary btn-sm flex-fill">
+        <i class="bi bi-save me-1"></i>Save Fields
+      </button>
+      <a href="{{ url_for('pdf.export', doc_id=doc.id, fmt='json') }}"
+         class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-filetype-json me-1"></i>JSON
+      </a>
+      <a href="{{ url_for('pdf.export', doc_id=doc.id, fmt='csv') }}"
+         class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-filetype-csv me-1"></i>CSV
+      </a>
+    </div>
+  </div>
+
+</div><!-- /.ai-extraction-layout -->
+
+<!-- ===== AI Config (server-side data injected for JavaScript) ===== -->
+<script>
+  window.AI_CONFIG = {
+    docId:           {{ doc.id }},
+    totalPages:      {{ doc.page_count or 1 }},
+    pageImageUrl:    "{{ url_for('ai_pdf.page_image', doc_id=doc.id, page_num=0) }}"
+                       .replace('/0', '/{page}') + '?zoom={zoom}',
+    detectFieldsUrl: "{{ url_for('ai_pdf.detect_fields', doc_id=doc.id) }}",
+    extractRegionUrl:"{{ url_for('ai_pdf.extract_region', doc_id=doc.id) }}",
+    saveFieldsUrl:   "{{ url_for('ai_pdf.save_fields', doc_id=doc.id) }}",
+    csrfToken:       "{{ csrf_token() }}",
+  };
+</script>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/interactive-pdf-viewer.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pdf-ai-extractor.js') }}"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    initAIExtractor();
+
+    // Keep field count badge in sync
+    const fieldsList = document.getElementById('fields-list');
+    const badge = document.getElementById('field-count');
+    if (fieldsList && badge) {
+      const obs = new MutationObserver(() => {
+        badge.textContent = fieldsList.querySelectorAll('.field-card').length;
+      });
+      obs.observe(fieldsList, { childList: true, subtree: true });
+    }
+  });
+</script>
+{% endblock %}
