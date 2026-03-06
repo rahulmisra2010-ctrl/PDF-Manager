@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}{{ doc.filename }} — PDF Manager{% endblock %}
+
+{% block content %}
+{% set status_cls = {
+  'uploaded': 'secondary',
+  'extracted': 'info',
+  'edited': 'warning',
+  'approved': 'success',
+  'rejected': 'danger'
+}.get(doc.status, 'secondary') %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h2 class="mb-1">
+      <i class="bi bi-file-earmark-pdf text-danger me-2"></i>{{ doc.filename }}
+    </h2>
+    <span class="badge bg-{{ status_cls }}">{{ doc.status }}</span>
+    {% if doc.page_count %}
+      <span class="text-muted ms-2">{{ doc.page_count }} page(s)</span>
+    {% endif %}
+  </div>
+  <a href="{{ url_for('pdf.list_documents') }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-arrow-left me-1"></i>Back
+  </a>
+</div>
+
+<!-- Actions -->
+<div class="d-flex flex-wrap gap-2 mb-4">
+  <form method="POST" action="{{ url_for('pdf.extract', doc_id=doc.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn btn-primary btn-sm">
+      <i class="bi bi-cpu me-1"></i>Extract Fields
+    </button>
+  </form>
+
+  {% if current_user.role in ('Admin', 'Verifier') %}
+  <form method="POST" action="{{ url_for('pdf.approve', doc_id=doc.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn btn-success btn-sm">
+      <i class="bi bi-check-circle me-1"></i>Approve
+    </button>
+  </form>
+  <form method="POST" action="{{ url_for('pdf.reject', doc_id=doc.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn btn-danger btn-sm">
+      <i class="bi bi-x-circle me-1"></i>Reject
+    </button>
+  </form>
+  {% endif %}
+
+  <div class="dropdown">
+    <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+            data-bs-toggle="dropdown">
+      <i class="bi bi-download me-1"></i>Export
+    </button>
+    <ul class="dropdown-menu">
+      <li>
+        <a class="dropdown-item" href="{{ url_for('pdf.export', doc_id=doc.id, fmt='csv') }}">
+          <i class="bi bi-filetype-csv me-2"></i>CSV
+        </a>
+      </li>
+      <li>
+        <a class="dropdown-item" href="{{ url_for('pdf.export', doc_id=doc.id, fmt='xlsx') }}">
+          <i class="bi bi-filetype-xlsx me-2"></i>XLSX
+        </a>
+      </li>
+      <li>
+        <a class="dropdown-item" href="{{ url_for('pdf.export', doc_id=doc.id, fmt='json') }}">
+          <i class="bi bi-filetype-json me-2"></i>JSON
+        </a>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<!-- Extracted fields editor -->
+{% if fields %}
+<div class="card">
+  <div class="card-header fw-semibold">Extracted Fields</div>
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('pdf.edit', doc_id=doc.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="row g-3">
+        {% for field in fields %}
+        <div class="col-md-6">
+          <label class="form-label fw-semibold">
+            {{ field.field_name }}
+            {% if field.is_edited %}
+              <span class="badge bg-warning text-dark ms-1">edited</span>
+            {% endif %}
+          </label>
+          <input type="text" class="form-control" name="field_{{ field.id }}"
+                 value="{{ field.value or '' }}">
+          {% if field.is_edited and field.original_value %}
+            <div class="form-text text-muted">Original: {{ field.original_value }}</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      <div class="mt-3">
+        <button type="submit" class="btn btn-primary btn-sm">
+          <i class="bi bi-save me-1"></i>Save Changes
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% else %}
+<div class="alert alert-info">
+  No fields extracted yet. Click <strong>Extract Fields</strong> to run OCR and field mapping.
+</div>
+{% endif %}
+{% endblock %}

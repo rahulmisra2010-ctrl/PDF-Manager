@@ -2,43 +2,44 @@
 Configuration management for PDF-Manager
 """
 
-from pydantic_settings import BaseSettings
+import os
 
 
-class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
+class Settings:
+    """Application settings loaded from environment variables with defaults."""
 
     # Application
-    APP_NAME: str = "PDF-Manager API"
-    API_VERSION: str = "1.0.0"
-    DEBUG: bool = False
+    APP_NAME: str = os.environ.get("APP_NAME", "PDF-Manager")
+    API_VERSION: str = os.environ.get("API_VERSION", "1.0.0")
+    DEBUG: bool = os.environ.get("DEBUG", "false").lower() == "true"
 
     # Server
-    HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    HOST: str = os.environ.get("HOST", "0.0.0.0")
+    PORT: int = int(os.environ.get("PORT", "5000"))
 
     # CORS
-    ALLOWED_ORIGINS: list[str] = [
+    ALLOWED_ORIGINS: list = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
 
     # Database
-    DATABASE_URL: str = "postgresql://pdfmanager:pdfmanager@localhost:5432/pdfmanager"
+    DATABASE_URL: str = os.environ.get(
+        "DATABASE_URL", "sqlite:///instance/pdf_manager.db"
+    )
 
     # File storage
-    UPLOAD_DIR: str = "uploads"
-    EXPORT_DIR: str = "exports"
-    MAX_UPLOAD_SIZE_MB: int = 50
+    UPLOAD_DIR: str = os.environ.get("UPLOAD_DIR", "uploads")
+    EXPORT_DIR: str = os.environ.get("EXPORT_DIR", "exports")
+    MAX_UPLOAD_SIZE_MB: int = int(os.environ.get("MAX_UPLOAD_SIZE_MB", "50"))
 
-    # ML/PyTorch settings
-    ML_MODEL_DIR: str = "models"
-    ML_CONFIDENCE_THRESHOLD: float = 0.75
-    USE_GPU: bool = False
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    # ML/PyTorch settings (only relevant when torch is installed)
+    ML_MODEL_DIR: str = os.environ.get("ML_MODEL_DIR", "models")
+    ML_CONFIDENCE_THRESHOLD: float = float(
+        os.environ.get("ML_CONFIDENCE_THRESHOLD", "0.75")
+    )
+    USE_GPU: bool = os.environ.get("USE_GPU", "false").lower() == "true"
 
 
 settings = Settings()
+

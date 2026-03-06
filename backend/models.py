@@ -36,6 +36,7 @@ class ExtractionResult(BaseModel):
     extracted_text: str
     tables: list[list[list[str]]]
     extraction_time_seconds: float
+    mapped_fields: list[dict] = Field(default_factory=list)
 
 
 class EditRequest(BaseModel):

@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — PDF Manager{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<h2 class="mb-4">Dashboard</h2>
+
+<!-- Stats cards (populated by JS) -->
+<div class="row g-3 mb-4" id="stats-cards">
+  <div class="col-sm-6 col-xl-3">
+    <div class="card text-bg-primary">
+      <div class="card-body">
+        <h6 class="card-title">Total Documents</h6>
+        <p class="fs-3 fw-bold mb-0" id="stat-total">—</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
+    <div class="card text-bg-success">
+      <div class="card-body">
+        <h6 class="card-title">Approved</h6>
+        <p class="fs-3 fw-bold mb-0" id="stat-approved">—</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
+    <div class="card text-bg-warning">
+      <div class="card-body">
+        <h6 class="card-title">Pending Review</h6>
+        <p class="fs-3 fw-bold mb-0" id="stat-pending">—</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
+    <div class="card text-bg-info">
+      <div class="card-body">
+        <h6 class="card-title">Total Fields</h6>
+        <p class="fs-3 fw-bold mb-0" id="stat-fields">—</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Charts -->
+<div class="row g-3 mb-4">
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header">Document Status Distribution</div>
+      <div class="card-body">
+        <canvas id="pieChart" height="200"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header">Documents per Status</div>
+      <div class="card-body">
+        <canvas id="barChart" height="200"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Recent activity -->
+<div class="card">
+  <div class="card-header">Recent Activity</div>
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0" id="activity-table">
+      <thead class="table-light">
+        <tr>
+          <th>Action</th><th>Resource</th><th>ID</th><th>Time</th>
+        </tr>
+      </thead>
+      <tbody id="activity-body">
+        <tr><td colspan="4" class="text-center py-3 text-muted">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const STATUS_COLORS = {
+  uploaded: '#6c757d',
+  extracted: '#0dcaf0',
+  edited: '#ffc107',
+  approved: '#198754',
+  rejected: '#dc3545'
+};
+
+fetch('/api/stats')
+  .then(r => r.json())
+  .then(data => {
+    document.getElementById('stat-total').textContent = data.total_documents;
+    document.getElementById('stat-approved').textContent = data.status_counts.approved ?? 0;
+    document.getElementById('stat-fields').textContent = data.total_fields;
+    const pending = (data.status_counts.uploaded ?? 0)
+                  + (data.status_counts.extracted ?? 0)
+                  + (data.status_counts.edited ?? 0);
+    document.getElementById('stat-pending').textContent = pending;
+
+    const statuses = Object.keys(data.status_counts);
+    const counts   = statuses.map(s => data.status_counts[s]);
+    const colors   = statuses.map(s => STATUS_COLORS[s] || '#adb5bd');
+
+    new Chart(document.getElementById('pieChart'), {
+      type: 'pie',
+      data: { labels: statuses, datasets: [{ data: counts, backgroundColor: colors }] },
+      options: { plugins: { legend: { position: 'bottom' } } }
+    });
+
+    new Chart(document.getElementById('barChart'), {
+      type: 'bar',
+      data: {
+        labels: statuses,
+        datasets: [{
+          label: 'Count',
+          data: counts,
+          backgroundColor: colors
+        }]
+      },
+      options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
+    });
+
+    const tbody = document.getElementById('activity-body');
+    if (data.recent_activity.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" class="text-center py-3 text-muted">No activity yet.</td></tr>';
+    } else {
+      tbody.innerHTML = data.recent_activity.map(a => `
+        <tr>
+          <td><span class="badge bg-secondary">${a.action}</span></td>
+          <td>${a.resource_type ?? '—'}</td>
+          <td>${a.resource_id ?? '—'}</td>
+          <td>${new Date(a.timestamp).toLocaleString()}</td>
+        </tr>`).join('');
+    }
+  })
+  .catch(() => {
+    document.getElementById('activity-body').innerHTML =
+      '<tr><td colspan="4" class="text-center text-danger">Failed to load stats.</td></tr>';
+  });
+</script>
+{% endblock %}
