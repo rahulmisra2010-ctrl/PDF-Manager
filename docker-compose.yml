@@ -8,7 +8,7 @@ services:
       - "5000:5000"
     environment:
       - DEBUG=false
-      - DATABASE_URL=sqlite:///instance/pdf_manager.db
+      - DATABASE_URL=sqlite:////app/instance/pdf_manager.db
       - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - UPLOAD_DIR=/app/uploads
