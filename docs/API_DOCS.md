@@ -1,8 +1,8 @@
 # API Reference – PDF Manager
 
-Base URL: `http://localhost:8000/api/v1`
+Base URL: `http://localhost:5000/api/v1`
 
-Interactive docs: [http://localhost:8000/docs](http://localhost:8000/docs)
+Interactive docs: [http://localhost:5000/docs](http://localhost:5000/docs)
 
 ---
 
