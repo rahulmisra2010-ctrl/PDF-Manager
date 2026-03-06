@@ -2,7 +2,8 @@
 
 Base URL: `http://localhost:5000/api/v1`
 
-Interactive docs: [http://localhost:5000/docs](http://localhost:5000/docs)
+Interactive docs: Not enabled by default in the Flask build. Use the endpoints
+below with a tool like `curl` or Postman.
 
 ---
 

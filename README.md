@@ -53,8 +53,10 @@ See [docs/SETUP.md](docs/SETUP.md) for more details.
 
 ```
 PDF-Manager/
+├── app.py                     # Flask application factory (root)
+├── pdf_manager_app.py         # Convenience entry point / demo runner
 ├── backend/
-│   ├── app.py                  # Flask entry point (imports root app.py)
+│   ├── app.py                 # Wrapper that loads the root app.py
 │   ├── models.py               # Pydantic models
 │   ├── config.py               # Environment-based configuration
 │   ├── routes/
@@ -85,6 +87,11 @@ PDF-Manager/
 ├── requirements.txt            # Root-level (delegates to backend/)
 └── .gitignore
 ```
+
+A note on entry points: the root-level `app.py` is the primary Flask application.
+`backend/app.py` is a thin compatibility wrapper so the app can also be started
+from inside the `backend/` directory, but `python app.py` from the repository
+root is the recommended command.
 
 ---
 

@@ -31,7 +31,7 @@ copy of the data.
 
 ```bash
 # Install Python dependencies
-cd PDF-Manager
+cd PDF-Manager    # repository root
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r backend/requirements.txt

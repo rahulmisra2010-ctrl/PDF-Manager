@@ -43,7 +43,7 @@ Services:
 ### 1. Backend (Flask)
 
 ```bash
-cd PDF-Manager
+cd PDF-Manager    # repository root
 
 # Create virtual environment
 python -m venv .venv
