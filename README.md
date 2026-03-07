@@ -1,15 +1,118 @@
 # PDF-Manager
 
-> Upload a PDF, extract its data intelligently, edit any field, and export the result as PDF, JSON, or CSV.
+> **Production-Ready PDF Manager** — Upload a PDF, extract data with triple OCR engines + AI/RAG, edit fields interactively, and export.
 
 ---
 
 ## Features
 
 - 📤 **PDF Upload** – drag-and-drop or browse; up to 50 MB
-- 🔍 **Intelligent Extraction** – text and table detection via PyMuPDF + OpenCV, ML field classification with PyTorch
-- ✏️ **Inline Editing** – review and correct any extracted field in the browser
-- ⬇️ **Export** – download updated data as PDF (with overlaid annotations), JSON, or CSV
+- 🔍 **Triple OCR Engine** – Tesseract + EasyOCR + PaddleOCR with ensemble confidence scoring
+- 🤖 **AI Field Extraction** – NER (spaCy) + rule-based + RAG (LangChain + HuggingFace embeddings)
+- 🔥 **Confidence Heatmaps** – pixel-wise Green/Yellow/Red visualisation per word
+- 📊 **Performance Dashboard** – document quality score, regional scores, word confidence breakdown
+- 🖊️ **Inline Editing** – split layout: PDF viewer on left, editable fields on right
+- ⬇️ **Export** – JSON or CSV with full metadata and confidence scores
+- 📜 **Edit History** – all field edits are versioned and audited
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│                     Browser (React)                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌───────────┐  │
+│  │  PDFViewer   │  │ FieldsEditor │  │ Heatmap / │  │
+│  │  (react-pdf) │  │  (inline     │  │ Dashboard │  │
+│  │  zoom/scroll │  │   edit)      │  │           │  │
+│  └──────────────┘  └──────────────┘  └───────────┘  │
+└──────────────────────────┬──────────────────────────┘
+                           │ REST /api/v1
+┌──────────────────────────▼──────────────────────────┐
+│                Flask Backend (Python)                 │
+│  ┌─────────────────────────────────────────────────┐ │
+│  │               API v1 Blueprint                  │ │
+│  │  POST /upload  POST /extract/ocr  POST /extract/ai│ │
+│  │  GET  /fields  PUT  /fields/:id   GET /heatmap  │ │
+│  └──────────────────┬──────────────────────────────┘ │
+│                     │                                 │
+│  ┌──────────────────▼──────────────────────────────┐ │
+│  │                 OCR Layer                        │ │
+│  │  Tesseract ─┐                                   │ │
+│  │  EasyOCR   ─┼─ Ensemble Merge → WordResult[]   │ │
+│  │  PaddleOCR ─┘                                   │ │
+│  └──────────────────┬──────────────────────────────┘ │
+│                     │                                 │
+│  ┌──────────────────▼──────────────────────────────┐ │
+│  │              Extraction Layer                    │ │
+│  │  FieldDetector (NER + rules)                    │ │
+│  │  RAGSystem (LangChain + sentence-transformers)  │ │
+│  │  ConfidenceCalculator → DocumentQuality         │ │
+│  │  HeatmapGenerator → JSON + PNG                  │ │
+│  └──────────────────┬──────────────────────────────┘ │
+│                     │                                 │
+│  ┌──────────────────▼──────────────────────────────┐ │
+│  │              SQLAlchemy (SQLite / PostgreSQL)    │ │
+│  │  documents · extracted_fields · field_edit_history│ │
+│  │  ocr_character_data · rag_embeddings · audit_logs│ │
+│  └─────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────┘
+```
+
+## Project Structure
+
+```
+PDF-Manager/
+├── backend/
+│   ├── __init__.py
+│   ├── config.py
+│   ├── database.py
+│   ├── models.py              (Pydantic API models)
+│   ├── requirements.txt
+│   ├── app.py                 (entry point)
+│   ├── ocr/
+│   │   ├── __init__.py
+│   │   ├── ocr_engine.py      (Tesseract + EasyOCR + PaddleOCR)
+│   │   ├── confidence_calculator.py
+│   │   └── heatmap_generator.py
+│   ├── extraction/
+│   │   ├── __init__.py
+│   │   ├── extractor.py       (orchestrator)
+│   │   ├── rag_system.py      (LangChain + HuggingFace)
+│   │   └── field_detector.py  (NER + rules)
+│   ├── api/
+│   │   ├── __init__.py
+│   │   └── routes.py          (REST API v1 blueprint)
+│   └── services/
+│       ├── pdf_service.py
+│       ├── ai_extraction_service.py
+│       └── ml_service.py
+├── frontend/
+│   ├── public/index.html
+│   ├── src/
+│   │   ├── App.js
+│   │   ├── components/
+│   │   │   ├── PDFViewer.js           (react-pdf)
+│   │   │   ├── FieldsEditor.js        (editable fields table)
+│   │   │   ├── OCRConfidenceHeatmap.js
+│   │   │   ├── PerformanceDashboard.js
+│   │   │   └── ExtractionPage.js      (split layout orchestrator)
+│   │   ├── services/api.js
+│   │   └── styles/extraction.css
+│   └── package.json
+├── models.py                  (SQLAlchemy models)
+├── blueprints/                (Flask web-UI blueprints)
+├── templates/                 (Jinja2 HTML templates)
+├── static/                    (CSS, JS for server-rendered UI)
+├── database/                  (SQL init scripts)
+├── docs/
+│   ├── API.md
+│   ├── ARCHITECTURE.md
+│   └── SETUP.md
+├── docker-compose.yml
+└── README.md
+```
 
 ---
 

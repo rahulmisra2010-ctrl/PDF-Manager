@@ -130,6 +130,14 @@ def create_app(config: dict | None = None) -> Flask:
     app.register_blueprint(search_bp, url_prefix="/search")
     app.register_blueprint(users_bp, url_prefix="/users")
 
+    # REST API v1
+    try:
+        from backend.api.routes import api_v1_bp
+        app.register_blueprint(api_v1_bp)
+    except Exception as _api_exc:
+        import warnings
+        warnings.warn(f"Could not register API v1 blueprint: {_api_exc}", stacklevel=2)
+
     # Redirect root to dashboard
     @app.route("/")
     def root():  # noqa: WPS430
