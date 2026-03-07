@@ -140,4 +140,4 @@ except (ImportError, ModuleNotFoundError) as exc:
         "  pip install -r backend/requirements.txt",
         file=sys.stderr,
     )
-    sys.exit(1)
+    sys.exit(1) 
