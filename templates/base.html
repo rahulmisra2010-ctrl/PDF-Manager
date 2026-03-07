@@ -47,6 +47,12 @@
           </a>
         </li>
         <li class="nav-item">
+          <a class="nav-link {% if request.blueprint == 'address_book' %}active{% endif %}"
+             href="{{ url_for('address_book.index') }}">
+            <i class="bi bi-journal-bookmark-fill me-2"></i>Address Book
+          </a>
+        </li>
+        <li class="nav-item">
           <a class="nav-link {% if request.blueprint == 'search' %}active{% endif %}"
              href="{{ url_for('search.results') }}">
             <i class="bi bi-search me-2"></i>Search
