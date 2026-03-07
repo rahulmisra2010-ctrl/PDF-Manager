@@ -308,6 +308,22 @@ def serve_pdf(doc_id: int):
     return send_file(doc.file_path, mimetype="application/pdf")
 
 
+@pdf_bp.route("/<int:doc_id>/viewer")
+@login_required
+def pdf_viewer(doc_id: int):
+    """Render a full-page PDF viewer using PDF.js.
+
+    All pages are rendered sequentially in a scrollable container.
+    Interactive form fields (PDF Widget annotations — text, checkbox,
+    radio, select) are automatically detected from the PDF itself and
+    rendered as editable HTML inputs placed exactly on top of the
+    matching regions.  No pre-extracted field data is required.
+    """
+    doc = Document.query.get_or_404(doc_id)
+    pdf_url = url_for("pdf.serve_pdf", doc_id=doc_id)
+    return render_template("pdf/pdf_viewer.html", doc=doc, pdf_url=pdf_url)
+
+
 @pdf_bp.route("/<int:doc_id>/extract-overlay")
 @login_required
 def extract_overlay(doc_id: int):
