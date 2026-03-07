@@ -1,0 +1,516 @@
+{% extends "base.html" %}
+{% block title %}PDF Viewer — {{ doc.filename }}{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* ------------------------------------------------------------------ */
+  /* Layout                                                               */
+  /* ------------------------------------------------------------------ */
+  .pv-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Toolbar                                                              */
+  /* ------------------------------------------------------------------ */
+  .pv-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: #1a1a1a;
+    border-radius: 0.5rem 0.5rem 0 0;
+    flex-wrap: wrap;
+  }
+
+  .pv-toolbar label {
+    color: #ccc;
+    font-size: 0.85rem;
+    margin-bottom: 0;
+  }
+
+  .pv-toolbar input[type="number"] {
+    width: 64px;
+    text-align: center;
+    background: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 2px 4px;
+    font-size: 0.85rem;
+  }
+
+  .pv-btn {
+    background: #444;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+  .pv-btn:hover { background: #555; }
+  .pv-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ------------------------------------------------------------------ */
+  /* Scrollable pages container                                           */
+  /* ------------------------------------------------------------------ */
+  #pv-scroll {
+    background: #525659;
+    border-radius: 0 0 0.5rem 0.5rem;
+    overflow-y: auto;
+    max-height: 82vh;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Per-page wrapper                                                     */
+  /* ------------------------------------------------------------------ */
+  .pv-page-wrap {
+    position: relative;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+    display: inline-block;
+    /* width/height set by JS to match canvas */
+  }
+
+  .pv-page-wrap canvas {
+    display: block;
+  }
+
+  /* loading placeholder shown while rendering */
+  .pv-page-loading {
+    background: #3a3a3a;
+    color: #aaa;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Widget / form-field overlays                                         */
+  /* ------------------------------------------------------------------ */
+  .pv-widget-highlight {
+    position: absolute;
+    background: rgba(255, 220, 0, 0.25);
+    border: 2px solid rgba(255, 180, 0, 0.8);
+    border-radius: 3px;
+    box-sizing: border-box;
+    pointer-events: none; /* the input below captures events */
+  }
+
+  .pv-widget-input {
+    position: absolute;
+    box-sizing: border-box;
+    background: rgba(255, 255, 200, 0.75);
+    border: 1.5px solid rgba(200, 140, 0, 0.9);
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-size: 0.8rem;
+    font-family: inherit;
+    color: #222;
+    outline: none;
+    resize: none;
+    overflow: hidden;
+    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  }
+  .pv-widget-input:focus {
+    background: rgba(255, 255, 180, 0.95);
+    border-color: #e6a000;
+    box-shadow: 0 0 0 2px rgba(230,160,0,0.35);
+    z-index: 10;
+  }
+
+  /* Checkbox / radio widgets shown as a styled overlay */
+  .pv-widget-check {
+    position: absolute;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    background: rgba(255, 220, 0, 0.25);
+    border: 2px solid rgba(255, 180, 0, 0.8);
+    border-radius: 3px;
+  }
+  .pv-widget-check input {
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    accent-color: #e6a000;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Page number badge                                                    */
+  /* ------------------------------------------------------------------ */
+  .pv-page-badge {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    background: rgba(0,0,0,0.55);
+    color: #fff;
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: 3px;
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Status bar                                                           */
+  /* ------------------------------------------------------------------ */
+  #pv-status {
+    color: #ccc;
+    font-size: 0.8rem;
+    padding: 0.25rem 1rem;
+    background: #1a1a1a;
+    border-radius: 0 0 0.5rem 0.5rem;
+    margin-top: -1px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- ================================================================== -->
+<!-- Header                                                              -->
+<!-- ================================================================== -->
+<div class="pv-header">
+  <div>
+    <h5 class="mb-0">
+      <i class="bi bi-file-earmark-richtext text-info me-2"></i>PDF Viewer
+      <span class="text-muted fw-normal">— {{ doc.filename }}</span>
+    </h5>
+    <small class="text-muted">
+      All pages are rendered below. Highlighted regions are interactive PDF form fields.
+    </small>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('pdf.extract_overlay', doc_id=doc.id) }}" class="btn btn-warning btn-sm">
+      <i class="bi bi-layers me-1"></i>Overlay View
+    </a>
+    <a href="{{ url_for('pdf.detail', doc_id=doc.id) }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-arrow-left me-1"></i>Back to Document
+    </a>
+  </div>
+</div>
+
+<!-- ================================================================== -->
+<!-- Toolbar                                                              -->
+<!-- ================================================================== -->
+<div class="pv-toolbar">
+  <label style="display:flex;align-items:center;gap:4px;">
+    Zoom
+    <input id="pv-zoom-input" type="number" value="100" min="25" max="400"> %
+  </label>
+  <button id="pv-zoom-in"  class="pv-btn">+</button>
+  <button id="pv-zoom-out" class="pv-btn">−</button>
+  <button id="pv-zoom-fit" class="pv-btn" title="Fit width to screen">
+    <i class="bi bi-arrows-expand"></i> Fit Width
+  </button>
+
+  <span style="flex:1"></span>
+
+  <span id="pv-page-count" style="color:#ccc;font-size:0.85rem;"></span>
+</div>
+
+<!-- ================================================================== -->
+<!-- Scrollable pages area                                               -->
+<!-- ================================================================== -->
+<div id="pv-scroll"></div>
+<div id="pv-status">Loading PDF…</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<!--
+  PDF.js 3.11.174 from CDN — worker loaded from the same CDN.
+-->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+"use strict";
+
+// ---------------------------------------------------------------------------
+// Config from Flask
+// ---------------------------------------------------------------------------
+const PDF_URL = {{ pdf_url | tojson }};
+
+// ---------------------------------------------------------------------------
+// PDF.js worker
+// ---------------------------------------------------------------------------
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+const MIN_SCALE = 0.25;
+const MAX_SCALE = 4.0;
+
+// PDF field-flag bit masks (PDF spec table 228 / 229)
+const FF_MULTILINE  = 0x1000;  // Tx: multiline text field
+const FF_PUSHBUTTON = 0x10000; // Btn: push button (not editable)
+const FF_RADIO      = 0x8000;  // Btn: radio button group
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let pdfDoc  = null;
+let scale   = 1.0;
+
+const scrollEl  = document.getElementById("pv-scroll");
+const statusEl  = document.getElementById("pv-status");
+const zoomInput = document.getElementById("pv-zoom-input");
+const pageCount = document.getElementById("pv-page-count");
+
+// ---------------------------------------------------------------------------
+// Convert a PDF-space rectangle [x1,y1,x2,y2] to CSS top/left/width/height
+// in the *rendered* viewport coordinate system.
+//
+// PDF coordinate origin is bottom-left; viewport origin is top-left.
+// pdfjsLib.Util.transform / viewport.convertToViewportRectangle handles this.
+// ---------------------------------------------------------------------------
+function rectToCSS(rect, viewport) {
+  // rect = [x1, y1, x2, y2] in PDF space (bottom-left origin)
+  const [x1, y1, x2, y2] = pdfjsLib.Util.normalizeRect(
+    viewport.convertToViewportRectangle(rect)
+  );
+  return {
+    left:   Math.floor(x1),
+    top:    Math.floor(y1),
+    width:  Math.ceil(x2 - x1),
+    height: Math.ceil(y2 - y1),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Render one page and its Widget annotations into a wrapper div
+// ---------------------------------------------------------------------------
+async function renderPageIntoWrapper(pageObj, wrapEl) {
+  const viewport = pageObj.getViewport({ scale });
+
+  // Size the wrapper
+  wrapEl.style.width  = viewport.width  + "px";
+  wrapEl.style.height = viewport.height + "px";
+
+  // Remove loading placeholder, create canvas
+  wrapEl.innerHTML = "";
+
+  // Page badge
+  const badge = document.createElement("div");
+  badge.className   = "pv-page-badge";
+  badge.textContent = "Page " + pageObj.pageNumber;
+  wrapEl.appendChild(badge);
+
+  const canvas = document.createElement("canvas");
+  canvas.width  = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  wrapEl.appendChild(canvas);
+
+  // Render PDF content onto canvas
+  await pageObj.render({
+    canvasContext: canvas.getContext("2d"),
+    viewport,
+  }).promise;
+
+  // Fetch annotations and draw interactive Widget overlays
+  const annotations = await pageObj.getAnnotations({ intent: "display" });
+  annotations.forEach(annot => {
+    if (annot.subtype !== "Widget") return;
+    if (!annot.rect) return;
+
+    const css = rectToCSS(annot.rect, viewport);
+    if (css.width < 2 || css.height < 2) return; // skip invisible
+
+    const fieldType = (annot.fieldType || "").toUpperCase();
+
+    // Highlight element (always visible background tint)
+    const highlight = document.createElement("div");
+    highlight.className = "pv-widget-highlight";
+    Object.assign(highlight.style, {
+      left:   css.left   + "px",
+      top:    css.top    + "px",
+      width:  css.width  + "px",
+      height: css.height + "px",
+    });
+    wrapEl.appendChild(highlight);
+
+    if (fieldType === "Tx") {
+      // Text input field
+      const isMultiline = !!(annot.fieldFlags & FF_MULTILINE);
+      const inp = document.createElement(isMultiline ? "textarea" : "input");
+      if (!isMultiline) {
+        inp.type = "text";
+      } else {
+        inp.rows = 1;
+      }
+      inp.className   = "pv-widget-input";
+      inp.value       = annot.fieldValue || "";
+      inp.title       = annot.alternativeText || annot.fieldName || "";
+      inp.placeholder = annot.alternativeText || annot.fieldName || "";
+      Object.assign(inp.style, {
+        left:   css.left   + "px",
+        top:    css.top    + "px",
+        width:  css.width  + "px",
+        height: css.height + "px",
+        lineHeight: css.height + "px",
+      });
+      if (annot.readOnly) {
+        inp.readOnly = true;
+        inp.style.opacity = "0.7";
+        inp.style.cursor  = "default";
+      }
+      wrapEl.appendChild(inp);
+
+    } else if (fieldType === "Btn") {
+      // Checkbox or radio button
+      const isPushButton = !!(annot.fieldFlags & FF_PUSHBUTTON);
+      if (isPushButton) return; // skip push-buttons (not editable text)
+
+      const isRadio = !!(annot.fieldFlags & FF_RADIO);
+      const wrap = document.createElement("div");
+      wrap.className = "pv-widget-check";
+      Object.assign(wrap.style, {
+        left:   css.left   + "px",
+        top:    css.top    + "px",
+        width:  css.width  + "px",
+        height: css.height + "px",
+      });
+
+      const ck = document.createElement("input");
+      ck.type    = isRadio ? "radio" : "checkbox";
+      ck.name    = annot.fieldName || "";
+      ck.title   = annot.alternativeText || annot.fieldName || "";
+      // PDF 'Off' means unchecked; anything else means checked
+      ck.checked = annot.fieldValue && annot.fieldValue !== "Off";
+      if (annot.readOnly) ck.disabled = true;
+      wrap.appendChild(ck);
+      wrapEl.appendChild(wrap);
+
+    } else if (fieldType === "Ch") {
+      // Choice / select field
+      const sel = document.createElement("select");
+      sel.className = "pv-widget-input";
+      sel.title     = annot.alternativeText || annot.fieldName || "";
+      Object.assign(sel.style, {
+        left:   css.left   + "px",
+        top:    css.top    + "px",
+        width:  css.width  + "px",
+        height: css.height + "px",
+      });
+      (annot.options || []).forEach(opt => {
+        const option = document.createElement("option");
+        option.value       = opt.exportValue || opt.displayValue;
+        option.textContent = opt.displayValue || opt.exportValue;
+        if (option.value === annot.fieldValue) option.selected = true;
+        sel.appendChild(option);
+      });
+      if (annot.readOnly) sel.disabled = true;
+      wrapEl.appendChild(sel);
+    }
+    // Signature (Sig) and other types are shown as highlight-only
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Build all page wrappers and render them sequentially
+// ---------------------------------------------------------------------------
+async function renderAllPages() {
+  statusEl.textContent = "Rendering pages…";
+  scrollEl.innerHTML   = "";
+
+  const numPages = pdfDoc.numPages;
+  pageCount.textContent = numPages + " page" + (numPages !== 1 ? "s" : "");
+
+  // Create placeholder wrappers immediately so the page count/layout is visible
+  const wrappers = [];
+  for (let i = 1; i <= numPages; i++) {
+    const wrap = document.createElement("div");
+    wrap.className = "pv-page-wrap pv-page-loading";
+    wrap.style.width  = "600px";
+    wrap.style.height = "200px";
+    wrap.dataset.pageNum = i;
+    wrap.innerHTML =
+      '<i class="bi bi-hourglass-split"></i> Rendering page ' + i + '…';
+    scrollEl.appendChild(wrap);
+    wrappers.push(wrap);
+  }
+
+  // Render pages sequentially to avoid hammering memory
+  for (let i = 1; i <= numPages; i++) {
+    const wrap = wrappers[i - 1];
+    wrap.classList.remove("pv-page-loading");
+    try {
+      const pageObj = await pdfDoc.getPage(i);
+      await renderPageIntoWrapper(pageObj, wrap);
+    } catch (err) {
+      wrap.innerHTML =
+        '<span style="color:#f88;padding:1rem;">Page ' + i +
+        ' failed: ' + err.message + '</span>';
+    }
+    statusEl.textContent =
+      "Rendered " + i + " / " + numPages + " pages…";
+  }
+
+  statusEl.textContent =
+    "All " + numPages + " page" + (numPages !== 1 ? "s" : "") +
+    " rendered. Scroll to navigate.";
+}
+
+// ---------------------------------------------------------------------------
+// Auto-fit width to the scroll container's visible width
+// ---------------------------------------------------------------------------
+async function fitWidth() {
+  if (!pdfDoc) return;
+  const page = await pdfDoc.getPage(1);
+  const vp   = page.getViewport({ scale: 1 });
+  const availW = scrollEl.clientWidth - 32; // padding
+  scale = Math.max(MIN_SCALE, availW / vp.width);
+  zoomInput.value = Math.round(scale * 100);
+  await renderAllPages();
+}
+
+// ---------------------------------------------------------------------------
+// Zoom helpers
+// ---------------------------------------------------------------------------
+function setZoom(newScale) {
+  scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, newScale));
+  zoomInput.value = Math.round(scale * 100);
+  renderAllPages();
+}
+
+zoomInput.addEventListener("change", () => {
+  const n = parseInt(zoomInput.value, 10);
+  if (!isNaN(n)) setZoom(n / 100);
+});
+document.getElementById("pv-zoom-in").addEventListener("click",
+  () => setZoom(scale + 0.25));
+document.getElementById("pv-zoom-out").addEventListener("click",
+  () => setZoom(scale - 0.25));
+document.getElementById("pv-zoom-fit").addEventListener("click", fitWidth);
+
+// ---------------------------------------------------------------------------
+// Load PDF and kick off rendering
+// ---------------------------------------------------------------------------
+pdfjsLib.getDocument(PDF_URL).promise.then(async pdf => {
+  pdfDoc = pdf;
+  await fitWidth();   // auto-fit on first load, then render all pages
+}).catch(err => {
+  statusEl.textContent = "Failed to load PDF: " + err.message;
+  statusEl.style.color = "#f88";
+  console.error("PDF.js error:", err);
+});
+</script>
+{% endblock %}
