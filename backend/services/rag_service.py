@@ -121,7 +121,7 @@ class RAGService:
         self._embedder_loaded = True
         try:
             from sentence_transformers import SentenceTransformer  # type: ignore[import]
-            self._embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+            self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
             logger.info("RAGService: sentence-transformers loaded (all-MiniLM-L6-v2)")
         except Exception as exc:  # pragma: no cover
             logger.warning("RAGService: sentence-transformers unavailable (%s); using regex fallback.", exc)

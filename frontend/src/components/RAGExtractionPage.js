@@ -64,7 +64,7 @@ function FieldHistoryPanel({ fieldId, open }) {
           <span className="text-success">{h.new_value ?? '(empty)'}</span>
           {' '}
           <span className="fst-italic">
-            by {h.edited_by || 'unknown'} on {h.edited_at ? h.edited_at.slice(0, 16) : ''}
+            by {h.edited_by || 'unknown'} on {h.edited_at ? new Date(h.edited_at).toLocaleString() : ''}
           </span>
         </div>
       ))}
@@ -106,7 +106,8 @@ function FieldRow({ field, onSave }) {
             className="btn btn-sm btn-outline-secondary py-0 px-1"
             style={{ fontSize: '0.7rem' }}
             onClick={() => setShowHistory(h => !h)}
-            title="Toggle history"
+            title="Toggle edit history"
+            aria-label="Toggle edit history"
           >
             ⏱
           </button>
@@ -126,7 +127,8 @@ function FieldRow({ field, onSave }) {
             className="btn btn-outline-primary"
             onClick={handleSave}
             disabled={saving}
-            title="Save this field"
+            title={saving ? 'Saving field' : 'Save field'}
+            aria-label={saving ? 'Saving field' : 'Save field'}
           >
             {saving ? '…' : '✓'}
           </button>

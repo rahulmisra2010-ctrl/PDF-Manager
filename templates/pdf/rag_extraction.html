@@ -657,7 +657,7 @@ async function toggleHistory(fieldId) {
         &rarr;
         <span class="text-success">${escapeHtml(h.new_value ?? '(empty)')}</span>
         <span class="text-muted ms-1">by ${escapeHtml(h.edited_by || 'unknown')}
-          on ${escapeHtml(h.edited_at || '')}</span>
+          on ${h.edited_at ? new Date(h.edited_at).toLocaleString() : ''}</span>
       </div>`).join('');
   } catch (err) {
     panel.innerHTML = `<em class="text-danger">Error: ${escapeHtml(err.message)}</em>`;
