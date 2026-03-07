@@ -112,3 +112,58 @@ export async function deleteDocument(documentId) {
     method: 'DELETE',
   });
 }
+
+// ---------------------------------------------------------------------------
+// RAG API
+// ---------------------------------------------------------------------------
+
+/**
+ * Run RAG-based field extraction for a document.
+ * @param {string|number} documentId
+ * @returns {Promise<{document_id: number, fields: Array, page_count: number}>}
+ */
+export async function ragExtract(documentId) {
+  return apiFetch(`/extract/rag/${encodeURIComponent(documentId)}`, {
+    method: 'POST',
+  });
+}
+
+/**
+ * Get all extracted fields for a document.
+ * @param {string|number} documentId
+ * @returns {Promise<{document_id: number, fields: Array}>}
+ */
+export async function getFields(documentId) {
+  return apiFetch(`/fields/${encodeURIComponent(documentId)}`);
+}
+
+/**
+ * Update a single extracted field value.
+ * @param {number} fieldId
+ * @param {string} value
+ * @returns {Promise<{message: string, field: object}>}
+ */
+export async function updateField(fieldId, value) {
+  return apiFetch(`/fields/${encodeURIComponent(fieldId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  });
+}
+
+/**
+ * Get edit history for a single field.
+ * @param {number} fieldId
+ * @returns {Promise<{field_id: number, history: Array}>}
+ */
+export async function getFieldHistory(fieldId) {
+  return apiFetch(`/fields/${encodeURIComponent(fieldId)}/history`);
+}
+
+/**
+ * List all RAG text files stored on the server.
+ * @returns {Promise<{files: Array}>}
+ */
+export async function listRagFiles() {
+  return apiFetch('/rag/files');
+}

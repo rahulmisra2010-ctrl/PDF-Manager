@@ -3,10 +3,11 @@ models.py — SQLAlchemy models for the Flask PDF-Manager application.
 
 Models
 ------
-* User         — application users with RBAC roles
-* Document     — uploaded PDF files
-* ExtractedField — individual fields parsed from a Document
-* AuditLog     — immutable audit trail for all user actions
+* User             — application users with RBAC roles
+* Document         — uploaded PDF files
+* ExtractedField   — individual fields parsed from a Document
+* FieldEditHistory — versioned edit history for extracted fields (RAG)
+* AuditLog         — immutable audit trail for all user actions
 """
 
 from __future__ import annotations
@@ -122,6 +123,44 @@ class ExtractedField(db.Model):
 
     def __repr__(self) -> str:
         return f"<ExtractedField {self.field_name!r}={self.value!r}>"
+
+
+# ---------------------------------------------------------------------------
+# FieldEditHistory
+# ---------------------------------------------------------------------------
+
+class FieldEditHistory(db.Model):
+    """Versioned edit history for a single ExtractedField (RAG change tracking)."""
+
+    __tablename__ = "field_edit_history"
+
+    id = db.Column(db.Integer, primary_key=True)
+    extracted_field_id = db.Column(
+        db.Integer, db.ForeignKey("extracted_fields.id", ondelete="CASCADE"), nullable=False
+    )
+    old_value = db.Column(db.Text, nullable=True)
+    new_value = db.Column(db.Text, nullable=True)
+    edited_by = db.Column(db.String(120), nullable=True)  # username
+    edited_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    field = db.relationship("ExtractedField", backref=db.backref("history", lazy="dynamic"))
+
+    def to_dict(self) -> dict:
+        """Return a JSON-serialisable representation."""
+        return {
+            "id": self.id,
+            "extracted_field_id": self.extracted_field_id,
+            "old_value": self.old_value,
+            "new_value": self.new_value,
+            "edited_by": self.edited_by,
+            "edited_at": self.edited_at.isoformat() if self.edited_at else None,
+        }
+
+    def __repr__(self) -> str:
+        return (
+            f"<FieldEditHistory field_id={self.extracted_field_id} "
+            f"{self.old_value!r} -> {self.new_value!r}>"
+        )
 
 
 # ---------------------------------------------------------------------------
