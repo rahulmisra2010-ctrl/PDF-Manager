@@ -1,0 +1,590 @@
+{% extends "base.html" %}
+{% block title %}Overlay Extract — {{ doc.filename }}{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* ------------------------------------------------------------------ */
+  /* Layout                                                               */
+  /* ------------------------------------------------------------------ */
+  .overlay-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* PDF viewer panel                                                     */
+  /* ------------------------------------------------------------------ */
+  .pdf-viewer-panel {
+    background: #2b2b2b;
+    border-radius: 0.5rem;
+    overflow: hidden;
+  }
+
+  .pdf-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: #1a1a1a;
+    flex-wrap: wrap;
+  }
+
+  .pdf-toolbar label {
+    color: #ccc;
+    font-size: 0.85rem;
+    margin-bottom: 0;
+  }
+
+  .pdf-toolbar input[type="number"] {
+    width: 56px;
+    text-align: center;
+    background: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 2px 4px;
+    font-size: 0.85rem;
+  }
+
+  .btn-toolbar-pdf {
+    background: #444;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background 0.15s;
+  }
+  .btn-toolbar-pdf:hover { background: #555; }
+  .btn-toolbar-pdf:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ------------------------------------------------------------------ */
+  /* Canvas + overlay container                                           */
+  /* ------------------------------------------------------------------ */
+  #pdf-container {
+    position: relative;
+    overflow: auto;
+    max-height: 75vh;
+    display: flex;
+    justify-content: center;
+    padding: 1rem;
+    background: #525659;
+  }
+
+  #pdf-wrapper {
+    position: relative;
+    display: inline-block;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+  }
+
+  #pdf-canvas {
+    display: block;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Field overlays                                                       */
+  /* ------------------------------------------------------------------ */
+  .field-overlay {
+    position: absolute;
+    background: rgba(255, 220, 0, 0.28);
+    border: 2px solid rgba(255, 180, 0, 0.75);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    box-sizing: border-box;
+  }
+  .field-overlay:hover,
+  .field-overlay.active {
+    background: rgba(255, 220, 0, 0.55);
+    border-color: #e6a000;
+  }
+
+  .field-overlay-label {
+    position: absolute;
+    top: -1.4rem;
+    left: 0;
+    background: #e6a000;
+    color: #000;
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 3px 3px 0 0;
+    white-space: nowrap;
+    pointer-events: none;
+    line-height: 1.4;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Tooltip / inline edit popup                                          */
+  /* ------------------------------------------------------------------ */
+  #field-popup {
+    display: none;
+    position: absolute;
+    z-index: 100;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    padding: 0.75rem;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+    min-width: 240px;
+  }
+  #field-popup h6 {
+    margin: 0 0 0.4rem;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #333;
+  }
+  #field-popup input {
+    width: 100%;
+    margin-bottom: 0.4rem;
+  }
+  #field-popup .popup-actions {
+    display: flex;
+    gap: 0.4rem;
+    justify-content: flex-end;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* No-overlays info banner                                              */
+  /* ------------------------------------------------------------------ */
+  .no-overlay-info {
+    background: rgba(255,255,255,0.08);
+    color: #ccc;
+    text-align: center;
+    padding: 0.75rem;
+    font-size: 0.85rem;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h5 class="mb-0">
+      <i class="bi bi-layers text-warning me-2"></i>Overlay Extract
+      <span class="text-muted fw-normal">— {{ doc.filename }}</span>
+    </h5>
+    <small class="text-muted">
+      Click a highlighted region to edit the field value in-place.
+    </small>
+  </div>
+  <div class="d-flex gap-2">
+    <form method="POST" action="{{ url_for('pdf.extract', doc_id=doc.id) }}" class="d-inline"
+          onsubmit="return confirm('Re-run extraction? This will overwrite existing fields.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-primary btn-sm">
+        <i class="bi bi-cpu me-1"></i>Re-extract Fields
+      </button>
+    </form>
+    <a href="{{ url_for('pdf.detail', doc_id=doc.id) }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-arrow-left me-1"></i>Back to Document
+    </a>
+  </div>
+</div>
+
+<!-- ================================================================== -->
+<!-- PDF viewer                                                           -->
+<!-- ================================================================== -->
+<div class="pdf-viewer-panel mb-3">
+
+  <!-- Toolbar -->
+  <div class="pdf-toolbar">
+    <button id="btn-prev" class="btn-toolbar-pdf" title="Previous page" disabled>
+      <i class="bi bi-chevron-left"></i>
+    </button>
+    <label>
+      Page
+      <input id="page-input" type="number" value="1" min="1" max="9999">
+      / <span id="page-total">?</span>
+    </label>
+    <button id="btn-next" class="btn-toolbar-pdf" title="Next page" disabled>
+      <i class="bi bi-chevron-right"></i>
+    </button>
+
+    <span style="flex:1"></span>
+
+    <label style="display:flex;align-items:center;gap:4px;">
+      Zoom
+      <input id="zoom-input" type="number" value="100" min="25" max="400"
+             style="width:64px"> %
+    </label>
+    <button id="btn-zoom-in"  class="btn-toolbar-pdf">+</button>
+    <button id="btn-zoom-out" class="btn-toolbar-pdf">−</button>
+    <button id="btn-zoom-fit" class="btn-toolbar-pdf" title="Fit to width">
+      <i class="bi bi-arrows-expand"></i>
+    </button>
+
+    <span style="flex:1"></span>
+
+    <button id="btn-save-overlay" class="btn-toolbar-pdf"
+            style="background:#2563eb;" title="Save all edited field values">
+      <i class="bi bi-save me-1"></i>Save Fields
+    </button>
+  </div>
+
+  <!-- Canvas area -->
+  <div id="pdf-container">
+    <div id="pdf-wrapper">
+      <canvas id="pdf-canvas"></canvas>
+      <!-- field overlays are injected here by JS -->
+    </div>
+    <!-- popup editor (shared) -->
+    <div id="field-popup">
+      <h6 id="popup-title">Field Name</h6>
+      <input type="text" id="popup-input" class="form-control form-control-sm">
+      <div class="popup-actions mt-2">
+        <button class="btn btn-sm btn-outline-secondary" id="popup-cancel">Cancel</button>
+        <button class="btn btn-sm btn-primary" id="popup-apply">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  {% if not fields %}
+  <div class="no-overlay-info">
+    No fields extracted yet.
+    <a href="{{ url_for('pdf.detail', doc_id=doc.id) }}" class="text-warning">
+      Run extraction first
+    </a> to see field overlays.
+  </div>
+  {% endif %}
+</div>
+
+<!-- ================================================================== -->
+<!-- Backup editable form                                                 -->
+<!-- ================================================================== -->
+<div class="card">
+  <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-pencil-square me-2"></i>Editable Fields</span>
+    <small class="text-muted fw-normal">Changes here and via overlay are saved together.</small>
+  </div>
+  <div class="card-body">
+    {% if fields %}
+    <form id="fields-form" method="POST" action="{{ url_for('pdf.edit', doc_id=doc.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="row g-3">
+        {% for field in fields %}
+        <div class="col-md-4">
+          <label class="form-label fw-semibold small">{{ field.field_name }}</label>
+          <input type="text"
+                 class="form-control form-control-sm field-input"
+                 id="form-field-{{ field.id }}"
+                 name="field_{{ field.id }}"
+                 value="{{ field.value or '' }}"
+                 data-field-id="{{ field.id }}">
+        </div>
+        {% endfor %}
+      </div>
+      <div class="mt-3 d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-sm">
+          <i class="bi bi-save me-1"></i>Save Changes
+        </button>
+        <a href="{{ url_for('pdf.detail', doc_id=doc.id) }}"
+           class="btn btn-outline-secondary btn-sm">Cancel</a>
+      </div>
+    </form>
+    {% else %}
+    <div class="alert alert-info mb-0">
+      No fields to display. Run
+      <strong>Extract Fields</strong> on the
+      <a href="{{ url_for('pdf.detail', doc_id=doc.id) }}">document detail page</a> first.
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<!--
+  PDF.js from CDN (Mozilla).  The worker script is loaded from the same CDN
+  so no local file serving is needed.
+-->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+// ---------------------------------------------------------------------------
+// Configuration data injected from Flask
+// ---------------------------------------------------------------------------
+const PDF_URL   = {{ pdf_url | tojson }};
+const DOC_ID    = {{ doc.id }};
+
+// Field data: [{id, field_name, value, bounding_box}, …]
+// bounding_box may be null (no real coords available) or:
+//   {page: 1, x: 0..1, y: 0..1, w: 0..1, h: 0..1}  — as fractions of page size
+const FIELDS = {{ fields | tojson }};
+
+// ---------------------------------------------------------------------------
+// Demo bounding boxes — used when a field has no real bounding_box.
+// Coordinates are fractions of the rendered page (0..1, top-left origin).
+// Extend map_address_book_fields() to supply real coords and remove these.
+// ---------------------------------------------------------------------------
+const DEMO_BOXES = {
+  "Name":         { page: 1, x: 0.05, y: 0.10, w: 0.50, h: 0.045 },
+  "Street Address":{ page: 1, x: 0.05, y: 0.17, w: 0.65, h: 0.045 },
+  "City":         { page: 1, x: 0.05, y: 0.24, w: 0.30, h: 0.045 },
+  "State":        { page: 1, x: 0.40, y: 0.24, w: 0.12, h: 0.045 },
+  "Zip Code":     { page: 1, x: 0.56, y: 0.24, w: 0.18, h: 0.045 },
+  "Home Phone":   { page: 1, x: 0.05, y: 0.31, w: 0.28, h: 0.045 },
+  "Cell Phone":   { page: 1, x: 0.38, y: 0.31, w: 0.28, h: 0.045 },
+  "Work Phone":   { page: 1, x: 0.05, y: 0.38, w: 0.28, h: 0.045 },
+  "Email":        { page: 1, x: 0.05, y: 0.45, w: 0.55, h: 0.045 },
+};
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+let pdfDoc    = null;
+let pageNum   = 1;
+let scale     = 1.0;
+let rendering = false;
+let pendingPage = null;
+
+const canvas    = document.getElementById("pdf-canvas");
+const ctx       = canvas.getContext("2d");
+const wrapper   = document.getElementById("pdf-wrapper");
+const container = document.getElementById("pdf-container");
+const popup     = document.getElementById("field-popup");
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function getBox(field) {
+  return field.bounding_box || DEMO_BOXES[field.field_name] || null;
+}
+
+function fieldsOnPage(page) {
+  return FIELDS.filter(f => {
+    const box = getBox(f);
+    return box && box.page === page;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Render a page
+// ---------------------------------------------------------------------------
+async function renderPage(num) {
+  if (rendering) {
+    pendingPage = num;
+    return;
+  }
+  rendering = true;
+  pageNum = num;
+  document.getElementById("page-input").value = num;
+  document.getElementById("btn-prev").disabled = num <= 1;
+  document.getElementById("btn-next").disabled = num >= pdfDoc.numPages;
+
+  const page = await pdfDoc.getPage(num);
+  const viewport = page.getViewport({ scale });
+
+  canvas.width  = viewport.width;
+  canvas.height = viewport.height;
+
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  rendering = false;
+
+  // Draw overlays for the current page
+  drawOverlays(num, viewport.width, viewport.height);
+
+  if (pendingPage !== null) {
+    const next = pendingPage;
+    pendingPage = null;
+    await renderPage(next);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Overlays
+// ---------------------------------------------------------------------------
+function drawOverlays(page, canvasW, canvasH) {
+  // Remove previous overlay divs
+  wrapper.querySelectorAll(".field-overlay").forEach(el => el.remove());
+  closePopup();
+
+  const pageFields = fieldsOnPage(page);
+  if (!pageFields.length) return;
+
+  pageFields.forEach(field => {
+    const box = getBox(field);
+    const el  = document.createElement("div");
+    el.className    = "field-overlay";
+    el.dataset.fieldId = field.id;
+    el.style.left   = (box.x * canvasW) + "px";
+    el.style.top    = (box.y * canvasH) + "px";
+    el.style.width  = (box.w * canvasW) + "px";
+    el.style.height = (box.h * canvasH) + "px";
+
+    const label = document.createElement("div");
+    label.className   = "field-overlay-label";
+    label.textContent = field.field_name;
+    el.appendChild(label);
+
+    el.addEventListener("click", e => openPopup(e, field, el));
+    wrapper.appendChild(el);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Popup editor
+// ---------------------------------------------------------------------------
+let activeOverlay = null;
+let activeField   = null;
+
+function openPopup(e, field, overlayEl) {
+  e.stopPropagation();
+  closePopup();
+
+  activeField   = field;
+  activeOverlay = overlayEl;
+  overlayEl.classList.add("active");
+
+  document.getElementById("popup-title").textContent = field.field_name;
+  document.getElementById("popup-input").value = field.value || "";
+
+  // Position popup near overlay, keeping within viewport
+  const wRect = wrapper.getBoundingClientRect();
+  const oRect = overlayEl.getBoundingClientRect();
+  const relTop  = oRect.bottom - wRect.top + 6;
+  const relLeft = oRect.left   - wRect.left;
+
+  popup.style.top  = relTop  + "px";
+  popup.style.left = relLeft + "px";
+  popup.style.display = "block";
+
+  // Adjust if popup overflows container
+  requestAnimationFrame(() => {
+    const pRect = popup.getBoundingClientRect();
+    const cRect = container.getBoundingClientRect();
+    if (pRect.right > cRect.right) {
+      popup.style.left = (relLeft - (pRect.right - cRect.right) - 8) + "px";
+    }
+    if (pRect.bottom > cRect.bottom) {
+      popup.style.top = (relTop - overlayEl.offsetHeight - popup.offsetHeight - 12) + "px";
+    }
+  });
+
+  document.getElementById("popup-input").focus();
+}
+
+function closePopup() {
+  popup.style.display = "none";
+  if (activeOverlay) activeOverlay.classList.remove("active");
+  activeOverlay = null;
+  activeField   = null;
+}
+
+function applyPopup() {
+  if (!activeField) return;
+  const newVal = document.getElementById("popup-input").value;
+  activeField.value = newVal;
+
+  // Sync to the backup form input
+  const formInput = document.getElementById("form-field-" + activeField.id);
+  if (formInput) formInput.value = newVal;
+
+  closePopup();
+}
+
+document.getElementById("popup-apply").addEventListener("click", applyPopup);
+document.getElementById("popup-cancel").addEventListener("click", closePopup);
+document.getElementById("popup-input").addEventListener("keydown", e => {
+  if (e.key === "Enter")  applyPopup();
+  if (e.key === "Escape") closePopup();
+});
+document.addEventListener("click", e => {
+  if (popup.style.display === "block" &&
+      !popup.contains(e.target) &&
+      !e.target.closest(".field-overlay")) {
+    closePopup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Save fields (overlay edit → server via the existing /edit POST route)
+// ---------------------------------------------------------------------------
+document.getElementById("btn-save-overlay").addEventListener("click", () => {
+  // Sync FIELDS values into the hidden backup form, then submit
+  FIELDS.forEach(f => {
+    const inp = document.getElementById("form-field-" + f.id);
+    if (inp) inp.value = f.value;
+  });
+  const form = document.getElementById("fields-form");
+  if (form) form.submit();
+});
+
+// ---------------------------------------------------------------------------
+// Navigation
+// ---------------------------------------------------------------------------
+document.getElementById("btn-prev").addEventListener("click", () => {
+  if (pageNum > 1) renderPage(pageNum - 1);
+});
+document.getElementById("btn-next").addEventListener("click", () => {
+  if (pageNum < pdfDoc.numPages) renderPage(pageNum + 1);
+});
+document.getElementById("page-input").addEventListener("change", e => {
+  const n = parseInt(e.target.value, 10);
+  if (!isNaN(n) && n >= 1 && n <= pdfDoc.numPages) renderPage(n);
+});
+
+// ---------------------------------------------------------------------------
+// Zoom
+// ---------------------------------------------------------------------------
+function setZoom(newScale) {
+  scale = Math.min(4, Math.max(0.25, newScale));
+  document.getElementById("zoom-input").value = Math.round(scale * 100);
+  renderPage(pageNum);
+}
+
+document.getElementById("zoom-input").addEventListener("change", e => {
+  const n = parseInt(e.target.value, 10);
+  if (!isNaN(n)) setZoom(n / 100);
+});
+document.getElementById("btn-zoom-in").addEventListener("click", () => setZoom(scale + 0.25));
+document.getElementById("btn-zoom-out").addEventListener("click", () => setZoom(scale - 0.25));
+document.getElementById("btn-zoom-fit").addEventListener("click", () => {
+  if (!pdfDoc) return;
+  pdfDoc.getPage(pageNum).then(page => {
+    const vp = page.getViewport({ scale: 1 });
+    const containerW = container.clientWidth - 32;  // padding
+    setZoom(containerW / vp.width);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Load PDF
+// ---------------------------------------------------------------------------
+pdfjsLib.getDocument(PDF_URL).promise.then(pdf => {
+  pdfDoc = pdf;
+  document.getElementById("page-total").textContent = pdf.numPages;
+  document.getElementById("page-input").max = pdf.numPages;
+  document.getElementById("btn-next").disabled = pdf.numPages <= 1;
+
+  // Auto-fit width on first load
+  pdf.getPage(1).then(page => {
+    const vp = page.getViewport({ scale: 1 });
+    const containerW = container.clientWidth - 32;
+    scale = Math.max(0.5, containerW / vp.width);
+    document.getElementById("zoom-input").value = Math.round(scale * 100);
+    renderPage(1);
+  });
+}).catch(err => {
+  console.error("PDF.js load error:", err);
+  container.innerHTML =
+    '<div class="no-overlay-info text-danger p-4">Failed to load PDF: ' +
+    err.message + '</div>';
+});
+
+// Sync form inputs → FIELDS array (so Save Fields toolbar button picks up
+// changes made directly in the backup form without using overlays).
+document.querySelectorAll(".field-input").forEach(inp => {
+  inp.addEventListener("change", e => {
+    const id = parseInt(e.target.dataset.fieldId, 10);
+    const f  = FIELDS.find(x => x.id === id);
+    if (f) f.value = e.target.value;
+  });
+});
+</script>
+{% endblock %}

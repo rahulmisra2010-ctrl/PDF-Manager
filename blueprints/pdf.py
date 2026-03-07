@@ -12,6 +12,8 @@ POST /pdf/<id>/edit                 — save edited field values
 POST /pdf/<id>/approve              — mark document approved (Verifier+)
 POST /pdf/<id>/reject               — mark document rejected (Verifier+)
 GET  /pdf/<id>/export/<fmt>         — export fields as csv / xlsx / json
+GET  /pdf/<id>/serve-pdf            — serve the raw PDF file (for PDF.js)
+GET  /pdf/<id>/extract-overlay      — PDF viewer with editable field overlays
 """
 
 import csv
@@ -293,6 +295,59 @@ def export(doc_id: int, fmt: str):
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         as_attachment=True,
         download_name=f"{doc.filename}_fields.xlsx",
+    )
+
+
+@pdf_bp.route("/<int:doc_id>/serve-pdf")
+@login_required
+def serve_pdf(doc_id: int):
+    """Serve the raw PDF file so PDF.js can load it in the browser."""
+    doc = Document.query.get_or_404(doc_id)
+    if not os.path.exists(doc.file_path):
+        abort(404)
+    return send_file(doc.file_path, mimetype="application/pdf")
+
+
+@pdf_bp.route("/<int:doc_id>/extract-overlay")
+@login_required
+def extract_overlay(doc_id: int):
+    """Render a PDF.js viewer with editable address-book field overlays.
+
+    The nine address-book fields (Name, Street Address, City, State, Zip Code,
+    Home Phone, Cell Phone, Work Phone, Email) are displayed as highlighted
+    overlays on top of the PDF.  Each overlay is also mirrored in a backup
+    editable form below the viewer.
+
+    Bounding-box note
+    -----------------
+    ``PDFService.map_address_book_fields()`` returns ``{"field_name", "value"}``
+    dicts but does *not* currently provide bounding-box coordinates.  Until real
+    bounding boxes are available the template uses fixed demo positions on page 1.
+    To extend this with real coordinates, update ``map_address_book_fields`` to
+    include ``"bounding_box": {"page": 1, "x": …, "y": …, "w": …, "h": …}`` in
+    each returned dict and pass them to the template via the ``fields`` list.
+    """
+    doc = Document.query.get_or_404(doc_id)
+    fields = ExtractedField.query.filter_by(document_id=doc_id).all()
+
+    # Build a list of field dicts that the template can use.  Bounding boxes are
+    # intentionally left as None here; the template falls back to demo positions.
+    field_data = [
+        {
+            "id": f.id,
+            "field_name": f.field_name,
+            "value": f.value or "",
+            "bounding_box": None,  # extend here when real coords are available
+        }
+        for f in fields
+    ]
+
+    pdf_url = url_for("pdf.serve_pdf", doc_id=doc_id)
+    return render_template(
+        "pdf/extract_overlay.html",
+        doc=doc,
+        fields=field_data,
+        pdf_url=pdf_url,
     )
 
 
