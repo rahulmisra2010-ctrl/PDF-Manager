@@ -230,6 +230,9 @@ def extract(doc_id: int):
                 document_id=doc_id,
                 field_name=item["field_name"],
                 value=item["value"],
+                # Confidence is set to 1.0 as a placeholder; the standard
+                # PDFService.map_address_book_fields() does not return a
+                # per-field confidence score (unlike OCR engines).
                 confidence=1.0,
             )
             db.session.add(field)

@@ -315,12 +315,12 @@ document.addEventListener("click", e => {
    Apply a new value to a field (updates in-memory + hidden save form + AJAX)
 ────────────────────────────────────────────────────────────────────────── */
 function applyFieldValue(field, newValue) {
-  const trimmed = String(newValue);
-  field.value = trimmed;
+  const stringValue = String(newValue).trim();
+  field.value = stringValue;
 
   // Sync to the hidden save form
   const hiddenInput = document.getElementById("save-field-" + field.id);
-  if (hiddenInput) hiddenInput.value = trimmed;
+  if (hiddenInput) hiddenInput.value = stringValue;
 
   // Update left-panel list item value
   if (fieldListEl) {
@@ -329,18 +329,18 @@ function applyFieldValue(field, newValue) {
     );
     if (li) {
       const valEl = li.querySelector(".lpe-field-value");
-      if (valEl) valEl.textContent = trimmed || "—";
+      if (valEl) valEl.textContent = stringValue || "—";
       li.classList.add("lpe-field-edited");
     }
   }
 
   // Refresh right panel if this is the active field
   if (activeField && activeField.id === field.id) {
-    editTextarea.value = trimmed;
+    editTextarea.value = stringValue;
   }
 
   // Persist to server via AJAX (fire-and-forget; errors are logged)
-  persistField(field.id, trimmed);
+  persistField(field.id, stringValue);
 }
 
 async function persistField(fieldId, value) {

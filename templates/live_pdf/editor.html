@@ -156,6 +156,7 @@
       </button>
       <label class="lpe-page-label">
         Page
+        {# max is set dynamically by JS once the PDF loads; 9999 is the initial upper bound #}
         <input id="page-input" type="number" value="1" min="1" max="9999">
         / <span id="page-total">?</span>
       </label>
