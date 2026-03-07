@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+{% block title %}Address Book Editor — {{ doc.filename }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/address-book-editor.css') }}">
+{% endblock %}
+
+{% block content %}
+{# ─────────────────────────────────────────────────────────────────────────
+   Status badge helper
+───────────────────────────────────────────────────────────────────────── #}
+{% set status_cls = {
+  'uploaded':  'secondary',
+  'extracted': 'info',
+  'edited':    'warning',
+  'approved':  'success',
+  'rejected':  'danger'
+}.get(doc.status, 'secondary') %}
+
+{# ─────────────────────────────────────────────────────────────────────────
+   Top header row
+───────────────────────────────────────────────────────────────────────── #}
+<div class="abe-header">
+  <div class="abe-title">
+    <i class="bi bi-journal-bookmark-fill text-danger"></i>
+    <span class="abe-filename">{{ doc.filename }}</span>
+    <span class="badge bg-{{ status_cls }} ms-2">{{ doc.status }}</span>
+    {% if doc.page_count %}
+      <span class="abe-page-count">{{ doc.page_count }} page(s)</span>
+    {% endif %}
+  </div>
+
+  <div class="abe-actions">
+    {# Extract Fields #}
+    <form method="POST"
+          action="{{ url_for('address_book.extract', doc_id=doc.id) }}"
+          class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="abe-btn abe-btn-primary"
+              title="Run OCR and extract address book fields">
+        <i class="bi bi-cpu-fill me-1"></i>Extract Fields
+      </button>
+    </form>
+
+    {# Approve / Reject (Admin & Verifier only) #}
+    {% if current_user.role in ('Admin', 'Verifier') %}
+    <form method="POST"
+          action="{{ url_for('address_book.approve', doc_id=doc.id) }}"
+          class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="abe-btn abe-btn-success"
+              title="Approve document">
+        <i class="bi bi-check-circle-fill me-1"></i>Approve
+      </button>
+    </form>
+    <form method="POST"
+          action="{{ url_for('address_book.reject', doc_id=doc.id) }}"
+          class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="abe-btn abe-btn-danger"
+              title="Reject document">
+        <i class="bi bi-x-circle-fill me-1"></i>Reject
+      </button>
+    </form>
+    {% endif %}
+
+    {# Export PDF #}
+    <a href="{{ url_for('address_book.export_pdf', doc_id=doc.id) }}"
+       class="abe-btn abe-btn-export" title="Download updated PDF">
+      <i class="bi bi-file-earmark-arrow-down me-1"></i>Export PDF
+    </a>
+
+    {# Save All (triggers hidden form) #}
+    <button type="button" id="btn-save-all" class="abe-btn abe-btn-save"
+            title="Save all field changes">
+      <i class="bi bi-floppy-fill me-1"></i>Save Changes
+    </button>
+
+    {# Back link #}
+    <a href="{{ url_for('pdf.detail', doc_id=doc.id) }}"
+       class="abe-btn abe-btn-secondary" title="Back to document detail">
+      <i class="bi bi-arrow-left me-1"></i>Back
+    </a>
+  </div>
+</div>
+
+{# ─────────────────────────────────────────────────────────────────────────
+   Two-panel workspace: form (left) | PDF preview (right)
+───────────────────────────────────────────────────────────────────────── #}
+<div class="abe-workspace">
+
+  {# ── Left panel: address book form ─────────────────────────────────── #}
+  <div class="abe-form-panel">
+    <div class="abe-panel-header">
+      <i class="bi bi-person-vcard-fill"></i>Extracted Fields
+    </div>
+
+    <div class="abe-form-scroll">
+      {% if ordered_fields %}
+        {% for field_name, field in ordered_fields %}
+          <div class="abe-field-group">
+            <label class="abe-field-label" for="input-{{ loop.index }}">
+              {{ field_name }}
+              {% if field and field.is_edited %}
+                <span class="abe-edited-badge">edited</span>
+              {% endif %}
+            </label>
+            {% if field %}
+              <input
+                id="input-{{ loop.index }}"
+                type="text"
+                class="abe-field-input {% if field.is_edited %}abe-edited{% endif %}"
+                data-field-id="{{ field.id }}"
+                value="{{ field.value or '' }}"
+                placeholder="—"
+                autocomplete="off"
+              >
+              {% if field.is_edited and field.original_value %}
+                <div class="abe-field-meta">
+                  Original: {{ field.original_value }}
+                </div>
+              {% endif %}
+            {% else %}
+              <input
+                id="input-{{ loop.index }}"
+                type="text"
+                class="abe-field-input"
+                placeholder="Not extracted — run Extract Fields"
+                disabled
+              >
+            {% endif %}
+          </div>
+        {% endfor %}
+
+        {# Extra fields not in the standard address book schema #}
+        {% if extra_fields %}
+          <hr style="margin: 1rem 0;">
+          <div class="abe-panel-header" style="margin: 0 -1rem 0.75rem; padding-left: 0.85rem;">
+            <i class="bi bi-three-dots me-1"></i>Other Fields
+          </div>
+          {% for field in extra_fields %}
+            <div class="abe-field-group">
+              <label class="abe-field-label" for="input-extra-{{ field.id }}">
+                {{ field.field_name }}
+                {% if field.is_edited %}
+                  <span class="abe-edited-badge">edited</span>
+                {% endif %}
+              </label>
+              <input
+                id="input-extra-{{ field.id }}"
+                type="text"
+                class="abe-field-input {% if field.is_edited %}abe-edited{% endif %}"
+                data-field-id="{{ field.id }}"
+                value="{{ field.value or '' }}"
+                placeholder="—"
+                autocomplete="off"
+              >
+            </div>
+          {% endfor %}
+        {% endif %}
+
+      {% else %}
+        <div style="color: #6c757d; font-size: 0.88rem; padding: 1rem 0; text-align: center;">
+          <i class="bi bi-info-circle me-1"></i>
+          No fields extracted yet.<br>Click <strong>Extract Fields</strong> above.
+        </div>
+      {% endif %}
+    </div>
+
+    {# Save button inside the panel #}
+    <div class="abe-form-footer">
+      <button type="button" id="btn-save-panel" class="abe-btn abe-btn-save"
+              title="Save all field changes"
+              onclick="document.getElementById('abe-save-form').submit()">
+        <i class="bi bi-floppy-fill me-1"></i>Save Changes
+      </button>
+    </div>
+  </div>
+
+  {# ── Right panel: PDF preview ────────────────────────────────────────── #}
+  <div class="abe-preview-panel">
+    <div class="abe-panel-header">
+      <i class="bi bi-eye-fill"></i>PDF Preview
+    </div>
+
+    <div class="abe-pdf-toolbar">
+      <button id="btn-prev" class="abe-tool-btn" disabled title="Previous page">
+        <i class="bi bi-chevron-left"></i>
+      </button>
+      <label class="abe-page-label">
+        Page
+        <input id="page-input" type="number" value="1" min="1" max="9999">
+        / <span id="page-total">?</span>
+      </label>
+      <button id="btn-next" class="abe-tool-btn" disabled title="Next page">
+        <i class="bi bi-chevron-right"></i>
+      </button>
+
+      <span class="abe-toolbar-spacer"></span>
+
+      <label class="abe-page-label">
+        Zoom
+        <input id="zoom-input" type="number" value="150" min="25" max="400"
+               style="width:60px"> %
+      </label>
+      <button id="btn-zoom-in"  class="abe-tool-btn" title="Zoom in">+</button>
+      <button id="btn-zoom-out" class="abe-tool-btn" title="Zoom out">−</button>
+      <button id="btn-zoom-fit" class="abe-tool-btn" title="Fit to width">
+        <i class="bi bi-arrows-expand"></i>
+      </button>
+
+      <span class="abe-toolbar-spacer"></span>
+      <span id="abe-render-status" class="abe-status-text">Loading…</span>
+    </div>
+
+    <div id="abe-pdf-scroll" class="abe-pdf-scroll">
+      <div id="abe-pdf-wrapper" class="abe-pdf-wrapper">
+        <canvas id="abe-pdf-canvas"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ─────────────────────────────────────────────────────────────────────────
+   Hidden save form — receives field values before POST
+───────────────────────────────────────────────────────────────────────── #}
+<form id="abe-save-form" method="POST"
+      action="{{ url_for('address_book.save', doc_id=doc.id) }}"
+      style="display:none">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% for field_name, field in ordered_fields %}
+    {% if field %}
+      <input type="hidden" name="field_{{ field.id }}"
+             id="save-field-{{ field.id }}"
+             value="{{ field.value or '' }}">
+    {% endif %}
+  {% endfor %}
+  {% for field in extra_fields %}
+    <input type="hidden" name="field_{{ field.id }}"
+           id="save-field-{{ field.id }}"
+           value="{{ field.value or '' }}">
+  {% endfor %}
+</form>
+
+{# ─────────────────────────────────────────────────────────────────────────
+   JavaScript globals
+───────────────────────────────────────────────────────────────────────── #}
+<script>
+  const PDF_URL    = {{ pdf_url | tojson }};
+  const DOC_ID     = {{ doc.id }};
+  const CSRF_TOKEN = {{ csrf_token() | tojson }};
+  const UPDATE_URL = {{ url_for('address_book.update_field', doc_id=doc.id) | tojson }};
+</script>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="{{ url_for('static', filename='js/address-book-editor.js') }}"></script>
+{% endblock %}

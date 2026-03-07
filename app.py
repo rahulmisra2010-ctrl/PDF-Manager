@@ -123,11 +123,13 @@ def create_app(config: dict | None = None) -> Flask:
     from blueprints.users import users_bp
     from blueprints.ai_pdf import ai_pdf_bp
     from blueprints.pdf_editor import pdf_editor_bp
+    from blueprints.address_book import address_book_bp
 
     app.register_blueprint(auth_bp, url_prefix="/auth")
     app.register_blueprint(pdf_bp, url_prefix="/pdf")
     app.register_blueprint(ai_pdf_bp, url_prefix="/ai-pdf")
     app.register_blueprint(pdf_editor_bp, url_prefix="/live-pdf")
+    app.register_blueprint(address_book_bp, url_prefix="/address-book")
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(search_bp, url_prefix="/search")
     app.register_blueprint(users_bp, url_prefix="/users")
