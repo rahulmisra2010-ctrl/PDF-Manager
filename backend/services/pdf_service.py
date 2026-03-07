@@ -430,9 +430,19 @@ class PDFService:
         return result
 
     def _export_as_pdf(
-        self, original_path: str, fields: list[dict], output_path: str
+        self,
+        original_path: str,
+        fields: list[dict],
+        output: "str | io.IOBase",
     ) -> None:
-        """Overlay updated field values onto the original PDF and save."""
+        """Overlay updated field values onto the original PDF and save.
+
+        Args:
+            original_path: Path to the original PDF file.
+            fields: Field dicts with optional ``bounding_box`` and ``page_number``.
+            output: Destination — either a file-system path (str) or a
+                    writable binary file-like object (e.g. ``io.BytesIO``).
+        """
         doc = fitz.open(original_path)
 
         for field in fields:
@@ -456,5 +466,5 @@ class PDFService:
                     rect.tl, value, fontsize=10, color=(0, 0, 0)
                 )
 
-        doc.save(output_path)
+        doc.save(output)
         doc.close()

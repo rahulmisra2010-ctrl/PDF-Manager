@@ -72,6 +72,12 @@
     </button>
     <ul class="dropdown-menu">
       <li>
+        <a class="dropdown-item" href="{{ url_for('pdf.export', doc_id=doc.id, fmt='pdf') }}">
+          <i class="bi bi-file-earmark-pdf me-2"></i>PDF (with edits)
+        </a>
+      </li>
+      <li><hr class="dropdown-divider"></li>
+      <li>
         <a class="dropdown-item" href="{{ url_for('pdf.export', doc_id=doc.id, fmt='csv') }}">
           <i class="bi bi-filetype-csv me-2"></i>CSV
         </a>
@@ -87,7 +93,6 @@
         </a>
       </li>
     </ul>
-  </div>
 </div>
 
 <!-- Extracted fields editor -->
