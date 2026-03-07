@@ -1,0 +1,511 @@
+/**
+ * extraction.css — Styles for the ExtractionPage split layout and sub-components.
+ */
+
+/* =====================================================================
+   ExtractionPage — full-height split layout
+   ===================================================================== */
+
+.extraction-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 80px);
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+/* Top bar */
+.extraction-page__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: #1e293b;
+  color: #f1f5f9;
+  flex-shrink: 0;
+}
+
+.extraction-page__doc-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.95rem;
+}
+
+.extraction-page__doc-icon { font-size: 1.2rem; }
+
+.extraction-page__doc-name {
+  font-weight: 600;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.extraction-page__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.extraction-btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  font-weight: 500;
+  transition: opacity 0.15s;
+}
+
+.extraction-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.extraction-btn:hover:not(:disabled) { opacity: 0.85; }
+
+.extraction-btn--ocr    { background: #0ea5e9; color: #fff; }
+.extraction-btn--ai     { background: #7c3aed; color: #fff; }
+.extraction-btn--export { background: #059669; color: #fff; }
+.extraction-btn--reset  { background: #64748b; color: #fff; }
+
+/* Error bar */
+.extraction-page__error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #fee2e2;
+  color: #991b1b;
+  padding: 8px 16px;
+  font-size: 0.88rem;
+  flex-shrink: 0;
+}
+
+.extraction-page__error button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  color: #991b1b;
+}
+
+/* Split layout */
+.extraction-page__split {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Left: PDF viewer */
+.extraction-page__left {
+  flex: 0 0 50%;
+  max-width: 50%;
+  border-right: 2px solid #e2e8f0;
+  overflow: auto;
+  background: #fff;
+}
+
+/* Right: tabs + content */
+.extraction-page__right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.extraction-page__tabs {
+  display: flex;
+  background: #f1f5f9;
+  border-bottom: 2px solid #e2e8f0;
+  flex-shrink: 0;
+}
+
+.extraction-page__tab {
+  padding: 10px 18px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: #64748b;
+  transition: all 0.15s;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+}
+
+.extraction-page__tab.active,
+.extraction-page__tab:hover {
+  color: #0f172a;
+  border-bottom-color: #0ea5e9;
+  background: #fff;
+}
+
+.extraction-page__tab-content {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+}
+
+.extraction-page__loading {
+  text-align: center;
+  padding: 40px;
+  color: #64748b;
+}
+
+/* =====================================================================
+   PDFViewer
+   ===================================================================== */
+
+.pdf-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.pdf-viewer--empty {
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+}
+
+.pdf-viewer__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #1e293b;
+  color: #f1f5f9;
+  flex-shrink: 0;
+}
+
+.pdf-viewer__toolbar button {
+  background: #334155;
+  border: 1px solid #475569;
+  color: #f1f5f9;
+  border-radius: 4px;
+  padding: 3px 10px;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.pdf-viewer__toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pdf-viewer__toolbar input[type="number"] {
+  width: 48px;
+  text-align: center;
+  background: #334155;
+  border: 1px solid #475569;
+  color: #f1f5f9;
+  border-radius: 4px;
+  padding: 3px 4px;
+}
+
+.pdf-viewer__toolbar-sep {
+  width: 1px;
+  height: 20px;
+  background: #475569;
+  margin: 0 4px;
+}
+
+.pdf-viewer__canvas-area {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  padding: 16px;
+  background: #475569;
+}
+
+.pdf-viewer__loading,
+.pdf-viewer__error {
+  padding: 40px;
+  text-align: center;
+  color: #94a3b8;
+}
+
+/* =====================================================================
+   FieldsEditor
+   ===================================================================== */
+
+.fields-editor {
+  font-size: 0.88rem;
+}
+
+.fields-editor--empty,
+.fields-editor--loading {
+  text-align: center;
+  padding: 40px;
+  color: #94a3b8;
+}
+
+.fields-editor__summary {
+  display: flex;
+  gap: 16px;
+  padding: 8px 0 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.fields-editor__summary-item--green  { color: #059669; }
+.fields-editor__summary-item--yellow { color: #d97706; }
+.fields-editor__summary-item--red    { color: #dc2626; }
+
+.fields-editor__table-wrapper {
+  overflow-x: auto;
+}
+
+.fields-editor__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.fields-editor__table th {
+  background: #f1f5f9;
+  padding: 8px 10px;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+  border-bottom: 2px solid #e2e8f0;
+  white-space: nowrap;
+}
+
+.fields-editor__table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
+}
+
+.fields-editor__row:hover td {
+  background: #eff6ff;
+}
+
+.fields-editor__field-name { font-weight: 600; }
+
+.fields-editor__edited-tag {
+  font-size: 0.75rem;
+  color: #6366f1;
+  font-weight: 400;
+}
+
+.fields-editor__empty { color: #94a3b8; font-style: italic; }
+
+.fields-editor__input {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid #6366f1;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  outline: none;
+}
+
+.fields-editor__badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.fields-editor__source-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.fields-editor__source-tag--rule { background: #dbeafe; color: #1d4ed8; }
+.fields-editor__source-tag--ner  { background: #fce7f3; color: #9d174d; }
+.fields-editor__source-tag--rag  { background: #ede9fe; color: #5b21b6; }
+
+.fields-editor__btn {
+  padding: 3px 10px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 500;
+  margin-right: 4px;
+}
+
+.fields-editor__btn--edit   { background: #dbeafe; color: #1d4ed8; }
+.fields-editor__btn--save   { background: #d1fae5; color: #065f46; }
+.fields-editor__btn--cancel { background: #fee2e2; color: #991b1b; }
+
+/* =====================================================================
+   OCRConfidenceHeatmap
+   ===================================================================== */
+
+.heatmap { padding: 8px; }
+.heatmap--empty { text-align: center; padding: 40px; color: #94a3b8; }
+
+.heatmap__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.heatmap__header h4 { margin: 0; font-size: 0.95rem; }
+
+.heatmap__avg-badge {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.heatmap__legend {
+  display: flex;
+  gap: 16px;
+  font-size: 0.8rem;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.heatmap__mode-switch {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.heatmap__mode-btn {
+  padding: 4px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  cursor: pointer;
+  background: #fff;
+  font-size: 0.82rem;
+}
+
+.heatmap__mode-btn.active {
+  background: #0ea5e9;
+  color: #fff;
+  border-color: #0ea5e9;
+}
+
+.heatmap__canvas-wrapper {
+  overflow: auto;
+  margin-bottom: 8px;
+}
+
+.heatmap__canvas { border-radius: 4px; }
+
+.heatmap__stats {
+  display: flex;
+  gap: 16px;
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+/* =====================================================================
+   PerformanceDashboard
+   ===================================================================== */
+
+.perf-dash { padding: 8px; }
+.perf-dash--empty { text-align: center; padding: 40px; color: #94a3b8; }
+
+.perf-dash__title {
+  margin: 0 0 12px;
+  font-size: 1rem;
+}
+
+.perf-dash__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.perf-dash__stat-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+}
+
+.perf-dash__stat-icon { font-size: 1.5rem; margin-bottom: 4px; }
+
+.perf-dash__stat-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.perf-dash__stat-label {
+  font-size: 0.75rem;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.perf-dash__stat-sub {
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
+.perf-dash__section {
+  margin-bottom: 16px;
+}
+
+.perf-dash__section h5 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0 0 8px;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.perf-dash__score-bar { margin-bottom: 6px; }
+
+.perf-dash__score-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.82rem;
+  margin-bottom: 2px;
+}
+
+.perf-dash__bar-track {
+  background: #f1f5f9;
+  border-radius: 4px;
+  height: 8px;
+  overflow: hidden;
+}
+
+.perf-dash__bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.5s ease;
+}
+
+.perf-dash__breakdown {
+  display: flex;
+  height: 20px;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.perf-dash__breakdown-bar { min-width: 2px; }
+
+.perf-dash__breakdown-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 0.8rem;
+}
+
+.perf-dash__engines {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.perf-dash__engine-badge {
+  background: #ede9fe;
+  color: #5b21b6;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
