@@ -367,6 +367,21 @@ def extract_overlay(doc_id: int):
     )
 
 
+@pdf_bp.route("/<int:doc_id>/rag-extract")
+@login_required
+def rag_extract_view(doc_id: int):
+    """Render the RAG extraction page — split layout (PDF viewer + editable fields)."""
+    doc = Document.query.get_or_404(doc_id)
+    fields = ExtractedField.query.filter_by(document_id=doc_id).all()
+    pdf_url = url_for("pdf.serve_pdf", doc_id=doc_id)
+    return render_template(
+        "pdf/rag_extraction.html",
+        doc=doc,
+        fields=fields,
+        pdf_url=pdf_url,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -122,10 +122,12 @@ def create_app(config: dict | None = None) -> Flask:
     from blueprints.search import search_bp
     from blueprints.users import users_bp
     from blueprints.ai_pdf import ai_pdf_bp
+    from blueprints.rag import rag_bp
 
     app.register_blueprint(auth_bp, url_prefix="/auth")
     app.register_blueprint(pdf_bp, url_prefix="/pdf")
     app.register_blueprint(ai_pdf_bp, url_prefix="/ai-pdf")
+    app.register_blueprint(rag_bp)  # url_prefix="/api/v1" is set in the blueprint
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(search_bp, url_prefix="/search")
     app.register_blueprint(users_bp, url_prefix="/users")
