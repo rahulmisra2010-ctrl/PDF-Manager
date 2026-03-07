@@ -1,0 +1,270 @@
+/* ==========================================================================
+   address-book-live-editor.css — Live Overlay Address Book Editor styles
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Overall layout
+   -------------------------------------------------------------------------- */
+.main-content {
+  padding: 0.75rem 1rem !important;
+}
+
+/* --------------------------------------------------------------------------
+   Top header bar
+   -------------------------------------------------------------------------- */
+.able-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.5rem 0 0.75rem;
+  border-bottom: 1px solid #dee2e6;
+  margin-bottom: 0.6rem;
+}
+
+.able-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #212529;
+}
+
+.able-filename {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.able-page-count {
+  font-size: 0.78rem;
+  color: #6c757d;
+}
+
+.able-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+/* --------------------------------------------------------------------------
+   Action buttons
+   -------------------------------------------------------------------------- */
+.able-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  border: none;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: filter 0.15s, opacity 0.15s;
+  line-height: 1.4;
+}
+.able-btn:hover  { filter: brightness(1.12); }
+.able-btn:active { filter: brightness(0.92); }
+.able-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.able-btn-primary   { background: #0d6efd; color: #fff; }
+.able-btn-success   { background: #198754; color: #fff; }
+.able-btn-danger    { background: #dc3545; color: #fff; }
+.able-btn-secondary { background: #6c757d; color: #fff; }
+.able-btn-save      { background: #0a3d62; color: #fff; }
+.able-btn-export    { background: #6f42c1; color: #fff; }
+
+/* --------------------------------------------------------------------------
+   PDF toolbar
+   -------------------------------------------------------------------------- */
+.able-pdf-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.75rem;
+  background: #f1f3f5;
+  border: 1px solid #dee2e6;
+  border-bottom: none;
+  border-radius: 0.5rem 0.5rem 0 0;
+  flex-wrap: wrap;
+}
+
+.able-tool-btn {
+  background: none;
+  border: 1px solid #ced4da;
+  border-radius: 0.375rem;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  color: #495057;
+  transition: background 0.15s;
+}
+.able-tool-btn:hover    { background: #e9ecef; }
+.able-tool-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.able-page-label {
+  font-size: 0.82rem;
+  color: #495057;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.able-page-label input[type="number"] {
+  width: 50px;
+  padding: 0.18rem 0.35rem;
+  font-size: 0.82rem;
+  border: 1px solid #ced4da;
+  border-radius: 0.3rem;
+  text-align: center;
+}
+
+.able-toolbar-spacer { flex: 1; }
+
+.able-status-text {
+  font-size: 0.78rem;
+  color: #6c757d;
+}
+
+/* --------------------------------------------------------------------------
+   Scrollable PDF scroll area
+   -------------------------------------------------------------------------- */
+.able-pdf-scroll {
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  background: #525659;
+  border: 1px solid #dee2e6;
+  border-radius: 0 0 0.5rem 0.5rem;
+  padding: 1.25rem;
+  min-height: 520px;
+  height: calc(100vh - 160px);
+}
+
+/* --------------------------------------------------------------------------
+   PDF wrapper (position: relative so overlays are anchored to it)
+   -------------------------------------------------------------------------- */
+.able-pdf-wrapper {
+  position: relative;
+  display: inline-block;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  line-height: 0; /* remove gap below canvas */
+}
+
+#able-pdf-canvas {
+  display: block;
+}
+
+/* --------------------------------------------------------------------------
+   Overlay container — sits on top of the canvas
+   -------------------------------------------------------------------------- */
+.able-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none; /* inputs themselves re-enable pointer events */
+}
+
+/* --------------------------------------------------------------------------
+   Individual field overlay items
+   -------------------------------------------------------------------------- */
+.able-field-overlay {
+  position: absolute;
+  pointer-events: all;
+  box-sizing: border-box;
+}
+
+/* Label above the input */
+.able-field-label {
+  display: block;
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #0d6efd;
+  background: rgba(255, 255, 255, 0.85);
+  padding: 0 3px;
+  border-radius: 2px 2px 0 0;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* The actual editable input */
+.able-field-input {
+  display: block;
+  width: 100%;
+  height: calc(100% - 12px); /* subtract label height */
+  padding: 0 6px;
+  font-size: 0.88rem;
+  font-family: inherit;
+  color: #212529;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1.5px solid rgba(13, 110, 253, 0.5);
+  border-radius: 0 0 3px 3px;
+  box-sizing: border-box;
+  outline: none;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  backdrop-filter: blur(2px);
+}
+
+.able-field-input:focus {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: #0d6efd;
+  box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.25);
+  z-index: 10;
+}
+
+/* Edited state */
+.able-field-input.able-edited {
+  border-color: rgba(253, 126, 20, 0.7);
+  background: rgba(255, 248, 240, 0.85);
+}
+
+/* Unsaved (pending AJAX) state */
+.able-field-input.able-unsaved {
+  border-color: rgba(255, 193, 7, 0.8);
+}
+
+/* Validation error */
+.able-field-input.able-invalid {
+  border-color: rgba(220, 53, 69, 0.8);
+  background: rgba(255, 240, 240, 0.85);
+}
+
+/* --------------------------------------------------------------------------
+   No-fields notice
+   -------------------------------------------------------------------------- */
+.able-no-fields-notice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1rem;
+  margin-top: 0.5rem;
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 0.4rem;
+  font-size: 0.88rem;
+  color: #664d03;
+}
+
+/* --------------------------------------------------------------------------
+   Responsive adjustments
+   -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+  .able-pdf-scroll {
+    height: auto;
+    min-height: 400px;
+    padding: 0.75rem;
+  }
+}
