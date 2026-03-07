@@ -80,7 +80,7 @@ class ConfidenceCalculator:
     """
 
     HIGH_THRESHOLD = 0.85
-    MED_THRESHOLD = 0.60
+    MED_THRESHOLD = 0.65
 
     # Fraction of page height used for header / footer zones
     HEADER_FRAC = 0.15

@@ -298,6 +298,8 @@ class OCREngine:
                 word = word.strip()
                 if not word:
                     continue
+                # PyMuPDF does not provide confidence scores; 0.95 reflects that
+                # native vector text is typically highly accurate compared to OCR.
                 words.append(
                     WordResult(word, 0.95, x0, y0, x1 - x0, y1 - y0, "pymupdf")
                 )

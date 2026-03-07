@@ -31,7 +31,7 @@ def _confidence_to_bgr(confidence: float) -> tuple[int, int, int]:
     """Map confidence (0–1) to BGR colour: red → yellow → green."""
     if confidence >= 0.85:
         return (0, 200, 0)      # green
-    if confidence >= 0.60:
+    if confidence >= 0.65:
         return (0, 200, 255)    # yellow (BGR: B=0, G=200, R=255)
     return (0, 0, 220)          # red
 
@@ -39,7 +39,7 @@ def _confidence_to_bgr(confidence: float) -> tuple[int, int, int]:
 def _badge_color(confidence: float) -> str:
     if confidence >= 0.85:
         return "green"
-    if confidence >= 0.60:
+    if confidence >= 0.65:
         return "yellow"
     return "red"
 

@@ -291,7 +291,8 @@ class RAGSystem:
         except ImportError:
             import sys
             import os
-            sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+            # backend/extraction/ → backend/ → repo root (two levels up)
+            sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
             from models import RAGEmbedding
 
         str_doc_id = str(document_id)

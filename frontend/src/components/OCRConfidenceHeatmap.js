@@ -90,7 +90,7 @@ function OCRConfidenceHeatmap({ heatmapData, imageData, pageNumber }) {
       <div className="heatmap__legend">
         <span style={{ color: CELL_COLORS.green }}>■ High (≥85%)</span>
         <span style={{ color: CELL_COLORS.yellow }}>■ Medium (≥65%)</span>
-        <span style={{ color: CELL_COLORS.red }}>■ Low (&lt;65%)</span>
+        <span>■ Low ({'<'}65%)</span>
       </div>
 
       {/* Mode switcher */}

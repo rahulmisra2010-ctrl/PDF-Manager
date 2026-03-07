@@ -319,6 +319,7 @@
 .fields-editor__source-tag--rule { background: #dbeafe; color: #1d4ed8; }
 .fields-editor__source-tag--ner  { background: #fce7f3; color: #9d174d; }
 .fields-editor__source-tag--rag  { background: #ede9fe; color: #5b21b6; }
+.fields-editor__source-tag--pymupdf { background: #e0f2fe; color: #0369a1; }
 
 .fields-editor__btn {
   padding: 3px 10px;
