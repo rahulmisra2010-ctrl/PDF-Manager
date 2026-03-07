@@ -87,6 +87,61 @@ npm start     # http://localhost:3000
 
 ## Environment Variables
 
+### File location
+
+The `.env` file belongs in the **project root** — the same directory as `app.py`:
+
+```
+PDF-Manager/          ← repository root
+├── .env              ← your local settings (git-ignored)
+├── .env.example      ← committed template — copy this
+└── app.py
+```
+
+> `app.py` also loads `backend/.env` for backwards compatibility, but the project
+> root is the canonical location.  If a key appears in both files, the root
+> `.env` takes precedence.
+
+### Creating the file
+
+```bash
+cp .env.example .env   # then open .env and edit the values below
+```
+
+### Critical values
+
+#### `SECRET_KEY`
+
+Signs Flask session cookies and CSRF tokens. Generate a strong random value:
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+```dotenv
+SECRET_KEY=<paste-generated-value>
+```
+
+> ⚠️ **Duplicate-key warning** — keep exactly **one** `SECRET_KEY` line in your
+> `.env`.  `python-dotenv` silently uses the first occurrence and ignores any
+> extras, which can cause hard-to-debug behaviour.  Verify with:
+>
+> ```bash
+> grep -n "SECRET_KEY" .env   # must print exactly one line
+> ```
+
+#### `ADMIN_PASSWORD`
+
+Password for the auto-created `admin` account.  Leave blank to have a random
+password printed at startup (convenient for a first look), but **always set an
+explicit password for any shared or production deployment**:
+
+```dotenv
+ADMIN_PASSWORD=<strong-unique-password>
+```
+
+### Development vs production
+
 Create a `.env` file in the repository root (copy from `.env.example`):
 
 ```dotenv
@@ -113,6 +168,24 @@ MAX_UPLOAD_SIZE_MB=50
 ML_CONFIDENCE_THRESHOLD=0.75
 USE_GPU=false
 ```
+
+For **production**, change the following from the defaults above:
+
+| Setting | Production value |
+|---------|-----------------|
+| `DEBUG` | `false` |
+| `SECRET_KEY` | Cryptographically random (≥ 32 hex chars) |
+| `ADMIN_PASSWORD` | Strong, unique password |
+| `DATABASE_URL` | PostgreSQL connection string |
+| `ALLOWED_ORIGINS` | Your real frontend domain(s) |
+
+### Getting help
+
+If you cannot locate, create, or correct your `.env` file, open an issue in this
+repository and include the error message you're seeing (but **never paste your
+actual secret values**).
+
+Let me know if you need any more details about this setup or help correcting your .env for production or development.
 
 ---
 
