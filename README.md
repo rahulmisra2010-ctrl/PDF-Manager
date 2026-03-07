@@ -57,13 +57,13 @@ PDF-Manager/
 ├── pdf_manager_app.py         # Convenience entry point / demo runner
 ├── backend/
 │   ├── app.py                 # Wrapper that loads the root app.py
-│   ├── models.py               # Pydantic models
-│   ├── config.py               # Environment-based configuration
+│   ├── models.py              # SQLAlchemy models
+│   ├── config.py              # Environment-based configuration
 │   ├── routes/
-│   │   └── pdf_routes.py       # REST endpoints
+│   │   └── pdf_routes.py      # REST endpoints (legacy)
 │   ├── services/
-│   │   ├── pdf_service.py      # PDF extraction & export (PyMuPDF + OpenCV)
-│   │   └── ml_service.py       # ML field classification (PyTorch)
+│   │   ├── pdf_service.py     # PDF extraction & export (PyMuPDF + OpenCV)
+│   │   └── ml_service.py      # ML field classification (PyTorch)
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
@@ -115,7 +115,7 @@ root is the recommended command.
 | PDF parsing | PyMuPDF |
 | Image processing | OpenCV |
 | ML | PyTorch |
-| Database | PostgreSQL 15 |
+| Database | SQLite (default) / PostgreSQL (optional) |
 | Containerisation | Docker Compose |
 
 ---

@@ -27,6 +27,7 @@ import sys
 from flask import Flask, redirect, url_for
 from flask_login import LoginManager
 from flask_wtf.csrf import CSRFProtect
+from dotenv import load_dotenv
 
 # ---------------------------------------------------------------------------
 # Ensure backend/ is on sys.path so services can be imported, but keep root
@@ -42,6 +43,11 @@ if _ROOT_DIR not in sys.path:
 # Append backend after root so services/ and config are importable
 if _BACKEND_DIR not in sys.path:
     sys.path.append(_BACKEND_DIR)
+
+# Load environment variables from both the repository root and backend/
+# to stay compatible with earlier setup instructions.
+for _env_file in (os.path.join(_ROOT_DIR, ".env"), os.path.join(_BACKEND_DIR, ".env")):
+    load_dotenv(_env_file)
 
 from models import User, db, bcrypt  # noqa: E402
 
