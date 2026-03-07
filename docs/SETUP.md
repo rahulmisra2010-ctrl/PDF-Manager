@@ -90,12 +90,14 @@ npm start     # http://localhost:3000
 Create a `.env` file in the repository root (copy from `.env.example`):
 
 ```dotenv
-# Application
-DEBUG=false
+# Application (development defaults)
+DEBUG=true
 HOST=0.0.0.0
 PORT=5000
-SECRET_KEY=change-me-in-production
-ADMIN_PASSWORD=
+# Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+SECRET_KEY=dev-change-me
+# Set an explicit admin password for the auto-created account
+ADMIN_PASSWORD=adminpass123
 
 # Database (SQLite by default; uncomment PostgreSQL if desired)
 DATABASE_URL=sqlite:///instance/pdf_manager.db
