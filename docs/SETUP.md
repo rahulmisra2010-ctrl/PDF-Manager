@@ -87,17 +87,26 @@ npm start     # http://localhost:3000
 
 ## Environment Variables
 
-Create a `backend/.env` file (copy from `.env.example`):
+Create a `.env` file in the repository root (copy from `.env.example`):
 
 ```dotenv
-DEBUG=true
+# Application
+DEBUG=false
 HOST=0.0.0.0
 PORT=5000
-ALLOWED_ORIGINS=["http://localhost:3000"]
-DATABASE_URL=postgresql://pdfmanager:pdfmanager@localhost:5432/pdfmanager
+SECRET_KEY=change-me-in-production
+ADMIN_PASSWORD=
+
+# Database (SQLite by default; uncomment PostgreSQL if desired)
+DATABASE_URL=sqlite:///instance/pdf_manager.db
+# DATABASE_URL=postgresql://pdfmanager:pdfmanager@localhost:5432/pdfmanager
+
+# Storage
 UPLOAD_DIR=uploads
 EXPORT_DIR=exports
 MAX_UPLOAD_SIZE_MB=50
+
+# ML configuration (used when torch is installed)
 ML_CONFIDENCE_THRESHOLD=0.75
 USE_GPU=false
 ```
