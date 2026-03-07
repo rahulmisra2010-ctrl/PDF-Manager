@@ -12,7 +12,7 @@ copy of the data.
 ## Week 1 – Backend Foundations
 
 ### Goals
-- Set up the FastAPI backend
+- Set up the Flask backend
 - Implement PDF upload and basic text extraction
 - Detect tables with OpenCV
 - Store document metadata and extracted fields in PostgreSQL
@@ -21,7 +21,7 @@ copy of the data.
 
 | Day | Task |
 |-----|------|
-| 1   | Clone repo, install Python deps, start FastAPI dev server |
+| 1   | Clone repo, install Python deps, start Flask dev server |
 | 2   | Implement `POST /api/v1/upload` – accept PDF, save to disk |
 | 3   | Implement `POST /api/v1/extract/{id}` – text extraction with PyMuPDF |
 | 4   | Add OpenCV table detection in `pdf_service.py` |
@@ -31,11 +31,13 @@ copy of the data.
 
 ```bash
 # Install Python dependencies
-cd backend
-pip install -r requirements.txt
+cd PDF-Manager    # repository root
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r backend/requirements.txt
 
-# Start the backend (with auto-reload)
-uvicorn app:app --reload --port 8000
+# Start the backend (Flask, port 5000)
+python app.py
 
 # Initialize the database
 psql -U postgres -c "CREATE DATABASE pdfmanager OWNER pdfmanager;"
@@ -90,7 +92,7 @@ npm run build     # production build
 
 | Tool | Purpose |
 |------|---------|
-| [Swagger UI](http://localhost:8000/docs) | Interactive API docs |
+| [Dashboard login](http://localhost:5000/auth/login) | Web UI once the backend is running |
 | [pgAdmin](https://www.pgadmin.org/) | PostgreSQL GUI |
 | React DevTools | Debug component state |
 

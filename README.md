@@ -23,15 +23,29 @@ cd PDF-Manager
 docker compose up --build
 ```
 
-| Service   | URL                          |
-|-----------|------------------------------|
-| Frontend  | http://localhost:3000        |
-| Backend   | http://localhost:8000        |
-| Swagger   | http://localhost:8000/docs   |
+| Service                  | URL                         |
+|--------------------------|-----------------------------|
+| Frontend (React)         | http://localhost:3000       |
+| Backend (Flask + UI/API) | http://localhost:5000       |
+| Dashboard login          | http://localhost:5000/auth/login |
 
 ### Manual setup
 
-See [docs/SETUP.md](docs/SETUP.md) for step-by-step instructions.
+If you prefer not to use Docker:
+
+```bash
+git clone https://github.com/rahulmisra2010-ctrl/PDF-Manager.git
+cd PDF-Manager
+
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r backend/requirements.txt
+
+cp .env.example .env               # optional; adjust values as needed
+python app.py                      # opens http://localhost:5000
+```
+
+See [docs/SETUP.md](docs/SETUP.md) for more details.
 
 ---
 
@@ -39,8 +53,10 @@ See [docs/SETUP.md](docs/SETUP.md) for step-by-step instructions.
 
 ```
 PDF-Manager/
+├── app.py                     # Flask application factory (root)
+├── pdf_manager_app.py         # Convenience entry point / demo runner
 ├── backend/
-│   ├── app.py                  # FastAPI application
+│   ├── app.py                 # Wrapper that loads the root app.py
 │   ├── models.py               # Pydantic models
 │   ├── config.py               # Environment-based configuration
 │   ├── routes/
@@ -72,6 +88,11 @@ PDF-Manager/
 └── .gitignore
 ```
 
+A note on entry points: the root-level `app.py` is the primary Flask application.
+`backend/app.py` is a thin compatibility wrapper so the app can also be started
+from inside the `backend/` directory, but `python app.py` from the repository
+root is the recommended command.
+
 ---
 
 ## Documentation
@@ -90,7 +111,7 @@ PDF-Manager/
 | Layer | Technology |
 |-------|-----------|
 | Frontend | React 18 |
-| Backend | FastAPI (Python 3.11) |
+| Backend | Flask (Python 3.11) |
 | PDF parsing | PyMuPDF |
 | Image processing | OpenCV |
 | ML | PyTorch |

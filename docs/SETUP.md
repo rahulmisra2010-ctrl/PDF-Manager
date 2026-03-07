@@ -32,31 +32,31 @@ Services:
 | Service | URL |
 |---------|-----|
 | Frontend | http://localhost:3000 |
-| Backend API | http://localhost:8000 |
-| Swagger UI | http://localhost:8000/docs |
+| Backend / UI | http://localhost:5000 |
+| Login page | http://localhost:5000/auth/login |
 | PostgreSQL | localhost:5432 |
 
 ---
 
 ## Option B – Manual Setup
 
-### 1. Backend
+### 1. Backend (Flask)
 
 ```bash
-cd backend
+cd PDF-Manager    # repository root
 
 # Create virtual environment
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
 # Install dependencies
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 
 # Create .env file
-cp ../.env.example .env          # edit as needed
+cp .env.example .env             # edit as needed
 
-# Start the API server
-uvicorn app:app --reload --port 8000
+# Start the Flask server (UI + JSON endpoints)
+python app.py                    # http://localhost:5000
 ```
 
 ### 2. Database
@@ -92,7 +92,7 @@ Create a `backend/.env` file (copy from `.env.example`):
 ```dotenv
 DEBUG=true
 HOST=0.0.0.0
-PORT=8000
+PORT=5000
 ALLOWED_ORIGINS=["http://localhost:3000"]
 DATABASE_URL=postgresql://pdfmanager:pdfmanager@localhost:5432/pdfmanager
 UPLOAD_DIR=uploads
@@ -123,6 +123,6 @@ npm test
 | Problem | Solution |
 |---------|---------|
 | `ModuleNotFoundError: fitz` | Run `pip install PyMuPDF` |
-| Port 8000 already in use | Change `PORT` in `.env` or kill the process |
+| Port 5000 already in use | Change `PORT` in `.env` or kill the process |
 | CORS error in browser | Ensure `ALLOWED_ORIGINS` includes your frontend URL |
 | DB connection refused | Check `DATABASE_URL` and that PostgreSQL is running |
