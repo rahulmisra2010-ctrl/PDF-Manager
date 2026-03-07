@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}Live Address Book Editor — {{ doc.filename }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/address-book-live-editor.css') }}">
+{% endblock %}
+
+{% block content %}
+{# ─────────────────────────────────────────────────────────────────────────
+   Status badge helper
+───────────────────────────────────────────────────────────────────────── #}
+{% set status_cls = {
+  'uploaded':  'secondary',
+  'extracted': 'info',
+  'edited':    'warning',
+  'approved':  'success',
+  'rejected':  'danger'
+}.get(doc.status, 'secondary') %}
+
+{# ─────────────────────────────────────────────────────────────────────────
+   Top header bar
+───────────────────────────────────────────────────────────────────────── #}
+<div class="able-header">
+  <div class="able-title">
+    <i class="bi bi-journal-bookmark-fill text-danger"></i>
+    <span class="able-filename">{{ doc.filename }}</span>
+    <span class="badge bg-{{ status_cls }} ms-2">{{ doc.status }}</span>
+    {% if doc.page_count %}
+      <span class="able-page-count">{{ doc.page_count }} page(s)</span>
+    {% endif %}
+  </div>
+
+  <div class="able-actions">
+    {# Extract Fields #}
+    <form method="POST"
+          action="{{ url_for('address_book_live.extract', doc_id=doc.id) }}"
+          class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="able-btn able-btn-primary"
+              title="Run OCR and extract address book fields">
+        <i class="bi bi-cpu-fill me-1"></i>Extract Fields
+      </button>
+    </form>
+
+    {# Export PDF #}
+    <a href="{{ url_for('address_book_live.export_pdf', doc_id=doc.id) }}"
+       class="able-btn able-btn-export" title="Download updated PDF">
+      <i class="bi bi-file-earmark-arrow-down me-1"></i>Export PDF
+    </a>
+
+    {# Save PDF (triggers hidden form) #}
+    <button type="button" id="btn-save-pdf" class="able-btn able-btn-save"
+            title="Save all live-edited values and prepare PDF">
+      <i class="bi bi-floppy-fill me-1"></i>Save PDF
+    </button>
+
+    {# Back link #}
+    <a href="{{ url_for('pdf.detail', doc_id=doc.id) }}"
+       class="able-btn able-btn-secondary" title="Back to document detail">
+      <i class="bi bi-arrow-left me-1"></i>Back
+    </a>
+  </div>
+</div>
+
+{# ─────────────────────────────────────────────────────────────────────────
+   PDF toolbar
+───────────────────────────────────────────────────────────────────────── #}
+<div class="able-pdf-toolbar">
+  <button id="btn-prev" class="able-tool-btn" disabled title="Previous page">
+    <i class="bi bi-chevron-left"></i>
+  </button>
+  <label class="able-page-label">
+    Page
+    <input id="page-input" type="number" value="1" min="1" max="9999">
+    / <span id="page-total">?</span>
+  </label>
+  <button id="btn-next" class="able-tool-btn" disabled title="Next page">
+    <i class="bi bi-chevron-right"></i>
+  </button>
+
+  <span class="able-toolbar-spacer"></span>
+
+  <label class="able-page-label">
+    Zoom
+    <input id="zoom-input" type="number" value="130" min="25" max="400"
+           style="width:60px"> %
+  </label>
+  <button id="btn-zoom-in"  class="able-tool-btn" title="Zoom in">+</button>
+  <button id="btn-zoom-out" class="able-tool-btn" title="Zoom out">−</button>
+  <button id="btn-zoom-fit" class="able-tool-btn" title="Fit to width">
+    <i class="bi bi-arrows-expand"></i>
+  </button>
+
+  <span class="able-toolbar-spacer"></span>
+  <span id="able-render-status" class="able-status-text">Loading…</span>
+</div>
+
+{# ─────────────────────────────────────────────────────────────────────────
+   Main PDF viewer with overlaid fields
+───────────────────────────────────────────────────────────────────────── #}
+<div id="able-pdf-scroll" class="able-pdf-scroll">
+  <div id="able-pdf-wrapper" class="able-pdf-wrapper">
+    {# PDF canvas — fields are positioned absolutely over this #}
+    <canvas id="able-pdf-canvas"></canvas>
+
+    {# Field overlay container — injected by JS #}
+    <div id="able-overlay" class="able-overlay"></div>
+  </div>
+</div>
+
+{# ─────────────────────────────────────────────────────────────────────────
+   No-fields notice (hidden when fields exist)
+───────────────────────────────────────────────────────────────────────── #}
+{% if not fields %}
+<div id="able-no-fields" class="able-no-fields-notice">
+  <i class="bi bi-info-circle me-2"></i>
+  No fields extracted yet. Click <strong>Extract Fields</strong> above to auto-detect address book fields.
+</div>
+{% endif %}
+
+{# ─────────────────────────────────────────────────────────────────────────
+   Save form (hidden — receives field values from JS before POST)
+───────────────────────────────────────────────────────────────────────── #}
+<form id="able-save-form" method="POST"
+      action="{{ url_for('address_book_live.save', doc_id=doc.id) }}"
+      style="display:none">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% for field in fields %}
+    <input type="hidden" name="field_{{ field.id }}"
+           id="save-field-{{ field.id }}"
+           value="{{ field.value or '' }}">
+  {% endfor %}
+</form>
+
+{# ─────────────────────────────────────────────────────────────────────────
+   JavaScript globals
+───────────────────────────────────────────────────────────────────────── #}
+<script>
+  const PDF_URL    = {{ pdf_url | tojson }};
+  const DOC_ID     = {{ doc.id }};
+  const CSRF_TOKEN = {{ csrf_token() | tojson }};
+  const UPDATE_URL = {{ url_for('address_book_live.update_field', doc_id=doc.id) | tojson }};
+
+  /* Default bounding boxes for known address-book fields (fractions 0–1) */
+  const DEMO_BOXES = {
+    "Name":           { page: 1, x: 0.05, y: 0.10, w: 0.55, h: 0.046 },
+    "Street Address": { page: 1, x: 0.05, y: 0.18, w: 0.65, h: 0.046 },
+    "City":           { page: 1, x: 0.05, y: 0.26, w: 0.32, h: 0.046 },
+    "State":          { page: 1, x: 0.41, y: 0.26, w: 0.10, h: 0.046 },
+    "Zip Code":       { page: 1, x: 0.55, y: 0.26, w: 0.18, h: 0.046 },
+    "Home Phone":     { page: 1, x: 0.05, y: 0.34, w: 0.28, h: 0.046 },
+    "Cell Phone":     { page: 1, x: 0.38, y: 0.34, w: 0.28, h: 0.046 },
+    "Work Phone":     { page: 1, x: 0.05, y: 0.42, w: 0.28, h: 0.046 },
+    "Email":          { page: 1, x: 0.05, y: 0.50, w: 0.55, h: 0.046 },
+  };
+
+  /* Field data from Flask */
+  const FIELDS = {{ fields | tojson }};
+</script>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="{{ url_for('static', filename='js/address-book-live-editor.js') }}"></script>
+{% endblock %}
