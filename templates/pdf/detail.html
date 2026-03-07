@@ -46,6 +46,10 @@
     <i class="bi bi-layers me-1"></i>Overlay View
   </a>
 
+  <a href="{{ url_for('pdf_editor.editor', doc_id=doc.id) }}" class="btn btn-warning btn-sm">
+    <i class="bi bi-pencil-square me-1"></i>Live Editor
+  </a>
+
   {% if current_user.role in ('Admin', 'Verifier') %}
   <form method="POST" action="{{ url_for('pdf.approve', doc_id=doc.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
