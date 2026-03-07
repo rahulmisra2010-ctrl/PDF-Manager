@@ -1,0 +1,469 @@
+/* ==========================================================================
+   pdf-editor.css — Live PDF Editor styles
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Overall layout overrides
+   -------------------------------------------------------------------------- */
+.main-content {
+  padding: 0.75rem 1rem !important;
+}
+
+/* --------------------------------------------------------------------------
+   Top header bar
+   -------------------------------------------------------------------------- */
+.lpe-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.5rem 0 0.75rem;
+  border-bottom: 1px solid #dee2e6;
+  margin-bottom: 0.75rem;
+}
+
+.lpe-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #212529;
+}
+
+.lpe-filename {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lpe-page-count {
+  font-size: 0.78rem;
+  color: #6c757d;
+}
+
+.lpe-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+/* --------------------------------------------------------------------------
+   Action buttons
+   -------------------------------------------------------------------------- */
+.lpe-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  border: none;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: filter 0.15s, opacity 0.15s;
+  line-height: 1.4;
+}
+.lpe-btn:hover   { filter: brightness(1.12); }
+.lpe-btn:active  { filter: brightness(0.92); }
+.lpe-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.lpe-btn-primary   { background: #0d6efd; color: #fff; }
+.lpe-btn-success   { background: #198754; color: #fff; }
+.lpe-btn-danger    { background: #dc3545; color: #fff; }
+.lpe-btn-secondary { background: #6c757d; color: #fff; }
+.lpe-btn-save      { background: #0a3d62; color: #fff; }
+
+.lpe-btn-sm { padding: 0.22rem 0.55rem; font-size: 0.78rem; }
+
+/* --------------------------------------------------------------------------
+   Three-panel workspace
+   -------------------------------------------------------------------------- */
+.lpe-workspace {
+  display: grid;
+  grid-template-columns: 230px 1fr 280px;
+  grid-template-rows: 1fr;
+  gap: 0.75rem;
+  height: calc(100vh - 130px);
+  min-height: 480px;
+}
+
+/* --------------------------------------------------------------------------
+   Shared panel chrome
+   -------------------------------------------------------------------------- */
+.lpe-sidebar-panel,
+.lpe-edit-panel {
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.lpe-panel-header {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background: #f8f9fa;
+  border-bottom: 1px solid #dee2e6;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #495057;
+  flex-shrink: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Left panel — field list
+   -------------------------------------------------------------------------- */
+.lpe-field-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.lpe-field-item {
+  position: relative;
+  padding: 0.45rem 0.75rem;
+  cursor: pointer;
+  border-bottom: 1px solid #f0f0f0;
+  transition: background 0.12s;
+}
+.lpe-field-item:hover           { background: #fff9e6; }
+.lpe-field-item.lpe-active      { background: #fff3cd; border-left: 3px solid #ffc107; }
+.lpe-field-item.lpe-field-edited { background: #fefce8; }
+
+.lpe-field-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #343a40;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lpe-field-value {
+  font-size: 0.75rem;
+  color: #6c757d;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+
+.lpe-edited-badge {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.5rem;
+  font-size: 0.65rem;
+  background: #ffc107;
+  color: #000;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.lpe-conf-badge {
+  font-size: 0.7rem;
+  margin-left: 0.25rem;
+}
+.lpe-conf-low { color: #dc3545; }
+
+.lpe-no-fields {
+  padding: 1.25rem 0.75rem;
+  font-size: 0.82rem;
+  color: #6c757d;
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* --------------------------------------------------------------------------
+   Centre panel — PDF viewer
+   -------------------------------------------------------------------------- */
+.lpe-viewer-panel {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #dee2e6;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: #2b2b2b;
+}
+
+/* PDF toolbar */
+.lpe-pdf-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.75rem;
+  background: #1a1a1a;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.lpe-page-label {
+  color: #ccc;
+  font-size: 0.8rem;
+  margin-bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lpe-page-label input[type="number"] {
+  width: 52px;
+  text-align: center;
+  background: #333;
+  color: #fff;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 0.8rem;
+}
+
+.lpe-tool-btn {
+  background: #444;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 3px 9px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: background 0.12s;
+  white-space: nowrap;
+}
+.lpe-tool-btn:hover    { background: #555; }
+.lpe-tool-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.lpe-toolbar-spacer { flex: 1; }
+
+.lpe-status-text {
+  color: #999;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+/* Scrollable PDF area */
+.lpe-pdf-scroll {
+  flex: 1;
+  overflow: auto;
+  background: #525659;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 1rem;
+  position: relative;
+}
+
+.lpe-pdf-wrapper {
+  position: relative;
+  display: inline-block;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+}
+
+#lpe-pdf-canvas {
+  display: block;
+}
+
+/* --------------------------------------------------------------------------
+   Field highlight overlays (on PDF)
+   -------------------------------------------------------------------------- */
+.lpe-highlight {
+  position: absolute;
+  background: rgba(255, 220, 0, 0.30);
+  border: 2px solid rgba(255, 180, 0, 0.80);
+  border-radius: 3px;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: background 0.12s, border-color 0.12s;
+}
+.lpe-highlight:hover,
+.lpe-highlight.lpe-active {
+  background: rgba(255, 220, 0, 0.60);
+  border-color: #e6a000;
+  z-index: 5;
+}
+
+.lpe-highlight-label {
+  position: absolute;
+  top: -1.5rem;
+  left: 0;
+  background: #e6a000;
+  color: #000;
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px 3px 0 0;
+  white-space: nowrap;
+  pointer-events: none;
+  line-height: 1.4;
+  z-index: 6;
+}
+
+/* --------------------------------------------------------------------------
+   Inline popup editor
+   -------------------------------------------------------------------------- */
+.lpe-popup {
+  position: absolute;
+  z-index: 50;
+  background: #fff;
+  border: 1px solid #ced4da;
+  border-radius: 6px;
+  padding: 0.65rem;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.25);
+  min-width: 220px;
+  max-width: 320px;
+}
+
+.lpe-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #333;
+}
+
+.lpe-popup-close {
+  background: none;
+  border: none;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  color: #666;
+  padding: 0;
+}
+.lpe-popup-close:hover { color: #000; }
+
+.lpe-popup-input {
+  width: 100%;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.82rem;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  margin-bottom: 0.4rem;
+  outline: none;
+  box-sizing: border-box;
+}
+.lpe-popup-input:focus {
+  border-color: #e6a000;
+  box-shadow: 0 0 0 2px rgba(230,160,0,0.25);
+}
+
+.lpe-popup-actions {
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
+
+/* --------------------------------------------------------------------------
+   Right panel — field editor
+   -------------------------------------------------------------------------- */
+.lpe-edit-panel {
+  overflow-y: auto;
+}
+
+.lpe-edit-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  text-align: center;
+  color: #adb5bd;
+  padding: 1.5rem;
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.lpe-placeholder-icon {
+  font-size: 2.5rem;
+  margin-bottom: 0.75rem;
+  display: block;
+}
+
+#lpe-edit-form {
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.lpe-edit-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #343a40;
+  margin: 0;
+}
+
+.lpe-edit-meta {
+  font-size: 0.72rem;
+  color: #6c757d;
+}
+
+.lpe-edit-textarea {
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.82rem;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  resize: vertical;
+  font-family: inherit;
+  outline: none;
+  box-sizing: border-box;
+}
+.lpe-edit-textarea:focus {
+  border-color: #0d6efd;
+  box-shadow: 0 0 0 2px rgba(13,110,253,0.2);
+}
+
+.lpe-edit-orig {
+  background: #fff8dc;
+  border: 1px solid #ffe066;
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.75rem;
+  color: #555;
+}
+
+.lpe-edit-orig-label {
+  font-weight: 600;
+  margin-right: 0.25rem;
+}
+
+.lpe-edit-buttons {
+  display: flex;
+  gap: 0.4rem;
+}
+
+/* --------------------------------------------------------------------------
+   Responsive — hide right edit panel on narrow screens
+   -------------------------------------------------------------------------- */
+@media (max-width: 1100px) {
+  .lpe-workspace {
+    grid-template-columns: 210px 1fr;
+  }
+  .lpe-edit-panel {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .lpe-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+    height: auto;
+  }
+  .lpe-sidebar-panel {
+    max-height: 200px;
+  }
+  .lpe-viewer-panel {
+    height: 65vh;
+  }
+}

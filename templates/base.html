@@ -41,6 +41,12 @@
           </a>
         </li>
         <li class="nav-item">
+          <a class="nav-link {% if request.blueprint == 'pdf_editor' %}active{% endif %}"
+             href="{{ url_for('pdf_editor.index') }}">
+            <i class="bi bi-pencil-square me-2"></i>Live Editor
+          </a>
+        </li>
+        <li class="nav-item">
           <a class="nav-link {% if request.blueprint == 'search' %}active{% endif %}"
              href="{{ url_for('search.results') }}">
             <i class="bi bi-search me-2"></i>Search

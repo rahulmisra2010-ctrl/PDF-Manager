@@ -1,0 +1,301 @@
+{% extends "base.html" %}
+{% block title %}Live PDF Editor — {{ doc.filename }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pdf-editor.css') }}">
+{% endblock %}
+
+{% block content %}
+{# ─────────────────────────────────────────────────────────────────────────
+   Status badge helper
+───────────────────────────────────────────────────────────────────────── #}
+{% set status_cls = {
+  'uploaded':  'secondary',
+  'extracted': 'info',
+  'edited':    'warning',
+  'approved':  'success',
+  'rejected':  'danger'
+}.get(doc.status, 'secondary') %}
+
+{# ─────────────────────────────────────────────────────────────────────────
+   Top header row
+───────────────────────────────────────────────────────────────────────── #}
+<div class="lpe-header">
+  <div class="lpe-title">
+    <i class="bi bi-file-earmark-pdf-fill text-danger"></i>
+    <span class="lpe-filename">{{ doc.filename }}</span>
+    <span class="badge bg-{{ status_cls }} ms-2">{{ doc.status }}</span>
+    {% if doc.page_count %}
+      <span class="lpe-page-count">{{ doc.page_count }} page(s)</span>
+    {% endif %}
+  </div>
+
+  <div class="lpe-actions">
+    {# Extract Fields #}
+    <form method="POST" action="{{ url_for('pdf_editor.extract', doc_id=doc.id) }}"
+          class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="lpe-btn lpe-btn-primary"
+              title="Run OCR and extract fields">
+        <i class="bi bi-cpu-fill me-1"></i>Extract Fields
+      </button>
+    </form>
+
+    {# Approve / Reject (Admin & Verifier only) #}
+    {% if current_user.role in ('Admin', 'Verifier') %}
+    <form method="POST" action="{{ url_for('pdf_editor.approve', doc_id=doc.id) }}"
+          class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="lpe-btn lpe-btn-success"
+              title="Approve document">
+        <i class="bi bi-check-circle-fill me-1"></i>Approve
+      </button>
+    </form>
+    <form method="POST" action="{{ url_for('pdf_editor.reject', doc_id=doc.id) }}"
+          class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="lpe-btn lpe-btn-danger"
+              title="Reject document">
+        <i class="bi bi-x-circle-fill me-1"></i>Reject
+      </button>
+    </form>
+    {% endif %}
+
+    {# Export #}
+    <div class="dropdown d-inline-block">
+      <button class="lpe-btn lpe-btn-secondary dropdown-toggle" type="button"
+              data-bs-toggle="dropdown" title="Export fields">
+        <i class="bi bi-download me-1"></i>Export
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li>
+          <a class="dropdown-item"
+             href="{{ url_for('pdf.export', doc_id=doc.id, fmt='pdf') }}">
+            <i class="bi bi-file-earmark-pdf me-2"></i>PDF (with edits)
+          </a>
+        </li>
+        <li><hr class="dropdown-divider"></li>
+        <li>
+          <a class="dropdown-item"
+             href="{{ url_for('pdf.export', doc_id=doc.id, fmt='csv') }}">
+            <i class="bi bi-filetype-csv me-2"></i>CSV
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item"
+             href="{{ url_for('pdf.export', doc_id=doc.id, fmt='xlsx') }}">
+            <i class="bi bi-filetype-xlsx me-2"></i>XLSX
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item"
+             href="{{ url_for('pdf.export', doc_id=doc.id, fmt='json') }}">
+            <i class="bi bi-filetype-json me-2"></i>JSON
+          </a>
+        </li>
+      </ul>
+    </div>
+
+    {# Save (submits hidden form below) #}
+    <button type="button" id="btn-save-all" class="lpe-btn lpe-btn-save"
+            title="Save all field changes">
+      <i class="bi bi-floppy-fill me-1"></i>Save
+    </button>
+
+    {# Back link #}
+    <a href="{{ url_for('pdf.detail', doc_id=doc.id) }}"
+       class="lpe-btn lpe-btn-secondary" title="Back to document detail">
+      <i class="bi bi-arrow-left me-1"></i>Back
+    </a>
+  </div>
+</div>
+
+{# ─────────────────────────────────────────────────────────────────────────
+   Three-panel editor layout
+───────────────────────────────────────────────────────────────────────── #}
+<div class="lpe-workspace">
+
+  {# ── Left panel: extracted fields list ─────────────────────────────── #}
+  <aside class="lpe-sidebar-panel" id="lpe-fields-panel">
+    <div class="lpe-panel-header">
+      <i class="bi bi-list-ul me-2"></i>Extracted Fields
+      <span class="badge bg-secondary ms-auto" id="lpe-field-count">
+        {{ fields | length }}
+      </span>
+    </div>
+
+    {% if fields %}
+    <ul class="lpe-field-list" id="lpe-field-list">
+      {% for field in fields %}
+      <li class="lpe-field-item {% if field.is_edited %}lpe-field-edited{% endif %}"
+          data-field-id="{{ field.id }}"
+          data-page="{{ field.page_number }}"
+          role="button"
+          tabindex="0"
+          title="{{ field.field_name }}">
+        <div class="lpe-field-name">{{ field.field_name }}</div>
+        <div class="lpe-field-value">{{ field.value or '—' }}</div>
+        {% if field.is_edited %}
+          <span class="lpe-edited-badge">edited</span>
+        {% endif %}
+        {% if field.confidence < 0.65 %}
+          <span class="lpe-conf-badge lpe-conf-low"
+                title="Low confidence">⚠</span>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <div class="lpe-no-fields">
+      <i class="bi bi-info-circle me-1"></i>
+      No fields extracted yet.<br>
+      Click <strong>Extract Fields</strong> above.
+    </div>
+    {% endif %}
+  </aside>
+
+  {# ── Centre panel: PDF viewer ───────────────────────────────────────── #}
+  <section class="lpe-viewer-panel">
+    {# PDF toolbar #}
+    <div class="lpe-pdf-toolbar">
+      <button id="btn-prev" class="lpe-tool-btn" disabled title="Previous page">
+        <i class="bi bi-chevron-left"></i>
+      </button>
+      <label class="lpe-page-label">
+        Page
+        {# max is set dynamically by JS once the PDF loads; 9999 is the initial upper bound #}
+        <input id="page-input" type="number" value="1" min="1" max="9999">
+        / <span id="page-total">?</span>
+      </label>
+      <button id="btn-next" class="lpe-tool-btn" disabled title="Next page">
+        <i class="bi bi-chevron-right"></i>
+      </button>
+
+      <span class="lpe-toolbar-spacer"></span>
+
+      <label class="lpe-page-label">
+        Zoom
+        <input id="zoom-input" type="number" value="100" min="25" max="400"
+               style="width:60px"> %
+      </label>
+      <button id="btn-zoom-in"  class="lpe-tool-btn" title="Zoom in">+</button>
+      <button id="btn-zoom-out" class="lpe-tool-btn" title="Zoom out">−</button>
+      <button id="btn-zoom-fit" class="lpe-tool-btn" title="Fit to width">
+        <i class="bi bi-arrows-expand"></i>
+      </button>
+
+      <span class="lpe-toolbar-spacer"></span>
+      <span id="lpe-render-status" class="lpe-status-text">Loading…</span>
+    </div>
+
+    {# Scrollable PDF canvas area #}
+    <div id="lpe-pdf-scroll" class="lpe-pdf-scroll">
+      <div id="lpe-pdf-wrapper" class="lpe-pdf-wrapper">
+        <canvas id="lpe-pdf-canvas"></canvas>
+        {# Field highlight overlays are injected here by JS #}
+      </div>
+      {# Inline popup editor #}
+      <div id="lpe-popup" class="lpe-popup" style="display:none">
+        <div class="lpe-popup-header">
+          <span id="lpe-popup-title"></span>
+          <button id="lpe-popup-close" class="lpe-popup-close"
+                  title="Close">&times;</button>
+        </div>
+        <input type="text" id="lpe-popup-input" class="lpe-popup-input"
+               placeholder="Field value…">
+        <div class="lpe-popup-actions">
+          <button id="lpe-popup-cancel" class="lpe-btn lpe-btn-secondary lpe-btn-sm">
+            Cancel
+          </button>
+          <button id="lpe-popup-apply"  class="lpe-btn lpe-btn-primary lpe-btn-sm">
+            Apply
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  {# ── Right panel: field editor form ────────────────────────────────── #}
+  <aside class="lpe-edit-panel" id="lpe-edit-panel">
+    <div class="lpe-panel-header">
+      <i class="bi bi-pencil-square me-2"></i>Edit Field
+    </div>
+
+    <div id="lpe-edit-placeholder" class="lpe-edit-placeholder">
+      <i class="bi bi-hand-index-thumb lpe-placeholder-icon"></i>
+      <p>Click a highlighted field on the PDF<br>or select one from the list.</p>
+    </div>
+
+    <div id="lpe-edit-form" style="display:none">
+      <label class="lpe-edit-label" id="lpe-edit-field-name"></label>
+
+      <div class="lpe-edit-meta" id="lpe-edit-meta"></div>
+
+      <textarea id="lpe-edit-textarea" class="lpe-edit-textarea" rows="4"
+                placeholder="Field value…"></textarea>
+
+      <div class="lpe-edit-orig" id="lpe-edit-orig" style="display:none">
+        <span class="lpe-edit-orig-label">Original:</span>
+        <span id="lpe-edit-orig-value"></span>
+      </div>
+
+      <div class="lpe-edit-buttons">
+        <button id="lpe-edit-apply" class="lpe-btn lpe-btn-primary">
+          <i class="bi bi-check-lg me-1"></i>Apply
+        </button>
+        <button id="lpe-edit-reset" class="lpe-btn lpe-btn-secondary">
+          <i class="bi bi-arrow-counterclockwise me-1"></i>Reset
+        </button>
+      </div>
+    </div>
+  </aside>
+</div>
+
+{# ─────────────────────────────────────────────────────────────────────────
+   Hidden save form (receives values from JS before POST)
+───────────────────────────────────────────────────────────────────────── #}
+<form id="lpe-save-form" method="POST"
+      action="{{ url_for('pdf_editor.save', doc_id=doc.id) }}"
+      style="display:none">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% for field in fields %}
+  <input type="hidden" name="field_{{ field.id }}"
+         id="save-field-{{ field.id }}"
+         value="{{ field.value or '' }}">
+  {% endfor %}
+</form>
+
+{# ─────────────────────────────────────────────────────────────────────────
+   Data for JavaScript
+───────────────────────────────────────────────────────────────────────── #}
+<script>
+  const PDF_URL  = {{ pdf_url | tojson }};
+  const DOC_ID   = {{ doc.id }};
+  const CSRF_TOKEN = {{ csrf_token() | tojson }};
+
+  /* Default bounding boxes for known address-book fields (fractions 0–1) */
+  const DEMO_BOXES = {
+    "Name":          { page: 1, x: 0.05, y: 0.10, w: 0.50, h: 0.045 },
+    "Street Address":{ page: 1, x: 0.05, y: 0.17, w: 0.65, h: 0.045 },
+    "City":          { page: 1, x: 0.05, y: 0.24, w: 0.30, h: 0.045 },
+    "State":         { page: 1, x: 0.40, y: 0.24, w: 0.12, h: 0.045 },
+    "Zip Code":      { page: 1, x: 0.56, y: 0.24, w: 0.18, h: 0.045 },
+    "Home Phone":    { page: 1, x: 0.05, y: 0.31, w: 0.28, h: 0.045 },
+    "Cell Phone":    { page: 1, x: 0.38, y: 0.31, w: 0.28, h: 0.045 },
+    "Work Phone":    { page: 1, x: 0.05, y: 0.38, w: 0.28, h: 0.045 },
+    "Email":         { page: 1, x: 0.05, y: 0.45, w: 0.55, h: 0.045 },
+  };
+
+  /* Field data from Flask */
+  const FIELDS = {{ fields | tojson }};
+
+  /* Endpoint for single-field AJAX update */
+  const UPDATE_URL = {{ url_for('pdf_editor.update_field', doc_id=doc.id) | tojson }};
+</script>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="{{ url_for('static', filename='js/pdf-editor.js') }}"></script>
+{% endblock %}

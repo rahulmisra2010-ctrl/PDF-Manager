@@ -243,8 +243,8 @@ def reject(doc_id: int):
 @pdf_bp.route("/<int:doc_id>/export/<fmt>")
 @login_required
 def export(doc_id: int, fmt: str):
-    """Export the document's extracted fields as CSV, XLSX, or JSON."""
-    if fmt not in ("csv", "xlsx", "json"):
+    """Export the document's extracted fields as CSV, XLSX, JSON, or PDF."""
+    if fmt not in ("csv", "xlsx", "json", "pdf"):
         abort(400)
 
     doc = Document.query.get_or_404(doc_id)
@@ -272,6 +272,54 @@ def export(doc_id: int, fmt: str):
             as_attachment=True,
             download_name=f"{doc.filename}_fields.csv",
         )
+
+    if fmt == "pdf":
+        if not os.path.exists(doc.file_path):
+            flash("Original PDF file not found on disk.", "danger")
+            return redirect(url_for("pdf.detail", doc_id=doc_id))
+
+        svc = _get_pdf_service()
+        if svc is None:
+            flash("PDF service is unavailable — check backend dependencies.", "danger")
+            return redirect(url_for("pdf.detail", doc_id=doc_id))
+
+        try:
+            # Build field dicts that _export_as_pdf understands
+            field_dicts = [
+                {
+                    "field_name": f.field_name,
+                    "value": f.value or "",
+                    "page_number": f.page_number or 1,
+                    "bounding_box": (
+                        {
+                            "x0": f.bbox_x,
+                            "y0": f.bbox_y,
+                            "x1": f.bbox_x + f.bbox_width,
+                            "y1": f.bbox_y + f.bbox_height,
+                        }
+                        if f.bbox_x is not None
+                        else None
+                    ),
+                }
+                for f in fields
+            ]
+
+            buf = io.BytesIO()
+            svc._export_as_pdf(doc.file_path, field_dicts, buf)
+            buf.seek(0)
+            stem = doc.filename.rsplit(".", 1)[0]
+            return send_file(
+                buf,
+                mimetype="application/pdf",
+                as_attachment=True,
+                download_name=f"{stem}_export.pdf",
+            )
+        except Exception as exc:
+            current_app.logger.exception(
+                "PDF export failed for doc %s: %s", doc_id, exc
+            )
+            flash(f"PDF export failed: {exc}", "danger")
+            return redirect(url_for("pdf.detail", doc_id=doc_id))
 
     # xlsx
     try:
