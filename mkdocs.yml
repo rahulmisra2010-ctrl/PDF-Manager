@@ -1,0 +1,129 @@
+site_name: PDF Manager Documentation
+site_description: Production-ready PDF data extraction tool with triple OCR engines and AI/RAG
+site_url: https://rahulmisra2010-ctrl.github.io/PDF-Manager/
+repo_url: https://github.com/rahulmisra2010-ctrl/PDF-Manager
+repo_name: rahulmisra2010-ctrl/PDF-Manager
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: blue
+      accent: light blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: blue
+      accent: light blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.expand
+    - navigation.top
+    - navigation.indexes
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+  logo: images/logo.png
+  favicon: images/logo.png
+
+extra_css:
+  - css/extra.css
+
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/rahulmisra2010-ctrl/PDF-Manager
+
+nav:
+  - Home: index.md
+  - Installation:
+    - installation/index.md
+    - Requirements: installation/requirements.md
+    - Docker: installation/docker.md
+    - Manual Setup: installation/manual.md
+    - Cloud Deployment: installation/cloud.md
+  - User Guide:
+    - user-guide/index.md
+    - Getting Started: user-guide/getting-started.md
+    - Uploading PDFs: user-guide/uploading.md
+    - Extracting Data: user-guide/extraction.md
+    - Editing Fields: user-guide/editing.md
+    - Exporting Results: user-guide/exporting.md
+    - User Roles: user-guide/roles.md
+  - API Reference:
+    - api/index.md
+    - Authentication: api/authentication.md
+    - Upload: api/upload.md
+    - OCR Extraction: api/extract.md
+    - Fields: api/fields.md
+    - Export: api/export.md
+    - Error Codes: api/errors.md
+  - Deployment:
+    - deployment/index.md
+    - Production Setup: deployment/production.md
+    - Docker Compose: deployment/docker-compose.md
+    - Kubernetes: deployment/kubernetes.md
+    - Cloud Platforms: deployment/cloud.md
+    - SSL/TLS: deployment/ssl.md
+    - Backup & Recovery: deployment/backup.md
+    - Monitoring: deployment/monitoring.md
+  - Development:
+    - development/index.md
+    - Environment Setup: development/setup.md
+    - Project Structure: development/structure.md
+    - Creating Features: development/features.md
+    - Testing: development/testing.md
+    - Code Style: development/style.md
+    - Git Workflow: development/workflow.md
+  - Architecture:
+    - architecture/index.md
+    - System Overview: architecture/overview.md
+    - Components: architecture/components.md
+    - Database Schema: architecture/database.md
+    - API Architecture: architecture/api.md
+    - OCR/RAG Pipeline: architecture/extraction.md
+  - Troubleshooting:
+    - troubleshooting/index.md
+    - FAQ: troubleshooting/faq.md
+    - Common Issues: troubleshooting/common-issues.md
+    - Performance: troubleshooting/performance.md
+    - Error Reference: troubleshooting/errors.md
