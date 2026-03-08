@@ -1,12 +1,20 @@
 /**
- * ExtractionPage.js — Full split-layout extraction page.
+ * ExtractionPage.js — Master component orchestrating all sub-components.
  *
  * Layout:
- *   Left panel  — PDF viewer (react-pdf) with zoom & page nav
+ *   Left panel  — PDFViewer (react-pdf) with zoom, nav, word hover overlays
  *   Right panel — Tabbed panel:
- *     Tab 1: Editable Fields (FieldsEditor)
- *     Tab 2: OCR Confidence Heatmap
- *     Tab 3: Performance Dashboard
+ *     Tab 1: FieldsEditor (editable table)
+ *     Tab 2: ConfidenceHeatmap (word-level confidence)
+ *     Tab 3: PerformanceDashboard
+ *   Optional: SuggestionPanel (slides from right when active)
+ *
+ * Features:
+ * - Real-time bidirectional PDF ↔ editor synchronization via useFieldSync
+ * - react-hot-toast notifications for success/error
+ * - Framer Motion transitions between tabs
+ * - Responsive: split on desktop, stacked on mobile
+ * - Zustand store for fields undo/redo
  *
  * Props:
  *   document      {object}  { documentId, filename }
@@ -14,10 +22,16 @@
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { Toaster, toast } from 'react-hot-toast';
 import PDFViewer from './PDFViewer';
 import FieldsEditor from './FieldsEditor';
+import ConfidenceHeatmap from './ConfidenceHeatmap';
 import OCRConfidenceHeatmap from './OCRConfidenceHeatmap';
 import PerformanceDashboard from './PerformanceDashboard';
+import SuggestionPanel from './SuggestionPanel';
+import useFieldSync from '../hooks/useFieldSync';
+import useStore from '../services/store';
 import {
   runOCRExtraction,
   runAIExtraction,
@@ -26,17 +40,17 @@ import {
   getHeatmap,
   getPDFUrl,
 } from '../services/api';
-import '../styles/extraction.css';
+import { fadeVariants } from '../hooks/useAnimations';
+import styles from './styles/ExtractionPage.module.css';
 
 const TABS = ['Fields', 'Heatmap', 'Performance'];
 
 function ExtractionPage({ document: doc, onReset }) {
   const [activeTab, setActiveTab] = useState('Fields');
   const [currentPage, setCurrentPage] = useState(1);
-  const [highlightBox, setHighlightBox] = useState(null);
+  const [wordMarkers, setWordMarkers] = useState([]);
 
   // Extraction state
-  const [fields, setFields] = useState([]);
   const [quality, setQuality] = useState(null);
   const [enginesUsed, setEnginesUsed] = useState([]);
   const [extractionTime, setExtractionTime] = useState(null);
@@ -50,9 +64,20 @@ function ExtractionPage({ document: doc, onReset }) {
   const [loadingFields, setLoadingFields] = useState(false);
   const [error, setError] = useState('');
 
+  // Suggestion panel
+  const [suggestionField, setSuggestionField] = useState(null);
+  const [suggestions, setSuggestions] = useState([]);
+
+  // Zustand store for fields with undo/redo
+  const { fields, setFields, updateFieldValue } = useStore();
+
+  // Bidirectional PDF ↔ editor sync
+  const { highlightBox, activeFieldId, focusWord, setHighlightBox } =
+    useFieldSync();
+
   const pdfUrl = doc ? getPDFUrl(doc.documentId) : null;
 
-  // Load fields from DB on mount / document change
+  // ─── Load fields from DB on mount / document change ──────────────────────
   useEffect(() => {
     if (!doc) return;
     setLoadingFields(true);
@@ -62,9 +87,9 @@ function ExtractionPage({ document: doc, onReset }) {
       })
       .catch(() => {})
       .finally(() => setLoadingFields(false));
-  }, [doc]);
+  }, [doc, setFields]);
 
-  // Load heatmap when tab switches to Heatmap or page changes
+  // ─── Load heatmap when Heatmap tab active or page changes ─────────────────
   useEffect(() => {
     if (activeTab !== 'Heatmap' || !doc) return;
     setLoadingHeatmap(true);
@@ -73,63 +98,104 @@ function ExtractionPage({ document: doc, onReset }) {
         setHeatmapImage(data.image || null);
         const { image, ...rest } = data;
         setHeatmapData(rest);
+        setWordMarkers(rest.word_markers || []);
       })
-      .catch((err) => setError(err.message))
+      .catch((err) => {
+        setError(err.message);
+        toast.error('Failed to load heatmap: ' + err.message);
+      })
       .finally(() => setLoadingHeatmap(false));
   }, [activeTab, doc, currentPage]);
 
+  // ─── Run OCR ──────────────────────────────────────────────────────────────
   const handleRunOCR = useCallback(async () => {
     if (!doc) return;
     setLoadingOCR(true);
     setError('');
+    const toastId = toast.loading('Running OCR…');
     try {
       const result = await runOCRExtraction(doc.documentId);
-      // Build simple field list from OCR text
-      const pageTexts = (result.pages || []).map((p) => p.full_text).join('\n');
-      // Reload fields in case backend created them
       const updatedFields = await getFields(doc.documentId);
       if (Array.isArray(updatedFields)) setFields(updatedFields);
       setEnginesUsed(result.engines_used || []);
+      toast.success(`OCR complete (${(result.engines_used || []).join(', ')})`, { id: toastId });
     } catch (err) {
-      setError('OCR failed: ' + err.message);
+      const msg = 'OCR failed: ' + err.message;
+      setError(msg);
+      toast.error(msg, { id: toastId });
     } finally {
       setLoadingOCR(false);
     }
-  }, [doc]);
+  }, [doc, setFields]);
 
+  // ─── Run AI extraction ─────────────────────────────────────────────────────
   const handleRunAI = useCallback(async () => {
     if (!doc) return;
     setLoadingAI(true);
     setError('');
+    const toastId = toast.loading('Running AI extraction…');
     try {
       const result = await runAIExtraction(doc.documentId);
-      if (result.fields) {
-        setFields(result.fields);
-      }
+      if (result.fields) setFields(result.fields);
       if (result.quality) setQuality(result.quality);
       if (result.engines_available) setEnginesUsed(result.engines_available);
-      if (result.extraction_time_seconds != null) setExtractionTime(result.extraction_time_seconds);
+      if (result.extraction_time_seconds != null)
+        setExtractionTime(result.extraction_time_seconds);
+      toast.success('AI extraction complete', { id: toastId });
     } catch (err) {
-      setError('AI extraction failed: ' + err.message);
+      const msg = 'AI extraction failed: ' + err.message;
+      setError(msg);
+      toast.error(msg, { id: toastId });
     } finally {
       setLoadingAI(false);
     }
-  }, [doc]);
+  }, [doc, setFields]);
 
+  // ─── Field update (saves to API + updates Zustand store) ──────────────────
   const handleFieldUpdate = useCallback(
     async (fieldId, newValue) => {
       try {
         const updated = await updateField(fieldId, newValue);
-        setFields((prev) =>
-          prev.map((f) => (f.id === updated.id ? updated : f))
-        );
+        updateFieldValue(fieldId, updated.value ?? newValue);
+        return updated;
       } catch (err) {
-        setError('Save failed: ' + err.message);
+        const msg = 'Save failed: ' + err.message;
+        setError(msg);
+        toast.error(msg);
+        throw err;
       }
     },
-    []
+    [updateFieldValue]
   );
 
+  // ─── Suggest: open suggestion panel for a field ────────────────────────────
+  const handleSuggest = useCallback((field) => {
+    setSuggestionField(field);
+    // TODO: Replace with actual API call to GET /api/v1/fields/:id/suggestions
+    //       when the backend AI suggestion endpoint is implemented.
+    // Build candidate suggestions from fields with the same type already extracted.
+    const mockSuggestions = (fields || [])
+      .filter(
+        (f) =>
+          f.field_type === field.field_type &&
+          f.value &&
+          f.value !== field.value &&
+          f.id !== field.id
+      )
+      .map((f) => ({ value: f.value, score: f.confidence || 0.7, source: f.source }))
+      .slice(0, 5);
+    setSuggestions(mockSuggestions);
+  }, [fields]);
+
+  // ─── Apply suggestion ──────────────────────────────────────────────────────
+  const handleApplySuggestion = useCallback(
+    async (fieldId, newValue) => {
+      await handleFieldUpdate(fieldId, newValue);
+    },
+    [handleFieldUpdate]
+  );
+
+  // ─── Exports ───────────────────────────────────────────────────────────────
   const handleExportJSON = () => {
     const blob = new Blob([JSON.stringify(fields, null, 2)], {
       type: 'application/json',
@@ -140,6 +206,7 @@ function ExtractionPage({ document: doc, onReset }) {
     a.download = `${doc?.filename || 'export'}_fields.json`;
     a.click();
     URL.revokeObjectURL(url);
+    toast.success('JSON exported');
   };
 
   const handleExportCSV = () => {
@@ -158,113 +225,218 @@ function ExtractionPage({ document: doc, onReset }) {
     a.download = `${doc?.filename || 'export'}_fields.csv`;
     a.click();
     URL.revokeObjectURL(url);
+    toast.success('CSV exported');
   };
 
+  const isLoading = loadingOCR || loadingAI;
+
   return (
-    <div className="extraction-page">
-      {/* Top bar */}
-      <div className="extraction-page__topbar">
-        <div className="extraction-page__doc-info">
-          <span className="extraction-page__doc-icon">📄</span>
-          <span className="extraction-page__doc-name">{doc?.filename}</span>
+    <div className={styles.page}>
+      {/* react-hot-toast container */}
+      <Toaster
+        position="top-right"
+        toastOptions={{ duration: 3000, style: { fontSize: 13 } }}
+      />
+
+      {/* ── Top bar ── */}
+      <div className={styles.topbar}>
+        <div className={styles.docInfo}>
+          <span aria-hidden>📄</span>
+          <span className={styles.docName} title={doc?.filename}>
+            {doc?.filename}
+          </span>
         </div>
-        <div className="extraction-page__actions">
+        <div className={styles.actions}>
           <button
-            className="extraction-btn extraction-btn--ocr"
+            className={`${styles.btn} ${styles.btnOcr}`}
             onClick={handleRunOCR}
-            disabled={loadingOCR || loadingAI}
+            disabled={isLoading}
+            aria-label="Run OCR extraction"
           >
-            {loadingOCR ? '⏳ Running OCR…' : '🔍 Run OCR'}
+            {loadingOCR ? '⏳ OCR…' : '🔍 Run OCR'}
           </button>
           <button
-            className="extraction-btn extraction-btn--ai"
+            className={`${styles.btn} ${styles.btnAi}`}
             onClick={handleRunAI}
-            disabled={loadingOCR || loadingAI}
+            disabled={isLoading}
+            aria-label="Run AI extraction with RAG"
           >
-            {loadingAI ? '⏳ AI Extracting…' : '🤖 AI Extract (RAG)'}
+            {loadingAI ? '⏳ AI…' : '🤖 AI Extract (RAG)'}
           </button>
-          <button className="extraction-btn extraction-btn--export" onClick={handleExportJSON}>
+          <button
+            className={`${styles.btn} ${styles.btnExport}`}
+            onClick={handleExportJSON}
+            aria-label="Export as JSON"
+          >
             ⬇ JSON
           </button>
-          <button className="extraction-btn extraction-btn--export" onClick={handleExportCSV}>
+          <button
+            className={`${styles.btn} ${styles.btnExport}`}
+            onClick={handleExportCSV}
+            aria-label="Export as CSV"
+          >
             ⬇ CSV
           </button>
           {onReset && (
-            <button className="extraction-btn extraction-btn--reset" onClick={onReset}>
+            <button
+              className={`${styles.btn} ${styles.btnReset}`}
+              onClick={onReset}
+              aria-label="Upload new PDF"
+            >
               ↩ New PDF
             </button>
           )}
         </div>
       </div>
 
-      {error && (
-        <div className="extraction-page__error" role="alert">
-          ⚠️ {error}
-          <button onClick={() => setError('')} aria-label="Dismiss error">✕</button>
-        </div>
-      )}
+      {/* ── Error bar ── */}
+      <AnimatePresence>
+        {error && (
+          <motion.div
+            className={styles.errorBar}
+            role="alert"
+            aria-live="assertive"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+          >
+            ⚠️ {error}
+            <button
+              className={styles.errorDismiss}
+              onClick={() => setError('')}
+              aria-label="Dismiss error"
+            >
+              ✕
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {/* Split layout */}
-      <div className="extraction-page__split">
+      {/* ── Split layout ── */}
+      <div className={styles.split}>
         {/* Left: PDF viewer */}
-        <div className="extraction-page__left">
+        <div className={styles.leftPanel}>
           <PDFViewer
             pdfUrl={pdfUrl}
             onPageChange={setCurrentPage}
             highlightBox={highlightBox}
+            wordMarkers={activeTab === 'Heatmap' ? wordMarkers : []}
+            onWordHover={focusWord}
           />
         </div>
 
         {/* Right: Tabbed panels */}
-        <div className="extraction-page__right">
+        <div className={styles.rightPanel}>
           {/* Tabs */}
-          <div className="extraction-page__tabs" role="tablist">
+          <div className={styles.tabs} role="tablist" aria-label="Content tabs">
             {TABS.map((tab) => (
               <button
                 key={tab}
                 role="tab"
                 aria-selected={activeTab === tab}
-                className={`extraction-page__tab ${activeTab === tab ? 'active' : ''}`}
+                className={`${styles.tab} ${activeTab === tab ? styles.tabActive : ''}`}
                 onClick={() => setActiveTab(tab)}
               >
-                {tab === 'Fields' && `📋 ${tab}`}
-                {tab === 'Heatmap' && `🔥 ${tab}`}
-                {tab === 'Performance' && `📊 ${tab}`}
+                {tab === 'Fields' && '📋 Fields'}
+                {tab === 'Heatmap' && '🔥 Heatmap'}
+                {tab === 'Performance' && '📊 Performance'}
               </button>
             ))}
           </div>
 
-          {/* Tab content */}
-          <div className="extraction-page__tab-content" role="tabpanel">
-            {activeTab === 'Fields' && (
-              <FieldsEditor
-                fields={fields}
-                onFieldUpdate={handleFieldUpdate}
-                onFieldHover={setHighlightBox}
-                loading={loadingFields}
-              />
-            )}
+          {/* Tab content + optional suggestion panel side by side */}
+          <div className={styles.withSuggestions}>
+            <div
+              className={
+                suggestionField ? styles.tabContentWithPanel : styles.tabContent
+              }
+              role="tabpanel"
+            >
+              <AnimatePresence mode="wait">
+                {activeTab === 'Fields' && (
+                  <motion.div
+                    key="fields"
+                    variants={fadeVariants}
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
+                    style={{ height: '100%' }}
+                  >
+                    <FieldsEditor
+                      fields={fields}
+                      onFieldUpdate={handleFieldUpdate}
+                      onFieldHover={setHighlightBox}
+                      onSuggest={handleSuggest}
+                      activeFieldId={activeFieldId}
+                      loading={loadingFields}
+                    />
+                  </motion.div>
+                )}
 
-            {activeTab === 'Heatmap' && (
-              loadingHeatmap ? (
-                <div className="extraction-page__loading">Loading heatmap…</div>
-              ) : (
-                <OCRConfidenceHeatmap
-                  heatmapData={heatmapData}
-                  imageData={heatmapImage}
-                  pageNumber={currentPage}
+                {activeTab === 'Heatmap' && (
+                  <motion.div
+                    key="heatmap"
+                    variants={fadeVariants}
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
+                    style={{ height: '100%' }}
+                  >
+                    {loadingHeatmap ? (
+                      <div className={styles.loadingOverlay} aria-live="polite">
+                        ⏳ Loading heatmap…
+                      </div>
+                    ) : heatmapData ? (
+                      <ConfidenceHeatmap
+                        heatmapData={heatmapData}
+                        imageData={heatmapImage}
+                        pageNumber={currentPage}
+                        onWordHover={focusWord}
+                      />
+                    ) : (
+                      <OCRConfidenceHeatmap
+                        heatmapData={heatmapData}
+                        imageData={heatmapImage}
+                        pageNumber={currentPage}
+                      />
+                    )}
+                  </motion.div>
+                )}
+
+                {activeTab === 'Performance' && (
+                  <motion.div
+                    key="performance"
+                    variants={fadeVariants}
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
+                    style={{ height: '100%' }}
+                  >
+                    <PerformanceDashboard
+                      quality={quality}
+                      enginesUsed={enginesUsed}
+                      extractionTime={extractionTime}
+                      fields={fields}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Suggestion panel */}
+            <AnimatePresence>
+              {suggestionField && (
+                <SuggestionPanel
+                  key="suggestions"
+                  fieldId={suggestionField.id}
+                  fieldName={suggestionField.field_name}
+                  currentValue={suggestionField.value}
+                  suggestions={suggestions}
+                  onApply={handleApplySuggestion}
+                  onClose={() => setSuggestionField(null)}
                 />
-              )
-            )}
-
-            {activeTab === 'Performance' && (
-              <PerformanceDashboard
-                quality={quality}
-                enginesUsed={enginesUsed}
-                extractionTime={extractionTime}
-                fields={fields}
-              />
-            )}
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </div>
@@ -273,3 +445,4 @@ function ExtractionPage({ document: doc, onReset }) {
 }
 
 export default ExtractionPage;
+
