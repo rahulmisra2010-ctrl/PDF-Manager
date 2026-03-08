@@ -1,22 +1,27 @@
-# Dockerfile for PDF-Manager
+# Updated Dockerfile
 
-# Use the official Python 3.10 image
-FROM python:3.10
+# Use the official Python image from the Docker Hub
+FROM python:3.8-slim
 
 # Set the working directory
 WORKDIR /app
 
-# Copy requirements.txt first to leverage Docker cache
+# Copy the requirements file into the container
 COPY requirements.txt .
 
-# Install the dependencies
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    \
+# Add additional dependencies that you need, e.g., \
+    libpq-dev \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application code
 COPY . .
 
-# Expose the port that the app runs on
-EXPOSE 8000
-
-# Command to run the application with Gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "your_app_module:app"]
+# Correct CMD line to run the application
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "wsgi:app"]
