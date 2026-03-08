@@ -1,37 +1,38 @@
-# Docker Image Workflow
-
 name: Docker Image CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    
     steps:
     - name: Checkout code
-      uses: actions/checkout@v2
-
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v1
-
-    - name: Log in to Docker Hub
-      uses: docker/login-action@v1
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
       with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
-
-    - name: Build and push Docker image
-      uses: docker/build-push-action@v2
-      with:
-        context: .
-        file: ./Dockerfile
-        push: true
-        tags: rahulmisra2010-ctrl/pdf-manager:latest
-
-    - name: Run tests
+        python-version: '3.8'
+    
+    - name: Install dependencies
       run: |
-        docker run --rm rahulmisra2010-ctrl/pdf-manager:latest npm test
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov
+    
+    - name: Run tests
+      run: pytest test_app.py -v --tb=short
+    
+    - name: Build the Docker image
+      run: docker build . --file Dockerfile --tag pdf-manager:${{ github.sha }}
+    
+    - name: Tag latest image
+      run: docker tag pdf-manager:${{ github.sha }} pdf-manager:latest
+    
+    - name: List Docker images
+      run: docker images | grep pdf-manager
