@@ -192,6 +192,69 @@ export async function deleteDocument(documentId) {
 }
 
 // ---------------------------------------------------------------------------
+// Spatial OCR
+// ---------------------------------------------------------------------------
+
+/**
+ * Run spatial OCR extraction on a document page.
+ * @param {string|number} documentId
+ * @param {number} [page=1] Pass 0 for all pages.
+ * @returns {Promise<any>}
+ */
+export async function extractSpatial(documentId, page = 1) {
+  return apiFetch(`/extract/spatial/${encodeURIComponent(documentId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ page }),
+  });
+}
+
+/**
+ * Analyse the form layout of a document page.
+ * @param {string|number} documentId
+ * @param {number} [page=1]
+ * @returns {Promise<any>}
+ */
+export async function analyzeLayout(documentId, page = 1) {
+  return apiFetch(`/analyze/layout/${encodeURIComponent(documentId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ page }),
+  });
+}
+
+/**
+ * Get position-based suggestions for a hover coordinate.
+ * @param {string|number} documentId
+ * @param {number} x
+ * @param {number} y
+ * @param {number} [page=1]
+ * @param {number} [radius=30]
+ * @returns {Promise<any>}
+ */
+export async function getSpatialSuggestions(documentId, x, y, page = 1, radius = 30) {
+  return apiFetch(`/suggestions/spatial/${encodeURIComponent(documentId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ x, y, page, radius }),
+  });
+}
+
+/**
+ * Get field info for a specific PDF coordinate.
+ * @param {string|number} documentId
+ * @param {number} page
+ * @param {number} x
+ * @param {number} y
+ * @returns {Promise<any>}
+ */
+export async function getPositionInfo(documentId, page, x, y) {
+  return apiFetch(
+    `/position/${encodeURIComponent(documentId)}/${page}/${x}/${y}`
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Legacy helpers (kept for backward compatibility with older components)
 // ---------------------------------------------------------------------------
 

@@ -15,9 +15,12 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
 import PDFViewer from './PDFViewer';
+import SpatialPDFViewer from './SpatialPDFViewer';
 import FieldsEditor from './FieldsEditor';
 import OCRConfidenceHeatmap from './OCRConfidenceHeatmap';
 import PerformanceDashboard from './PerformanceDashboard';
+import LayoutAnalysisPanel from './LayoutAnalysisPanel';
+import PositionContextDisplay from './PositionContextDisplay';
 import {
   runOCRExtraction,
   runAIExtraction,
@@ -25,10 +28,14 @@ import {
   updateField,
   getHeatmap,
   getPDFUrl,
+  extractSpatial,
 } from '../services/api';
+import useSpatialContext from '../hooks/useSpatialContext';
+import useLayoutAnalysis from '../hooks/useLayoutAnalysis';
 import '../styles/extraction.css';
+import '../styles/spatial.css';
 
-const TABS = ['Fields', 'Heatmap', 'Performance'];
+const TABS = ['Fields', 'Heatmap', 'Performance', 'Spatial'];
 
 function ExtractionPage({ document: doc, onReset }) {
   const [activeTab, setActiveTab] = useState('Fields');
@@ -42,6 +49,29 @@ function ExtractionPage({ document: doc, onReset }) {
   const [extractionTime, setExtractionTime] = useState(null);
   const [heatmapData, setHeatmapData] = useState(null);
   const [heatmapImage, setHeatmapImage] = useState(null);
+
+  // Spatial state
+  const [spatialWords, setSpatialWords] = useState([]);
+  const [loadingSpatial, setLoadingSpatial] = useState(false);
+  const [showWordBoxes, setShowWordBoxes] = useState(true);
+  const [showGrid, setShowGrid] = useState(false);
+  const [showZones, setShowZones] = useState(false);
+
+  // Spatial context hooks
+  const {
+    contextData,
+    loading: contextLoading,
+    error: contextError,
+    fetchContext,
+    clearContext,
+  } = useSpatialContext(doc?.documentId);
+
+  const {
+    layoutData,
+    loading: layoutLoading,
+    error: layoutError,
+    fetchLayout,
+  } = useLayoutAnalysis(doc?.documentId);
 
   // Loading / error
   const [loadingOCR, setLoadingOCR] = useState(false);
@@ -84,8 +114,6 @@ function ExtractionPage({ document: doc, onReset }) {
     setError('');
     try {
       const result = await runOCRExtraction(doc.documentId);
-      // Build simple field list from OCR text
-      const pageTexts = (result.pages || []).map((p) => p.full_text).join('\n');
       // Reload fields in case backend created them
       const updatedFields = await getFields(doc.documentId);
       if (Array.isArray(updatedFields)) setFields(updatedFields);
@@ -160,6 +188,36 @@ function ExtractionPage({ document: doc, onReset }) {
     URL.revokeObjectURL(url);
   };
 
+  // -----------------------------------------------------------------------
+  // Spatial handlers
+  // -----------------------------------------------------------------------
+
+  const handleRunSpatial = useCallback(async () => {
+    if (!doc) return;
+    setLoadingSpatial(true);
+    setError('');
+    try {
+      const result = await extractSpatial(doc.documentId, currentPage);
+      setSpatialWords(result.words || []);
+    } catch (err) {
+      setError('Spatial extraction failed: ' + err.message);
+    } finally {
+      setLoadingSpatial(false);
+    }
+  }, [doc, currentPage]);
+
+  const handleAnalyseLayout = useCallback(async () => {
+    if (!doc) return;
+    await fetchLayout(currentPage);
+  }, [doc, currentPage, fetchLayout]);
+
+  const handlePositionClick = useCallback(
+    ({ x, y, page }) => {
+      fetchContext(x, y, page, 30);
+    },
+    [fetchContext]
+  );
+
   return (
     <div className="extraction-page">
       {/* Top bar */}
@@ -206,13 +264,27 @@ function ExtractionPage({ document: doc, onReset }) {
 
       {/* Split layout */}
       <div className="extraction-page__split">
-        {/* Left: PDF viewer */}
+        {/* Left: PDF viewer — spatial variant when on Spatial tab */}
         <div className="extraction-page__left">
-          <PDFViewer
-            pdfUrl={pdfUrl}
-            onPageChange={setCurrentPage}
-            highlightBox={highlightBox}
-          />
+          {activeTab === 'Spatial' ? (
+            <SpatialPDFViewer
+              pdfUrl={pdfUrl}
+              onPageChange={setCurrentPage}
+              highlightBox={highlightBox}
+              words={spatialWords}
+              layoutData={layoutData}
+              onPositionClick={handlePositionClick}
+              showWordBoxes={showWordBoxes}
+              showGrid={showGrid}
+              showZones={showZones}
+            />
+          ) : (
+            <PDFViewer
+              pdfUrl={pdfUrl}
+              onPageChange={setCurrentPage}
+              highlightBox={highlightBox}
+            />
+          )}
         </div>
 
         {/* Right: Tabbed panels */}
@@ -230,6 +302,7 @@ function ExtractionPage({ document: doc, onReset }) {
                 {tab === 'Fields' && `📋 ${tab}`}
                 {tab === 'Heatmap' && `🔥 ${tab}`}
                 {tab === 'Performance' && `📊 ${tab}`}
+                {tab === 'Spatial' && `🗺 ${tab}`}
               </button>
             ))}
           </div>
@@ -264,6 +337,86 @@ function ExtractionPage({ document: doc, onReset }) {
                 extractionTime={extractionTime}
                 fields={fields}
               />
+            )}
+
+            {activeTab === 'Spatial' && (
+              <div className="spatial-tab">
+                {/* Toolbar */}
+                <div className="spatial-tab__toolbar">
+                  <button
+                    className="extraction-btn extraction-btn--ocr"
+                    onClick={handleRunSpatial}
+                    disabled={loadingSpatial}
+                    title="Extract word positions and spatial features"
+                  >
+                    {loadingSpatial ? '⏳ Extracting…' : '🔍 Extract Spatial'}
+                  </button>
+                  <button
+                    className="extraction-btn extraction-btn--ai"
+                    onClick={handleAnalyseLayout}
+                    disabled={layoutLoading}
+                    title="Detect zones, columns, rows, and label-value pairs"
+                  >
+                    {layoutLoading ? '⏳ Analysing…' : '📐 Analyse Layout'}
+                  </button>
+
+                  <span className="spatial-tab__sep" />
+
+                  {/* Overlay toggles */}
+                  <label className="spatial-tab__toggle">
+                    <input
+                      type="checkbox"
+                      checked={showWordBoxes}
+                      onChange={(e) => setShowWordBoxes(e.target.checked)}
+                    />
+                    Word boxes
+                  </label>
+                  <label className="spatial-tab__toggle">
+                    <input
+                      type="checkbox"
+                      checked={showGrid}
+                      onChange={(e) => setShowGrid(e.target.checked)}
+                    />
+                    Grid
+                  </label>
+                  <label className="spatial-tab__toggle">
+                    <input
+                      type="checkbox"
+                      checked={showZones}
+                      onChange={(e) => setShowZones(e.target.checked)}
+                    />
+                    Zones
+                  </label>
+                  {spatialWords.length > 0 && (
+                    <span className="spatial-tab__word-count">
+                      {spatialWords.length} words
+                    </span>
+                  )}
+                </div>
+
+                {/* Two-column sub-layout: layout panel + context panel */}
+                <div className="spatial-tab__panels">
+                  <div className="spatial-tab__panel">
+                    <LayoutAnalysisPanel
+                      layoutData={layoutData}
+                      loading={layoutLoading}
+                    />
+                    {layoutError && (
+                      <p style={{ color: '#dc2626', fontSize: '0.85rem' }}>
+                        ⚠️ {layoutError}
+                      </p>
+                    )}
+                  </div>
+                  <div className="spatial-tab__panel">
+                    <PositionContextDisplay
+                      contextData={contextData}
+                      loading={contextLoading}
+                      error={contextError}
+                      onClose={clearContext}
+                    />
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         </div>

@@ -3,17 +3,21 @@ backend/api/routes.py — REST API v1 Blueprint.
 
 Endpoints
 ---------
-POST /api/v1/upload                           Upload a PDF
-POST /api/v1/extract/ocr/<document_id>        Run OCR extraction
-POST /api/v1/extract/ai/<document_id>         Run AI + RAG extraction
-GET  /api/v1/fields/<document_id>             Retrieve extracted fields
-PUT  /api/v1/fields/<field_id>               Edit a field value
-GET  /api/v1/ocr/<document_id>/confidence     Get OCR confidence data
-GET  /api/v1/documents/<document_id>/pdf      Serve the original PDF
-GET  /api/v1/documents/<document_id>          Get document metadata
-GET  /api/v1/documents                        List all documents
-DELETE /api/v1/documents/<document_id>        Delete a document
-GET  /api/v1/documents/<document_id>/heatmap  Get heatmap for a page
+POST /api/v1/upload                                    Upload a PDF
+POST /api/v1/extract/ocr/<document_id>                 Run OCR extraction
+POST /api/v1/extract/ai/<document_id>                  Run AI + RAG extraction
+POST /api/v1/extract/spatial/<document_id>             Run spatial OCR extraction
+POST /api/v1/analyze/layout/<document_id>              Analyze form layout
+POST /api/v1/suggestions/spatial/<document_id>         Get position-based suggestions
+GET  /api/v1/position/<document_id>/<page>/<x>/<y>     Get field info for position
+GET  /api/v1/fields/<document_id>                      Retrieve extracted fields
+PUT  /api/v1/fields/<field_id>                        Edit a field value
+GET  /api/v1/ocr/<document_id>/confidence              Get OCR confidence data
+GET  /api/v1/documents/<document_id>/pdf               Serve the original PDF
+GET  /api/v1/documents/<document_id>                   Get document metadata
+GET  /api/v1/documents                                 List all documents
+DELETE /api/v1/documents/<document_id>                 Delete a document
+GET  /api/v1/documents/<document_id>/heatmap           Get heatmap for a page
 """
 
 from __future__ import annotations
@@ -44,6 +48,10 @@ for _p in (_BACKEND_DIR, _ROOT_DIR):
 # Lazily imported services
 _extractor: Any = None
 _ocr_engine: Any = None
+_spatial_ocr_engine: Any = None
+_layout_analyzer: Any = None
+_context_enricher: Any = None
+_template_matcher: Any = None
 
 
 def _get_extractor():
@@ -60,6 +68,38 @@ def _get_ocr_engine():
         from ocr.ocr_engine import OCREngine
         _ocr_engine = OCREngine()
     return _ocr_engine
+
+
+def _get_spatial_ocr_engine():
+    global _spatial_ocr_engine
+    if _spatial_ocr_engine is None:
+        from spatial.spatial_ocr_engine import SpatialOCREngine
+        _spatial_ocr_engine = SpatialOCREngine()
+    return _spatial_ocr_engine
+
+
+def _get_layout_analyzer():
+    global _layout_analyzer
+    if _layout_analyzer is None:
+        from spatial.layout_analyzer import LayoutAnalyzer
+        _layout_analyzer = LayoutAnalyzer()
+    return _layout_analyzer
+
+
+def _get_context_enricher():
+    global _context_enricher
+    if _context_enricher is None:
+        from spatial.context_enricher import ContextEnricher
+        _context_enricher = ContextEnricher()
+    return _context_enricher
+
+
+def _get_template_matcher():
+    global _template_matcher
+    if _template_matcher is None:
+        from spatial.template_matcher import TemplateMatcher
+        _template_matcher = TemplateMatcher()
+    return _template_matcher
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +516,228 @@ def field_history(field_id: int):
         return _ok([r.to_dict() for r in records])
     except Exception as exc:
         return _err(str(exc), 500)
+
+
+# ---------------------------------------------------------------------------
+# Spatial OCR Endpoints
+# ---------------------------------------------------------------------------
+
+@api_v1_bp.route("/extract/spatial/<document_id>", methods=["POST"])
+def extract_spatial(document_id: str):
+    """
+    Run spatial OCR extraction on the document.
+
+    Query params:
+      page (int, default 1): page number to extract. Pass 0 for all pages.
+
+    Returns enriched word dicts with position, spatial, visual,
+    and contextual features.
+    """
+    doc_path, _ = _resolve_document(document_id)
+    if doc_path is None:
+        return _err("Document not found", 404)
+
+    body = request.get_json(force=True, silent=True) or {}
+    page_num = body.get("page", int(request.args.get("page", 1)))
+
+    try:
+        engine = _get_spatial_ocr_engine()
+        enricher = _get_context_enricher()
+
+        if page_num == 0:
+            # All pages
+            raw = engine.extract_document(doc_path)
+            total_pages = raw["total_pages"]
+            pages_out = {}
+            for p_str, words in raw["pages"].items():
+                pages_out[p_str] = enricher.enrich(words)
+            return _ok({
+                "document_id": document_id,
+                "total_pages": total_pages,
+                "pages": pages_out,
+            })
+        else:
+            words = engine.extract_page(doc_path, page_num)
+            words = enricher.enrich(words)
+            return _ok({
+                "document_id": document_id,
+                "page": page_num,
+                "word_count": len(words),
+                "words": words,
+            })
+    except Exception as exc:
+        logger.exception("Spatial OCR extraction failed: %s", exc)
+        return _err(f"Spatial extraction failed: {exc}", 500)
+
+
+@api_v1_bp.route("/analyze/layout/<document_id>", methods=["POST"])
+def analyze_layout(document_id: str):
+    """
+    Analyze the form layout of a document page.
+
+    Query params:
+      page (int, default 1): page to analyze.
+
+    Returns zones, columns, rows, label-value pairs, and word layout.
+    """
+    doc_path, _ = _resolve_document(document_id)
+    if doc_path is None:
+        return _err("Document not found", 404)
+
+    body = request.get_json(force=True, silent=True) or {}
+    page_num = body.get("page", int(request.args.get("page", 1)))
+
+    try:
+        import fitz
+        doc = fitz.open(doc_path)
+        page = doc[page_num - 1]
+        page_width = page.rect.width
+        page_height = page.rect.height
+        doc.close()
+    except Exception as exc:
+        logger.exception("Could not open PDF: %s", exc)
+        return _err(f"PDF open failed: {exc}", 500)
+
+    try:
+        spatial_engine = _get_spatial_ocr_engine()
+        words = spatial_engine.extract_page(doc_path, page_num)
+
+        analyzer = _get_layout_analyzer()
+        layout = analyzer.analyze(words, page_width, page_height)
+
+        return _ok({
+            "document_id": document_id,
+            "page": page_num,
+            "page_width": page_width,
+            "page_height": page_height,
+            "layout": layout,
+        })
+    except Exception as exc:
+        logger.exception("Layout analysis failed: %s", exc)
+        return _err(f"Layout analysis failed: {exc}", 500)
+
+
+@api_v1_bp.route("/suggestions/spatial/<document_id>", methods=["POST"])
+def suggestions_spatial(document_id: str):
+    """
+    Get hover suggestions for a position in the document.
+
+    Body (JSON):
+      page    (int)   : page number (default 1)
+      x       (float) : x coordinate in PDF points
+      y       (float) : y coordinate in PDF points
+
+    Returns nearby words and inferred field information.
+    """
+    doc_path, _ = _resolve_document(document_id)
+    if doc_path is None:
+        return _err("Document not found", 404)
+
+    body = request.get_json(force=True, silent=True) or {}
+    page_num = int(body.get("page", 1))
+    hover_x = float(body.get("x", 0))
+    hover_y = float(body.get("y", 0))
+    radius = float(body.get("radius", 30))  # search radius in points
+
+    try:
+        import fitz
+        doc = fitz.open(doc_path)
+        page = doc[page_num - 1]
+        page_width = page.rect.width
+        page_height = page.rect.height
+        doc.close()
+    except Exception as exc:
+        return _err(f"PDF open failed: {exc}", 500)
+
+    try:
+        spatial_engine = _get_spatial_ocr_engine()
+        enricher = _get_context_enricher()
+        words = enricher.enrich(spatial_engine.extract_page(doc_path, page_num))
+
+        # Find words near the hover position
+        nearby = []
+        for w in words:
+            pos = w.get("position", {})
+            wx = pos.get("x", 0) + pos.get("width", 0) / 2
+            wy = pos.get("y", 0) + pos.get("height", 0) / 2
+            dist = ((wx - hover_x) ** 2 + (wy - hover_y) ** 2) ** 0.5
+            if dist <= radius:
+                nearby.append({**w, "_distance": round(dist, 2)})
+
+        nearby.sort(key=lambda n: n["_distance"])
+
+        # If nothing found, use context enricher to infer empty-field type
+        empty_inference = None
+        nearby_labels = []
+        if not nearby:
+            # Look for any labels in the wider vicinity (3× radius)
+            wide_radius = radius * 3
+            for w in words:
+                pos = w.get("position", {})
+                wx = pos.get("x", 0) + pos.get("width", 0) / 2
+                wy = pos.get("y", 0) + pos.get("height", 0) / 2
+                dist = ((wx - hover_x) ** 2 + (wy - hover_y) ** 2) ** 0.5
+                if dist <= wide_radius:
+                    sp = w.get("spatial_features", {})
+                    if sp.get("nearby_labels"):
+                        nearby_labels.extend(sp["nearby_labels"])
+            empty_inference = enricher.infer_empty_field(
+                hover_x, hover_y, page_width, page_height, nearby_labels
+            )
+
+        return _ok({
+            "document_id": document_id,
+            "page": page_num,
+            "hover_position": {"x": hover_x, "y": hover_y},
+            "radius": radius,
+            "nearby_words": nearby[:10],
+            "empty_field_inference": empty_inference,
+        })
+    except Exception as exc:
+        logger.exception("Spatial suggestions failed: %s", exc)
+        return _err(f"Suggestions failed: {exc}", 500)
+
+
+@api_v1_bp.route("/position/<document_id>/<int:page>/<float:x>/<float:y>", methods=["GET"])
+def get_position_info(document_id: str, page: int, x: float, y: float):
+    """
+    GET /position/<document_id>/<page>/<x>/<y>
+
+    Return spatial features and field inference for a specific PDF coordinate.
+    """
+    doc_path, _ = _resolve_document(document_id)
+    if doc_path is None:
+        return _err("Document not found", 404)
+
+    radius = float(request.args.get("radius", 20))
+
+    try:
+        spatial_engine = _get_spatial_ocr_engine()
+        enricher = _get_context_enricher()
+        words = enricher.enrich(spatial_engine.extract_page(doc_path, page))
+
+        nearby = []
+        for w in words:
+            pos = w.get("position", {})
+            wx = pos.get("x", 0) + pos.get("width", 0) / 2
+            wy = pos.get("y", 0) + pos.get("height", 0) / 2
+            dist = ((wx - x) ** 2 + (wy - y) ** 2) ** 0.5
+            if dist <= radius:
+                nearby.append({**w, "_distance": round(dist, 2)})
+
+        nearby.sort(key=lambda n: n["_distance"])
+        top = nearby[0] if nearby else None
+
+        return _ok({
+            "document_id": document_id,
+            "page": page,
+            "query_position": {"x": x, "y": y},
+            "nearest_word": top,
+            "nearby_words": nearby[:5],
+        })
+    except Exception as exc:
+        logger.exception("Position lookup failed: %s", exc)
+        return _err(f"Position lookup failed: {exc}", 500)
 
 
 # ---------------------------------------------------------------------------

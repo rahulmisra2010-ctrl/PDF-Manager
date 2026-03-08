@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { uploadPDF, extractData } from '../services/api';
+import { uploadPDF } from '../services/api';
 
 /**
  * UploadPDF component.
