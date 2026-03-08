@@ -1,0 +1,260 @@
+/* SuggestionPanel.module.css — Styles for the AI SuggestionPanel */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: #fafafa;
+  border-left: 1px solid #e5e7eb;
+  padding: 16px;
+  min-width: 280px;
+  max-width: 340px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* ─── Header ──────────────────────────────────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1f2937;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.closeBtn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: none;
+  color: #9ca3af;
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.closeBtn:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+/* ─── Field context ───────────────────────────────────────────────────────── */
+.fieldContext {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.fieldContextLabel {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #0284c7;
+  margin-bottom: 4px;
+}
+
+.fieldContextName {
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.fieldContextValue {
+  color: #6b7280;
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+/* ─── Did you mean label ──────────────────────────────────────────────────── */
+.didYouMean {
+  font-size: 12px;
+  color: #6b7280;
+  font-style: italic;
+}
+
+/* ─── Suggestion list ─────────────────────────────────────────────────────── */
+.suggestionList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.suggestionItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+
+.suggestionItem:hover {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+  background: #f5f3ff;
+}
+
+.suggestionItem.applying {
+  background: #f0fdf4;
+  border-color: #4ade80;
+}
+
+.suggestionValue {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+  word-break: break-word;
+}
+
+.suggestionMeta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.suggestionScore {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 10px;
+}
+
+.scoreHigh   { background: #d1fae5; color: #065f46; }
+.scoreMedium { background: #fef3c7; color: #92400e; }
+.scoreLow    { background: #fee2e2; color: #991b1b; }
+
+.suggestionSource {
+  font-size: 10px;
+  color: #9ca3af;
+}
+
+.applyBtn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 10px;
+  background: #6366f1;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+
+.applyBtn:hover {
+  background: #4f46e5;
+}
+
+/* ─── Undo last apply ─────────────────────────────────────────────────────── */
+.undoBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #92400e;
+}
+
+.undoBarBtn {
+  padding: 2px 8px;
+  background: #f59e0b;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.undoBarBtn:hover {
+  background: #d97706;
+}
+
+/* ─── Empty / loading states ──────────────────────────────────────────────── */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 16px;
+  color: #9ca3af;
+  font-size: 13px;
+  text-align: center;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+/* ─── History section ─────────────────────────────────────────────────────── */
+.historySection {
+  border-top: 1px solid #e5e7eb;
+  padding-top: 12px;
+}
+
+.historyTitle {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #9ca3af;
+  margin: 0 0 8px;
+}
+
+.historyItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #6b7280;
+  padding: 4px 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.historyField {
+  font-weight: 600;
+  color: #374151;
+}
+
+.historyArrow {
+  color: #9ca3af;
+}
+
+.historyValue {
+  color: #4f46e5;
+}

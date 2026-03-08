@@ -1,0 +1,227 @@
+/* ExtractionPage.module.css — Styles for the master ExtractionPage layout */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
+}
+
+/* ─── Topbar ──────────────────────────────────────────────────────────────── */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: #1a1a2e;
+  color: #ffffff;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.docInfo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  flex: 1;
+  min-width: 0;
+}
+
+.docName {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 300px;
+}
+
+.actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* Buttons */
+.btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: none;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s, transform 0.1s;
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btnOcr    { background: #0ea5e9; color: white; }
+.btnAi     { background: #7c3aed; color: white; }
+.btnExport { background: #059669; color: white; }
+.btnReset  { background: #64748b; color: white; }
+
+/* ─── Error bar ───────────────────────────────────────────────────────────── */
+.errorBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: #fef2f2;
+  border-bottom: 1px solid #fca5a5;
+  color: #991b1b;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.errorDismiss {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #991b1b;
+  font-size: 16px;
+  padding: 0 4px;
+}
+
+/* ─── Split layout ────────────────────────────────────────────────────────── */
+.split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.leftPanel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #e5e7eb;
+}
+
+.rightPanel {
+  width: 50%;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ─── Tabs ────────────────────────────────────────────────────────────────── */
+.tabs {
+  display: flex;
+  border-bottom: 2px solid #e5e7eb;
+  padding: 0 16px;
+  flex-shrink: 0;
+  background: #ffffff;
+}
+
+.tab {
+  padding: 10px 16px;
+  border: none;
+  background: none;
+  color: #6b7280;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.tab:hover {
+  color: #374151;
+}
+
+.tabActive {
+  color: #4f46e5;
+  border-bottom-color: #4f46e5;
+}
+
+/* ─── Tab content area ────────────────────────────────────────────────────── */
+.tabContent {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+}
+
+/* ─── Suggestion panel overlay ────────────────────────────────────────────── */
+.withSuggestions {
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tabContentWithPanel {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+}
+
+/* ─── Loading overlay ─────────────────────────────────────────────────────── */
+.loadingOverlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+/* ─── Responsive: stack on mobile ─────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .split {
+    flex-direction: column;
+  }
+
+  .leftPanel {
+    height: 40vh;
+    border-right: none;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .rightPanel {
+    width: 100%;
+    height: 60vh;
+  }
+
+  .docName {
+    max-width: 160px;
+  }
+
+  .actions {
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .topbar {
+    padding: 6px 10px;
+  }
+
+  .btn {
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+}

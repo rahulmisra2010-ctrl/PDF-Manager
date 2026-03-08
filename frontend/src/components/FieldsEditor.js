@@ -1,46 +1,62 @@
 /**
- * FieldsEditor.js — Editable fields table for extracted PDF data.
+ * FieldsEditor.js — Editable fields table with advanced UX.
  *
  * Features:
- * - Inline editing for each field value
- * - Confidence badges (Green / Yellow / Red)
- * - Highlights corresponding PDF region on hover
- * - Save / Cancel per field
- * - Displays field type, source (rule / ner / rag), and bounding box
+ * - Inline editing (click to edit, Enter/Escape to confirm/cancel)
+ * - Undo/Redo for field edits (via Zustand store)
+ * - Batch edit mode: select multiple rows, apply value to all
+ * - Confidence badges (Green ≥85% / Yellow ≥65% / Red <65%)
+ * - Hover-to-highlight PDF region (calls onFieldHover with bbox)
+ * - Click field → focusField to highlight in PDF
+ * - Framer Motion: scale + glow on edit mode entry
+ * - SuggestionPanel trigger per field
+ * - ARIA labels and keyboard navigation
  *
  * Props:
  *   fields           {Array}    Extracted field objects from the API
- *   onFieldUpdate    {func}     Called with (fieldId, newValue) to save a field
- *   onFieldHover     {func}     Called with (bbox | null) on hover to highlight PDF
- *   loading          {boolean}  Show loading skeleton
+ *   onFieldUpdate    {func}     Called with (fieldId, newValue) to save
+ *   onFieldHover     {func}     Called with (bbox | null) on hover
+ *   onSuggest        {func}     Called with (field) to open suggestion panel
+ *   activeFieldId    {string}   Currently active field (PDF sync)
+ *   loading          {boolean}  Show loading state
  */
 
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import useStore from '../services/store';
+import useConfidenceColors from '../hooks/useConfidenceColors';
+import { editRowVariants, listContainerVariants, listItemVariants } from '../hooks/useAnimations';
+import styles from './styles/FieldsEditor.module.css';
 
-const BADGE_COLORS = {
-  green:  { background: '#d1fae5', color: '#065f46', label: '✅' },
-  yellow: { background: '#fef3c7', color: '#92400e', label: '⚠️' },
-  red:    { background: '#fee2e2', color: '#991b1b', label: '❌' },
-};
-
-function confidenceBadge(confidence) {
+function ConfidenceBadge({ confidence }) {
+  const { getColors } = useConfidenceColors();
   const pct = Math.round(confidence * 100);
-  let key = 'red';
-  if (confidence >= 0.85) key = 'green';
-  else if (confidence >= 0.65) key = 'yellow';
-  const { background, color, label } = BADGE_COLORS[key];
+  const { badge, text, icon } = getColors(confidence);
   return (
     <span
-      className="fields-editor__badge"
-      style={{ background, color }}
+      className={styles.badge}
+      style={{ background: badge, color: text }}
       title={`Confidence: ${pct}%`}
+      aria-label={`${pct}% confidence`}
     >
-      {label} {pct}%
+      {icon} {pct}%
     </span>
   );
 }
 
-function FieldRow({ field, onSave, onHover }) {
+function SourceTag({ source }) {
+  // Normalize source string: remove underscores/hyphens, capitalize → 'sourcePymupdf'
+  const normalized = (source || 'rule').replace(/[-_]/g, '');
+  const key = `source${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`;
+  const cls = styles[key] || styles.sourceRule;
+  return (
+    <span className={`${styles.sourceTag} ${cls}`}>
+      {source || 'rule'}
+    </span>
+  );
+}
+
+function FieldRow({ field, onSave, onHover, onSuggest, isActive, batchMode, isSelected, onToggleSelect }) {
   const [editing, setEditing] = useState(false);
   const [draftValue, setDraftValue] = useState(field.value || '');
   const [saving, setSaving] = useState(false);
@@ -52,7 +68,7 @@ function FieldRow({ field, onSave, onHover }) {
 
   const handleCancel = () => setEditing(false);
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     setSaving(true);
     try {
       await onSave(field.id, draftValue);
@@ -60,25 +76,57 @@ function FieldRow({ field, onSave, onHover }) {
     } finally {
       setSaving(false);
     }
-  };
+  }, [onSave, field.id, draftValue]);
 
   const handleMouseEnter = () => onHover && onHover(field.bbox || null);
   const handleMouseLeave = () => onHover && onHover(null);
 
+  const rowClass = [
+    styles.row,
+    isActive ? styles.rowActive : '',
+    editing ? styles.rowEditing : '',
+    isSelected ? styles.rowBatchSelected : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   return (
-    <tr
-      className="fields-editor__row"
+    <motion.tr
+      className={rowClass}
+      variants={listItemVariants}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
+      layout
     >
-      <td className="fields-editor__field-name">
+      {/* Batch select checkbox */}
+      {batchMode && (
+        <td>
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={() => onToggleSelect(field.id || field.field_name)}
+            aria-label={`Select ${field.field_name}`}
+          />
+        </td>
+      )}
+
+      {/* Field name */}
+      <td className={styles.fieldName}>
         <strong>{field.field_name}</strong>
-        {field.is_edited && <span className="fields-editor__edited-tag"> (edited)</span>}
+        {field.is_edited && (
+          <span className={styles.editedTag}>(edited)</span>
+        )}
       </td>
-      <td className="fields-editor__value">
+
+      {/* Value cell */}
+      <motion.td
+        className={styles.valueCell}
+        variants={editRowVariants}
+        animate={editing ? 'editing' : 'normal'}
+      >
         {editing ? (
           <input
-            className="fields-editor__input"
+            className={styles.editInput}
             value={draftValue}
             onChange={(e) => setDraftValue(e.target.value)}
             autoFocus
@@ -86,59 +134,108 @@ function FieldRow({ field, onSave, onHover }) {
               if (e.key === 'Enter') handleSave();
               if (e.key === 'Escape') handleCancel();
             }}
-            aria-label={`Edit ${field.field_name}`}
+            aria-label={`Edit value for ${field.field_name}`}
           />
         ) : (
-          <span className={field.value ? '' : 'fields-editor__empty'}>
+          <span className={field.value ? '' : styles.valueEmpty}>
             {field.value || '—'}
           </span>
         )}
+      </motion.td>
+
+      {/* Confidence */}
+      <td className={styles.confidenceCell}>
+        <ConfidenceBadge confidence={field.confidence || 0} />
       </td>
-      <td className="fields-editor__confidence">
-        {confidenceBadge(field.confidence || 0)}
+
+      {/* Type */}
+      <td>
+        <code style={{ fontSize: '11px', color: '#6b7280' }}>
+          {field.field_type || 'text'}
+        </code>
       </td>
-      <td className="fields-editor__type">
-        <code>{field.field_type || 'text'}</code>
+
+      {/* Source */}
+      <td>
+        <SourceTag source={field.source} />
       </td>
-      <td className="fields-editor__source">
-        <span className={`fields-editor__source-tag fields-editor__source-tag--${field.source || 'rule'}`}>
-          {field.source || 'rule'}
-        </span>
-      </td>
-      <td className="fields-editor__actions">
+
+      {/* Actions */}
+      <td className={styles.actionsCell}>
         {editing ? (
           <>
             <button
-              className="fields-editor__btn fields-editor__btn--save"
+              className={styles.saveBtn}
               onClick={handleSave}
               disabled={saving}
+              aria-label={`Save ${field.field_name}`}
             >
               {saving ? '…' : '✓ Save'}
             </button>
             <button
-              className="fields-editor__btn fields-editor__btn--cancel"
+              className={styles.cancelBtn}
               onClick={handleCancel}
+              aria-label="Cancel edit"
             >
               ✕
             </button>
           </>
         ) : (
-          <button
-            className="fields-editor__btn fields-editor__btn--edit"
-            onClick={handleEdit}
-          >
-            ✏️ Edit
-          </button>
+          <>
+            <button
+              className={styles.editBtn}
+              onClick={handleEdit}
+              aria-label={`Edit ${field.field_name}`}
+            >
+              ✏️ Edit
+            </button>
+            {onSuggest && (
+              <button
+                className={styles.editBtn}
+                onClick={() => onSuggest(field)}
+                aria-label={`Get suggestions for ${field.field_name}`}
+                title="AI Suggestions"
+                style={{ marginLeft: 4 }}
+              >
+                💡
+              </button>
+            )}
+          </>
         )}
       </td>
-    </tr>
+    </motion.tr>
   );
 }
 
-function FieldsEditor({ fields = [], onFieldUpdate, onFieldHover, loading }) {
+function FieldsEditor({ fields = [], onFieldUpdate, onFieldHover, onSuggest, activeFieldId, loading }) {
+  const [batchMode, setBatchMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [batchValue, setBatchValue] = useState('');
+
+  const { undo, redo, canUndo, canRedo } = useStore();
+
+  const toggleSelect = useCallback((id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleBatchApply = useCallback(async () => {
+    if (!batchValue || selectedIds.size === 0 || !onFieldUpdate) return;
+    for (const id of selectedIds) {
+      await onFieldUpdate(id, batchValue);
+    }
+    setSelectedIds(new Set());
+    setBatchValue('');
+    setBatchMode(false);
+  }, [batchValue, selectedIds, onFieldUpdate]);
+
   if (loading) {
     return (
-      <div className="fields-editor fields-editor--loading">
+      <div className={`${styles.editor} ${styles.loadingState}`} aria-live="polite">
         <p>Loading extracted fields…</p>
       </div>
     );
@@ -146,53 +243,129 @@ function FieldsEditor({ fields = [], onFieldUpdate, onFieldHover, loading }) {
 
   if (!fields.length) {
     return (
-      <div className="fields-editor fields-editor--empty">
+      <div className={`${styles.editor} ${styles.empty}`}>
         <p>No fields extracted yet. Run OCR or AI extraction first.</p>
       </div>
     );
   }
 
   const highConf = fields.filter((f) => (f.confidence || 0) >= 0.85).length;
-  const medConf  = fields.filter((f) => (f.confidence || 0) >= 0.65 && (f.confidence || 0) < 0.85).length;
-  const lowConf  = fields.length - highConf - medConf;
+  const medConf = fields.filter(
+    (f) => (f.confidence || 0) >= 0.65 && (f.confidence || 0) < 0.85
+  ).length;
+  const lowConf = fields.length - highConf - medConf;
+
+  const undoEnabled = canUndo();
+  const redoEnabled = canRedo();
 
   return (
-    <div className="fields-editor">
-      {/* Summary bar */}
-      <div className="fields-editor__summary">
-        <span className="fields-editor__summary-item fields-editor__summary-item--green">
-          ✅ {highConf} high confidence
-        </span>
-        <span className="fields-editor__summary-item fields-editor__summary-item--yellow">
-          ⚠️ {medConf} medium
-        </span>
-        <span className="fields-editor__summary-item fields-editor__summary-item--red">
-          ❌ {lowConf} low
-        </span>
+    <div className={styles.editor}>
+      {/* ── Toolbar: undo/redo + batch ── */}
+      <div className={styles.toolbar} role="toolbar" aria-label="Fields editor controls">
+        <button
+          className={styles.undoBtn}
+          onClick={undo}
+          disabled={!undoEnabled}
+          aria-label="Undo last change"
+          title="Undo (Ctrl+Z)"
+        >
+          ↩ Undo
+        </button>
+        <button
+          className={styles.redoBtn}
+          onClick={redo}
+          disabled={!redoEnabled}
+          aria-label="Redo last change"
+          title="Redo (Ctrl+Y)"
+        >
+          ↪ Redo
+        </button>
+        <span className={styles.spacer} />
+        <button
+          className={`${styles.batchBtn} ${batchMode ? styles.active : ''}`}
+          onClick={() => {
+            setBatchMode((v) => !v);
+            setSelectedIds(new Set());
+          }}
+          aria-pressed={batchMode}
+          aria-label="Toggle batch edit mode"
+        >
+          ☑ Batch Edit
+        </button>
       </div>
 
-      <div className="fields-editor__table-wrapper">
-        <table className="fields-editor__table">
+      {/* ── Batch action bar ── */}
+      <AnimatePresence>
+        {batchMode && selectedIds.size > 0 && (
+          <motion.div
+            className={styles.batchBar}
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+          >
+            <span>{selectedIds.size} selected</span>
+            <input
+              type="text"
+              placeholder="New value…"
+              value={batchValue}
+              onChange={(e) => setBatchValue(e.target.value)}
+              aria-label="Batch value to apply"
+              style={{
+                flex: 1,
+                padding: '4px 8px',
+                borderRadius: 4,
+                border: '1px solid #c4b5fd',
+                fontSize: 13,
+              }}
+            />
+            <button
+              className={styles.batchApplyBtn}
+              onClick={handleBatchApply}
+              disabled={!batchValue}
+              aria-label="Apply value to selected fields"
+            >
+              Apply to all
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Summary ── */}
+      <div className={styles.summary} aria-label="Confidence summary">
+        <span className={styles.summaryHigh}>✅ {highConf} high</span>
+        <span className={styles.summaryMed}>⚠️ {medConf} medium</span>
+        <span className={styles.summaryLow}>❌ {lowConf} low</span>
+      </div>
+
+      {/* ── Table ── */}
+      <div className={styles.tableWrapper}>
+        <table className={styles.table} role="grid" aria-label="Extracted fields">
           <thead>
             <tr>
-              <th>Field</th>
-              <th>Value</th>
-              <th>Confidence</th>
-              <th>Type</th>
-              <th>Source</th>
-              <th>Actions</th>
+              {batchMode && <th style={{ width: 32 }} aria-label="Select" />}
+              <th scope="col">Field</th>
+              <th scope="col">Value</th>
+              <th scope="col">Confidence</th>
+              <th scope="col">Type</th>
+              <th scope="col">Source</th>
+              <th scope="col">Actions</th>
             </tr>
           </thead>
-          <tbody>
+          <motion.tbody variants={listContainerVariants} initial="hidden" animate="visible">
             {fields.map((field) => (
               <FieldRow
                 key={field.id || field.field_name}
                 field={field}
                 onSave={onFieldUpdate}
                 onHover={onFieldHover}
+                onSuggest={onSuggest}
+                isActive={activeFieldId === (field.id || field.field_name)}
+                batchMode={batchMode}
+                isSelected={selectedIds.has(field.id || field.field_name)}
+                onToggleSelect={toggleSelect}
               />
             ))}
-          </tbody>
+          </motion.tbody>
         </table>
       </div>
     </div>
@@ -200,3 +373,4 @@ function FieldsEditor({ fields = [], onFieldUpdate, onFieldHover, loading }) {
 }
 
 export default FieldsEditor;
+
