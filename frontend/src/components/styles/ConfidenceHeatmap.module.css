@@ -1,0 +1,104 @@
+/* ConfidenceHeatmap.module.css */
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  flex-wrap: wrap;
+}
+
+.toggleBtn {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+
+.toggleBtn:hover {
+  background: #e5e7eb;
+}
+
+.stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+}
+
+.statHigh {
+  color: #065f46;
+  background: #d1fae5;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.statMed {
+  color: #92400e;
+  background: #fef3c7;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.statLow {
+  color: #991b1b;
+  background: #fee2e2;
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.regionStat {
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
+
+/* Overlay sits absolutely within the PDF page container */
+.overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Individual word highlight box */
+.wordMarker {
+  position: absolute;
+  border-radius: 2px;
+  pointer-events: all;
+  cursor: crosshair;
+  z-index: 10;
+}
+
+/* Tooltip */
+.tooltip {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1f2937;
+  color: #f9fafb;
+  padding: 4px 8px;
+  border-radius: 5px;
+  font-size: 0.72rem;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.tooltipWord {
+  font-weight: 700;
+}
+
+.tooltipConf {
+  font-size: 0.68rem;
+}

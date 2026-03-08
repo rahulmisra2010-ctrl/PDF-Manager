@@ -1,11 +1,14 @@
 /**
- * PDFViewer.js — Embedded PDF viewer using react-pdf.
+ * PDFViewer.js — Enhanced PDF viewer using react-pdf.
  *
  * Features:
  * - Page navigation (prev/next + direct input)
  * - Zoom in/out (50% – 300%)
- * - Vertical scrolling for multi-page PDFs
- * - Loading and error states
+ * - Dark theme
+ * - Confidence indicator overlays via ConfidenceHeatmap component
+ * - Smooth highlight transitions
+ * - Pixel-level word hover detection via usePixelHover hook
+ * - CSS Modules for styling
  *
  * Props:
  *   pdfUrl       {string}  URL of the PDF to display
@@ -17,8 +20,13 @@ import React, { useState, useCallback } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
 import 'react-pdf/dist/esm/Page/TextLayer.css';
+import { motion } from 'framer-motion';
+import ConfidenceHeatmap from './ConfidenceHeatmap';
+import usePixelHover from '../hooks/usePixelHover';
+import { useStore } from '../services/store';
+import styles from './styles/PDFViewer.module.css';
 
-// Use locally bundled worker to avoid CDN dependency
+// Use CDN worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
 
 const ZOOM_STEPS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0];
@@ -28,6 +36,13 @@ function PDFViewer({ pdfUrl, onPageChange, highlightBox }) {
   const [pageNumber, setPageNumber] = useState(1);
   const [zoom, setZoom] = useState(1.25);
   const [loadError, setLoadError] = useState(null);
+
+  const heatmapVisible = useStore((s) => s.heatmapVisible);
+  const toggleHeatmap = useStore((s) => s.toggleHeatmap);
+  const setHoveredWordId = useStore((s) => s.setHoveredWordId);
+
+  // Pixel hover detection (no word markers by default; populated when OCR data is available)
+  const { hoveredMarker, handleMouseMove, handleMouseLeave: handleMarkerLeave } = usePixelHover([], zoom);
 
   const onDocumentLoadSuccess = useCallback(({ numPages: n }) => {
     setNumPages(n);
@@ -69,41 +84,76 @@ function PDFViewer({ pdfUrl, onPageChange, highlightBox }) {
     if (idx > 0) setZoom(ZOOM_STEPS[idx - 1]);
   };
 
+  const handleMouseMoveWrapper = (e) => {
+    handleMouseMove(e);
+    if (hoveredMarker) {
+      setHoveredWordId(hoveredMarker.id);
+    } else {
+      setHoveredWordId(null);
+    }
+  };
+
   if (!pdfUrl) {
     return (
-      <div className="pdf-viewer pdf-viewer--empty">
+      <div className={`${styles.viewer} ${styles.viewerEmpty}`}>
         <p>No PDF loaded.</p>
       </div>
     );
   }
 
   return (
-    <div className="pdf-viewer">
+    <div className={styles.viewer}>
       {/* Toolbar */}
-      <div className="pdf-viewer__toolbar">
-        <button onClick={goToPrev} disabled={pageNumber <= 1} aria-label="Previous page">‹</button>
+      <div className={styles.toolbar}>
+        <button
+          className={styles.toolbarBtn}
+          onClick={goToPrev}
+          disabled={pageNumber <= 1}
+          aria-label="Previous page"
+        >
+          ‹
+        </button>
         <input
           type="number"
+          className={styles.pageInput}
           value={pageNumber}
           min={1}
           max={numPages || 1}
           onChange={handlePageInput}
           aria-label="Page number"
         />
-        <span>/ {numPages || '?'}</span>
-        <button onClick={goToNext} disabled={pageNumber >= (numPages || 1)} aria-label="Next page">›</button>
+        <span className={styles.pageInfo}>/ {numPages || '?'}</span>
+        <button
+          className={styles.toolbarBtn}
+          onClick={goToNext}
+          disabled={pageNumber >= (numPages || 1)}
+          aria-label="Next page"
+        >
+          ›
+        </button>
 
-        <span className="pdf-viewer__toolbar-sep" />
+        <span className={styles.toolbarSep} />
 
-        <button onClick={zoomOut} aria-label="Zoom out">−</button>
-        <span>{Math.round(zoom * 100)}%</span>
-        <button onClick={zoomIn} aria-label="Zoom in">+</button>
+        <button className={styles.toolbarBtn} onClick={zoomOut} aria-label="Zoom out">−</button>
+        <span className={styles.zoomLabel}>{Math.round(zoom * 100)}%</span>
+        <button className={styles.toolbarBtn} onClick={zoomIn} aria-label="Zoom in">+</button>
+
+        <span className={styles.toolbarSep} />
+
+        <button
+          className={styles.toolbarBtn}
+          onClick={toggleHeatmap}
+          aria-pressed={heatmapVisible}
+          title="Toggle confidence heatmap"
+        >
+          🔥
+        </button>
       </div>
 
       {/* PDF Canvas */}
-      <div className="pdf-viewer__canvas-area">
+      <div className={styles.canvasArea}>
         {loadError ? (
-          <div className="pdf-viewer__error">
+          <div className={styles.error}>
             <p>⚠️ Could not load PDF: {loadError}</p>
           </div>
         ) : (
@@ -111,31 +161,45 @@ function PDFViewer({ pdfUrl, onPageChange, highlightBox }) {
             file={pdfUrl}
             onLoadSuccess={onDocumentLoadSuccess}
             onLoadError={onDocumentLoadError}
-            loading={<div className="pdf-viewer__loading">Loading PDF…</div>}
+            loading={<div className={styles.loadingMsg}>Loading PDF…</div>}
           >
-            <div style={{ position: 'relative', display: 'inline-block' }}>
+            <div
+              className={styles.pageWrapper}
+              onMouseMove={handleMouseMoveWrapper}
+              onMouseLeave={handleMarkerLeave}
+            >
               <Page
                 pageNumber={pageNumber}
                 scale={zoom}
                 renderTextLayer={true}
                 renderAnnotationLayer={true}
               />
-              {/* Highlight overlay */}
+
+              {/* Highlight overlay (from field hover in editor) */}
               {highlightBox && (
-                <div
-                  className="pdf-viewer__highlight"
+                <motion.div
+                  className={styles.highlight}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
                   style={{
-                    position: 'absolute',
                     left: highlightBox.x * zoom,
                     top: highlightBox.y * zoom,
                     width: highlightBox.width * zoom,
                     height: highlightBox.height * zoom,
-                    border: '2px solid #f59e0b',
-                    background: 'rgba(245,158,11,0.15)',
-                    pointerEvents: 'none',
                   }}
                 />
               )}
+
+              {/* Confidence heatmap overlay.
+                  Words are populated when OCR confidence data is loaded from the API.
+                  Pass word-level bbox+confidence data via props or store when available. */}
+              <ConfidenceHeatmap
+                words={[]}
+                zoom={zoom}
+                visible={heatmapVisible}
+                onToggle={toggleHeatmap}
+              />
             </div>
           </Document>
         )}
