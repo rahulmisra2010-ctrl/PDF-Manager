@@ -14,10 +14,14 @@
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
+import toast from 'react-hot-toast';
 import PDFViewer from './PDFViewer';
 import FieldsEditor from './FieldsEditor';
 import OCRConfidenceHeatmap from './OCRConfidenceHeatmap';
 import PerformanceDashboard from './PerformanceDashboard';
+import SuggestionPanel from './SuggestionPanel';
+import useStore from '../services/store';
+import { useFieldSync } from '../hooks/useFieldSync';
 import {
   runOCRExtraction,
   runAIExtraction,
@@ -32,16 +36,15 @@ const TABS = ['Fields', 'Heatmap', 'Performance'];
 
 function ExtractionPage({ document: doc, onReset }) {
   const [activeTab, setActiveTab] = useState('Fields');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [highlightBox, setHighlightBox] = useState(null);
-
-  // Extraction state
-  const [fields, setFields] = useState([]);
   const [quality, setQuality] = useState(null);
   const [enginesUsed, setEnginesUsed] = useState([]);
   const [extractionTime, setExtractionTime] = useState(null);
   const [heatmapData, setHeatmapData] = useState(null);
   const [heatmapImage, setHeatmapImage] = useState(null);
+
+  // SuggestionPanel state
+  const [suggestionField, setSuggestionField] = useState(null);
+  const [suggestions, setSuggestions] = useState([]);
 
   // Loading / error
   const [loadingOCR, setLoadingOCR] = useState(false);
@@ -50,7 +53,27 @@ function ExtractionPage({ document: doc, onReset }) {
   const [loadingFields, setLoadingFields] = useState(false);
   const [error, setError] = useState('');
 
+  // Zustand store for fields + undo/redo
+  const {
+    fields,
+    setFields,
+    updateField: storeUpdateField,
+    syncServerField,
+    undo,
+    redo,
+    past,
+    future,
+  } = useStore();
+
+  // Bidirectional PDF ↔ editor sync
+  const { highlightBox, currentPage, selectField, onPageChange } = useFieldSync(fields);
+
   const pdfUrl = doc ? getPDFUrl(doc.documentId) : null;
+
+  // Set document ID in store
+  useEffect(() => {
+    if (doc) useStore.getState().setDocumentId(doc.documentId);
+  }, [doc]);
 
   // Load fields from DB on mount / document change
   useEffect(() => {
@@ -62,7 +85,7 @@ function ExtractionPage({ document: doc, onReset }) {
       })
       .catch(() => {})
       .finally(() => setLoadingFields(false));
-  }, [doc]);
+  }, [doc, setFields]);
 
   // Load heatmap when tab switches to Heatmap or page changes
   useEffect(() => {
@@ -82,25 +105,26 @@ function ExtractionPage({ document: doc, onReset }) {
     if (!doc) return;
     setLoadingOCR(true);
     setError('');
+    const toastId = toast.loading('Running OCR extraction…');
     try {
       const result = await runOCRExtraction(doc.documentId);
-      // Build simple field list from OCR text
-      const pageTexts = (result.pages || []).map((p) => p.full_text).join('\n');
-      // Reload fields in case backend created them
       const updatedFields = await getFields(doc.documentId);
       if (Array.isArray(updatedFields)) setFields(updatedFields);
       setEnginesUsed(result.engines_used || []);
+      toast.success(`OCR complete — ${updatedFields.length} fields extracted`, { id: toastId });
     } catch (err) {
       setError('OCR failed: ' + err.message);
+      toast.error('OCR failed: ' + err.message, { id: toastId });
     } finally {
       setLoadingOCR(false);
     }
-  }, [doc]);
+  }, [doc, setFields]);
 
   const handleRunAI = useCallback(async () => {
     if (!doc) return;
     setLoadingAI(true);
     setError('');
+    const toastId = toast.loading('Running AI + RAG extraction…');
     try {
       const result = await runAIExtraction(doc.documentId);
       if (result.fields) {
@@ -109,25 +133,74 @@ function ExtractionPage({ document: doc, onReset }) {
       if (result.quality) setQuality(result.quality);
       if (result.engines_available) setEnginesUsed(result.engines_available);
       if (result.extraction_time_seconds != null) setExtractionTime(result.extraction_time_seconds);
+      toast.success('AI extraction complete', { id: toastId });
     } catch (err) {
       setError('AI extraction failed: ' + err.message);
+      toast.error('AI extraction failed: ' + err.message, { id: toastId });
     } finally {
       setLoadingAI(false);
     }
-  }, [doc]);
+  }, [doc, setFields]);
 
   const handleFieldUpdate = useCallback(
     async (fieldId, newValue) => {
+      // Optimistic update via store (supports undo)
+      storeUpdateField(fieldId, newValue);
       try {
         const updated = await updateField(fieldId, newValue);
-        setFields((prev) =>
-          prev.map((f) => (f.id === updated.id ? updated : f))
-        );
+        // Sync server response back into store using the store's action
+        syncServerField(updated);
+        toast.success('Field saved');
       } catch (err) {
+        // Roll back optimistic update by re-fetching
         setError('Save failed: ' + err.message);
+        toast.error('Save failed: ' + err.message);
+        const data = await getFields(doc.documentId).catch(() => null);
+        if (Array.isArray(data)) setFields(data);
       }
     },
-    []
+    [storeUpdateField, syncServerField, doc, setFields]
+  );
+
+  // Undo/Redo keyboard shortcuts
+  const handleUndo = useCallback(() => {
+    undo();
+    toast('↩ Undo', { icon: '↩' });
+  }, [undo]);
+
+  const handleRedo = useCallback(() => {
+    redo();
+    toast('↪ Redo', { icon: '↪' });
+  }, [redo]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [handleUndo, handleRedo]);
+
+  // Show suggestion panel for a field (if it has ai_suggestions)
+  const handleShowSuggestions = useCallback((field) => {
+    const sug = field?.ai_suggestions || [];
+    setSuggestions(sug);
+    setSuggestionField(field);
+  }, []);
+
+  const handleAcceptSuggestion = useCallback(
+    async (fieldId, value) => {
+      await handleFieldUpdate(fieldId, value);
+      setSuggestionField(null);
+    },
+    [handleFieldUpdate]
   );
 
   const handleExportJSON = () => {
@@ -140,6 +213,7 @@ function ExtractionPage({ document: doc, onReset }) {
     a.download = `${doc?.filename || 'export'}_fields.json`;
     a.click();
     URL.revokeObjectURL(url);
+    toast.success('JSON exported');
   };
 
   const handleExportCSV = () => {
@@ -158,6 +232,7 @@ function ExtractionPage({ document: doc, onReset }) {
     a.download = `${doc?.filename || 'export'}_fields.csv`;
     a.click();
     URL.revokeObjectURL(url);
+    toast.success('CSV exported');
   };
 
   return (
@@ -173,6 +248,7 @@ function ExtractionPage({ document: doc, onReset }) {
             className="extraction-btn extraction-btn--ocr"
             onClick={handleRunOCR}
             disabled={loadingOCR || loadingAI}
+            aria-label="Run OCR extraction"
           >
             {loadingOCR ? '⏳ Running OCR…' : '🔍 Run OCR'}
           </button>
@@ -180,17 +256,36 @@ function ExtractionPage({ document: doc, onReset }) {
             className="extraction-btn extraction-btn--ai"
             onClick={handleRunAI}
             disabled={loadingOCR || loadingAI}
+            aria-label="Run AI RAG extraction"
           >
             {loadingAI ? '⏳ AI Extracting…' : '🤖 AI Extract (RAG)'}
           </button>
-          <button className="extraction-btn extraction-btn--export" onClick={handleExportJSON}>
+          <button
+            className="extraction-btn extraction-btn--undo"
+            onClick={handleUndo}
+            disabled={!past.length}
+            aria-label="Undo last field edit"
+            title="Undo (Ctrl+Z)"
+          >
+            ↩ Undo
+          </button>
+          <button
+            className="extraction-btn extraction-btn--redo"
+            onClick={handleRedo}
+            disabled={!future.length}
+            aria-label="Redo field edit"
+            title="Redo (Ctrl+Y)"
+          >
+            ↪ Redo
+          </button>
+          <button className="extraction-btn extraction-btn--export" onClick={handleExportJSON} aria-label="Export as JSON">
             ⬇ JSON
           </button>
-          <button className="extraction-btn extraction-btn--export" onClick={handleExportCSV}>
+          <button className="extraction-btn extraction-btn--export" onClick={handleExportCSV} aria-label="Export as CSV">
             ⬇ CSV
           </button>
           {onReset && (
-            <button className="extraction-btn extraction-btn--reset" onClick={onReset}>
+            <button className="extraction-btn extraction-btn--reset" onClick={onReset} aria-label="Upload new PDF">
               ↩ New PDF
             </button>
           )}
@@ -210,7 +305,7 @@ function ExtractionPage({ document: doc, onReset }) {
         <div className="extraction-page__left">
           <PDFViewer
             pdfUrl={pdfUrl}
-            onPageChange={setCurrentPage}
+            onPageChange={onPageChange}
             highlightBox={highlightBox}
           />
         </div>
@@ -240,7 +335,9 @@ function ExtractionPage({ document: doc, onReset }) {
               <FieldsEditor
                 fields={fields}
                 onFieldUpdate={handleFieldUpdate}
-                onFieldHover={setHighlightBox}
+                onFieldHover={(field) => selectField(field || null)}
+                onFieldSelect={selectField}
+                onShowSuggestions={handleShowSuggestions}
                 loading={loadingFields}
               />
             )}
@@ -268,8 +365,17 @@ function ExtractionPage({ document: doc, onReset }) {
           </div>
         </div>
       </div>
+
+      {/* Suggestion panel (slides from right) */}
+      <SuggestionPanel
+        field={suggestionField}
+        suggestions={suggestions}
+        onAccept={handleAcceptSuggestion}
+        onDismiss={() => setSuggestionField(null)}
+      />
     </div>
   );
 }
 
 export default ExtractionPage;
+

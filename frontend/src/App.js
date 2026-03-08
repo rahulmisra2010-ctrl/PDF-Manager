@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Toaster } from 'react-hot-toast';
 import UploadPDF from './components/UploadPDF';
 import ExtractionPage from './components/ExtractionPage';
 import './App.css';
@@ -24,6 +25,17 @@ function App() {
 
   return (
     <div className="app">
+      {/* Global toast notifications */}
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          duration: 4000,
+          style: { fontSize: '0.9rem' },
+          success: { iconTheme: { primary: '#10b981', secondary: '#fff' } },
+          error: { iconTheme: { primary: '#ef4444', secondary: '#fff' } },
+        }}
+      />
+
       <header className="app-header">
         <h1>📄 PDF Manager</h1>
         <p className="app-subtitle">
@@ -47,4 +59,5 @@ function App() {
 }
 
 export default App;
+
 
