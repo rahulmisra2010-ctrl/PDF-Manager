@@ -255,6 +255,128 @@ class RAGEmbedding(db.Model):
 
 
 # ---------------------------------------------------------------------------
+# TrainingSample
+# ---------------------------------------------------------------------------
+
+class TrainingSample(db.Model):
+    """A sample PDF uploaded for training the suggestion engine."""
+
+    __tablename__ = "training_samples"
+
+    STATUSES = ("pending", "processing", "pending_confirmation", "trained", "failed")
+
+    id = db.Column(db.Integer, primary_key=True)
+    training_id = db.Column(db.String(36), unique=True, nullable=False)  # UUID
+    filename = db.Column(db.String(255), nullable=False)
+    file_path = db.Column(db.String(512), nullable=False)
+    upload_date = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    training_status = db.Column(db.String(30), nullable=False, default="pending_confirmation")
+    confidence_avg = db.Column(db.Float, nullable=True)
+    # JSON-serialised list of extracted fields with mark-correct flags
+    extracted_fields_json = db.Column(db.Text, nullable=True)
+
+    def to_dict(self) -> dict:
+        import json
+        try:
+            fields = json.loads(self.extracted_fields_json) if self.extracted_fields_json else []
+        except Exception:
+            fields = []
+        marked = sum(1 for f in fields if f.get("is_marked_correct"))
+        return {
+            "id": self.id,
+            "training_id": self.training_id,
+            "filename": self.filename,
+            "upload_date": self.upload_date.isoformat(),
+            "training_status": self.training_status,
+            "extracted_fields": fields,
+            "sample_count": 1,
+            "confidence_avg": self.confidence_avg,
+            "marked_correct_count": marked,
+        }
+
+    def __repr__(self) -> str:
+        return f"<TrainingSample {self.filename!r} status={self.training_status!r}>"
+
+
+# ---------------------------------------------------------------------------
+# LogicRuleFile
+# ---------------------------------------------------------------------------
+
+class LogicRuleFile(db.Model):
+    """A logic/rules document (PDF/Excel/DOC) uploaded to define field patterns."""
+
+    __tablename__ = "logic_rule_files"
+
+    STATUSES = ("uploading", "processed", "failed")
+
+    id = db.Column(db.Integer, primary_key=True)
+    rule_id = db.Column(db.String(36), unique=True, nullable=False)  # UUID
+    filename = db.Column(db.String(255), nullable=False)
+    file_path = db.Column(db.String(512), nullable=False)
+    file_type = db.Column(db.String(10), nullable=False)  # pdf, xlsx, docx, csv
+    upload_date = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    training_status = db.Column(db.String(20), nullable=False, default="processed")
+    # JSON-serialised list of extracted rules
+    extracted_rules_json = db.Column(db.Text, nullable=True)
+
+    def to_dict(self) -> dict:
+        import json
+        try:
+            rules = json.loads(self.extracted_rules_json) if self.extracted_rules_json else []
+        except Exception:
+            rules = []
+        return {
+            "id": self.id,
+            "rule_id": self.rule_id,
+            "filename": self.filename,
+            "file_type": self.file_type,
+            "upload_date": self.upload_date.isoformat(),
+            "training_status": self.training_status,
+            "extracted_rules": rules,
+            "rule_count": len(rules),
+        }
+
+    def __repr__(self) -> str:
+        return f"<LogicRuleFile {self.filename!r} type={self.file_type!r}>"
+
+
+# ---------------------------------------------------------------------------
+# TrainingSession
+# ---------------------------------------------------------------------------
+
+class TrainingSession(db.Model):
+    """Records a model training run."""
+
+    __tablename__ = "training_sessions"
+
+    STATUSES = ("idle", "in_progress", "completed", "failed")
+
+    id = db.Column(db.Integer, primary_key=True)
+    started_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    status = db.Column(db.String(20), nullable=False, default="in_progress")
+    samples_count = db.Column(db.Integer, nullable=False, default=0)
+    rules_count = db.Column(db.Integer, nullable=False, default=0)
+    trained_fields_count = db.Column(db.Integer, nullable=False, default=0)
+    error_message = db.Column(db.Text, nullable=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "started_at": self.started_at.isoformat(),
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "status": self.status,
+            "samples_count": self.samples_count,
+            "rules_count": self.rules_count,
+            "trained_fields_count": self.trained_fields_count,
+            "error_message": self.error_message,
+        }
+
+    def __repr__(self) -> str:
+        return f"<TrainingSession id={self.id} status={self.status!r}>"
+
+
+# ---------------------------------------------------------------------------
 # AuditLog
 # ---------------------------------------------------------------------------
 

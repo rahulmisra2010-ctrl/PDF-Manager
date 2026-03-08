@@ -219,3 +219,149 @@ export async function exportDocument(documentId, format = 'json') {
   return { fields, format, document_id: documentId };
 }
 
+// ---------------------------------------------------------------------------
+// Training — Sample PDFs
+// ---------------------------------------------------------------------------
+
+/**
+ * Upload a sample PDF for training the suggestion engine.
+ * @param {File} file
+ * @returns {Promise<{training_id: string, filename: string, extracted_fields: Array, status: string}>}
+ */
+export async function uploadTrainingSample(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiFetch('/training/sample-pdf', { method: 'POST', body: formData });
+}
+
+/**
+ * List all uploaded training sample PDFs.
+ * @returns {Promise<{samples: Array, total: number, trained_fields_total: number, last_training: object|null}>}
+ */
+export async function listTrainingSamples() {
+  return apiFetch('/training/sample-pdf');
+}
+
+/**
+ * Mark extracted fields as correct (ground truth) for a training sample.
+ * @param {string} trainingId
+ * @param {Array<{field_id: number, is_correct: boolean, correction: string|null}>} markedFields
+ * @returns {Promise<any>}
+ */
+export async function markTrainingFields(trainingId, markedFields) {
+  return apiFetch(`/training/sample-pdf/${encodeURIComponent(trainingId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ marked_fields: markedFields }),
+  });
+}
+
+/**
+ * Delete a training sample PDF.
+ * @param {string} trainingId
+ * @returns {Promise<{status: string, training_id: string}>}
+ */
+export async function deleteTrainingSample(trainingId) {
+  return apiFetch(`/training/sample-pdf/${encodeURIComponent(trainingId)}`, {
+    method: 'DELETE',
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Training — Logic Rules
+// ---------------------------------------------------------------------------
+
+/**
+ * Upload a logic/rules document (PDF/Excel/DOC).
+ * @param {File} file
+ * @returns {Promise<{rule_id: string, filename: string, file_type: string, extracted_rules: Array}>}
+ */
+export async function uploadLogicRules(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiFetch('/training/logic-rules', { method: 'POST', body: formData });
+}
+
+/**
+ * List all uploaded logic rule files.
+ * @returns {Promise<{files: Array, total: number, total_rules: number}>}
+ */
+export async function listLogicRules() {
+  return apiFetch('/training/logic-rules');
+}
+
+/**
+ * Update extracted rules for a logic rule file.
+ * @param {string} ruleId
+ * @param {Array} extractedRules
+ * @returns {Promise<any>}
+ */
+export async function updateLogicRule(ruleId, extractedRules) {
+  return apiFetch(`/training/logic-rules/${encodeURIComponent(ruleId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ extracted_rules: extractedRules }),
+  });
+}
+
+/**
+ * Delete a logic rule file.
+ * @param {string} ruleId
+ * @returns {Promise<{status: string, rule_id: string}>}
+ */
+export async function deleteLogicRule(ruleId) {
+  return apiFetch(`/training/logic-rules/${encodeURIComponent(ruleId)}`, {
+    method: 'DELETE',
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Training — Trigger & Status
+// ---------------------------------------------------------------------------
+
+/**
+ * Trigger the training pipeline.
+ * @param {boolean} [forceRetrain=false]
+ * @returns {Promise<{status: string, samples_count: number, rules_count: number, estimated_time_seconds: number}>}
+ */
+export async function triggerTraining(forceRetrain = false) {
+  return apiFetch('/training/train', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ force_retrain: forceRetrain }),
+  });
+}
+
+/**
+ * Get the current training status and statistics.
+ * @returns {Promise<{status: string, total_samples: number, trained_samples: number, total_rules: number, trained_fields_total: number, last_session: object|null}>}
+ */
+export async function getTrainingStatus() {
+  return apiFetch('/training/status');
+}
+
+// ---------------------------------------------------------------------------
+// Suggestions
+// ---------------------------------------------------------------------------
+
+/**
+ * Get hover suggestions for a word based on trained data and logic rules.
+ * @param {string} wordText
+ * @param {string} context
+ * @param {string} fieldName
+ * @param {string|number} [documentId]
+ * @returns {Promise<{field_name: string, current_value: string, suggestions: Array}>}
+ */
+export async function getHoverSuggestions(wordText, context, fieldName, documentId) {
+  return apiFetch('/suggestions/hover', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      word_text: wordText,
+      context,
+      field_name: fieldName,
+      document_id: documentId,
+    }),
+  });
+}
+
