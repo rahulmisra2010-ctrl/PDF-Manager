@@ -18,6 +18,7 @@ import PDFViewer from './PDFViewer';
 import FieldsEditor from './FieldsEditor';
 import OCRConfidenceHeatmap from './OCRConfidenceHeatmap';
 import PerformanceDashboard from './PerformanceDashboard';
+import AdvancedTab from './AdvancedTab';
 import {
   runOCRExtraction,
   runAIExtraction,
@@ -28,7 +29,7 @@ import {
 } from '../services/api';
 import '../styles/extraction.css';
 
-const TABS = ['Fields', 'Heatmap', 'Performance'];
+const TABS = ['Fields', 'Heatmap', 'Performance', 'Advanced'];
 
 function ExtractionPage({ document: doc, onReset }) {
   const [activeTab, setActiveTab] = useState('Fields');
@@ -230,6 +231,7 @@ function ExtractionPage({ document: doc, onReset }) {
                 {tab === 'Fields' && `📋 ${tab}`}
                 {tab === 'Heatmap' && `🔥 ${tab}`}
                 {tab === 'Performance' && `📊 ${tab}`}
+                {tab === 'Advanced' && `🧠 ${tab}`}
               </button>
             ))}
           </div>
@@ -264,6 +266,10 @@ function ExtractionPage({ document: doc, onReset }) {
                 extractionTime={extractionTime}
                 fields={fields}
               />
+            )}
+
+            {activeTab === 'Advanced' && (
+              <AdvancedTab />
             )}
           </div>
         </div>
