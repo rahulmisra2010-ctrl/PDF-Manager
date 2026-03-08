@@ -180,7 +180,7 @@ function AdvancedTab() {
       {/* Header */}
       <div className="advanced-tab__header">
         <div>
-          <h2 className="advanced-tab__title">🔥 Advanced — Training & Suggestions</h2>
+          <h2 className="advanced-tab__title">🧠 Advanced — Training & Suggestions</h2>
           <p className="advanced-tab__subtitle">
             Upload sample PDFs and logic documents to train the suggestion engine
           </p>

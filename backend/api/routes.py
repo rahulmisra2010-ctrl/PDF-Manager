@@ -543,6 +543,15 @@ def _doc_to_dict(doc) -> dict:
 _ALLOWED_TRAINING_EXTS = {".pdf"}
 _ALLOWED_LOGIC_EXTS = {".pdf", ".xlsx", ".xls", ".csv", ".docx", ".doc"}
 
+# Limits applied during extraction to keep payloads manageable
+_MAX_TRAINING_FIELDS = 200   # max OCR word-level fields extracted per sample PDF
+_MAX_EXTRACTED_RULES = 50    # max rules extracted per logic document
+
+# Coefficients for training time estimation (seconds per item, from benchmarks)
+_TRAIN_SECS_PER_SAMPLE = 3
+_TRAIN_SECS_PER_RULE = 1
+_TRAIN_MIN_SECS = 5
+
 
 def _training_folder() -> Path:
     folder = _upload_folder() / "training_samples"
@@ -584,9 +593,9 @@ def _extract_fields_from_pdf(file_path: str) -> list:
                         "height": word.height,
                     },
                 })
-                if field_id >= 200:  # cap to keep payload manageable
+                if field_id >= _MAX_TRAINING_FIELDS:  # cap to keep payload manageable
                     break
-            if field_id >= 200:
+            if field_id >= _MAX_TRAINING_FIELDS:
                 break
     except Exception as exc:
         logger.warning("Could not extract fields from training PDF: %s", exc)
@@ -693,7 +702,7 @@ def _parse_pdf_rules(file_path: str) -> list:
                     "validation_rule": "",
                     "confidence_threshold": 0.85,
                 })
-            if len(rules) >= 50:
+            if len(rules) >= _MAX_EXTRACTED_RULES:
                 break
     except Exception as exc:
         logger.warning("PDF rule parse error: %s", exc)
@@ -723,7 +732,7 @@ def _parse_text_rules(file_path: str) -> list:
                 "validation_rule": "",
                 "confidence_threshold": 0.85,
             })
-            if len(rules) >= 50:
+            if len(rules) >= _MAX_EXTRACTED_RULES:
                 break
     except Exception as exc:
         logger.warning("Text/DOC rule parse error: %s", exc)
@@ -1046,7 +1055,7 @@ def trigger_training():
             "samples_count": samples_count,
             "rules_count": rules_count,
             "trained_fields_count": trained_fields_total,
-            "estimated_time_seconds": max(5, samples_count * 3 + rules_count),
+            "estimated_time_seconds": max(_TRAIN_MIN_SECS, samples_count * _TRAIN_SECS_PER_SAMPLE + rules_count * _TRAIN_SECS_PER_RULE),
             "session_id": session.id,
         })
     except Exception as exc:

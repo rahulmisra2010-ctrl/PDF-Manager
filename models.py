@@ -263,7 +263,7 @@ class TrainingSample(db.Model):
 
     __tablename__ = "training_samples"
 
-    STATUSES = ("pending", "processing", "pending_confirmation", "trained", "failed")
+    TRAINING_STATUSES = ("pending", "processing", "pending_confirmation", "trained", "failed")
 
     id = db.Column(db.Integer, primary_key=True)
     training_id = db.Column(db.String(36), unique=True, nullable=False)  # UUID
@@ -307,7 +307,7 @@ class LogicRuleFile(db.Model):
 
     __tablename__ = "logic_rule_files"
 
-    STATUSES = ("uploading", "processed", "failed")
+    TRAINING_STATUSES = ("uploading", "processed", "failed")
 
     id = db.Column(db.Integer, primary_key=True)
     rule_id = db.Column(db.String(36), unique=True, nullable=False)  # UUID
@@ -349,7 +349,7 @@ class TrainingSession(db.Model):
 
     __tablename__ = "training_sessions"
 
-    STATUSES = ("idle", "in_progress", "completed", "failed")
+    SESSION_STATUSES = ("idle", "in_progress", "completed", "failed")
 
     id = db.Column(db.Integer, primary_key=True)
     started_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
