@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf-manager"
+version = "1.0.0"
+description = "AI-powered PDF manager with OCR and field extraction"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
+[tool.black]
+line-length = 88
+target-version = ["py311", "py312", "py313"]
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | frontend
+  | docs
+  | __pycache__
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 88
+skip_glob = ["frontend/*", "docs/*"]
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "W503"]
+exclude = [
+    ".git",
+    "__pycache__",
+    "frontend",
+    "docs",
+    ".venv",
+]
+per-file-ignores = [
+    "__init__.py:F401",
+]
