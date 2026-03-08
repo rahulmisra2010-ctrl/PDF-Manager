@@ -10,6 +10,11 @@ Features
 * CSRF protection via Flask-WTF
 * Password hashing via Flask-Bcrypt (minimum 8 characters)
 * Role-based access control: Admin, Verifier, Viewer
+* Centralised error handling (400 / 404 / 500) with JSON responses
+* Rate limiting via Flask-Limiter (5 req/min uploads, 10 req/min others)
+* Request / response logging with timestamps and duration
+* CORS support (configurable via ALLOWED_ORIGINS env var)
+* SQLAlchemy connection pool tuned for production
 
 Usage
 -----
@@ -20,12 +25,18 @@ Usage
     gunicorn -w 4 "app:create_app()"
 """
 
+import logging
 import os
 import secrets
 import sys
+import time
+import traceback
 
-from flask import Flask, redirect, url_for
-from flask_login import LoginManager
+from flask import Flask, g, json, jsonify, redirect, request, url_for
+from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_login import LoginManager, current_user
 from flask_wtf.csrf import CSRFProtect
 from dotenv import load_dotenv
 
@@ -49,7 +60,35 @@ if _BACKEND_DIR not in sys.path:
 for _env_file in (os.path.join(_ROOT_DIR, ".env"), os.path.join(_BACKEND_DIR, ".env")):
     load_dotenv(_env_file)
 
+from logging_config import setup_logging  # noqa: E402
 from models import User, db, bcrypt  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# Logging — set up once, before the app factory runs
+# ---------------------------------------------------------------------------
+setup_logging()
+_logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _parse_origins(raw: str) -> list[str]:
+    """Parse *raw* into a list of allowed CORS origin strings.
+
+    Accepts either a JSON array (``'["http://a.com","http://b.com"]'``) or a
+    comma-separated string (``"http://a.com,http://b.com"``).
+    """
+    if not raw:
+        return ["http://localhost:3000", "http://127.0.0.1:3000"]
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return parsed
+    except (ValueError, TypeError):
+        pass
+    return [o.strip() for o in raw.split(",") if o.strip()]
 
 
 # ---------------------------------------------------------------------------
@@ -95,8 +134,45 @@ def create_app(config: dict | None = None) -> Flask:
     )
     app.config["WTF_CSRF_ENABLED"] = True
 
+    # SQLAlchemy connection pool settings (production-ready defaults)
+    # Pool size / recycle options only apply to non-SQLite databases.
+    _db_url = os.environ.get("DATABASE_URL", _default_db)
+    _is_sqlite = _db_url.startswith("sqlite")
+    if not _is_sqlite:
+        app.config.setdefault("SQLALCHEMY_ENGINE_OPTIONS", {
+            "pool_size": int(os.environ.get("SQLALCHEMY_POOL_SIZE", "20")),
+            "pool_recycle": int(os.environ.get("SQLALCHEMY_POOL_RECYCLE", "3600")),
+            "pool_pre_ping": os.environ.get("SQLALCHEMY_POOL_PRE_PING", "true").lower() == "true",
+        })
+    else:
+        # For SQLite, only pool_pre_ping is meaningful
+        app.config.setdefault("SQLALCHEMY_ENGINE_OPTIONS", {
+            "pool_pre_ping": True,
+        })
+
     if config:
         app.config.update(config)
+
+    # ------------------------------------------------------------------
+    # CORS
+    # ------------------------------------------------------------------
+    CORS(
+        app,
+        origins=_parse_origins(os.environ.get("ALLOWED_ORIGINS", "")),
+        supports_credentials=True,
+        max_age=600,
+    )
+
+    # ------------------------------------------------------------------
+    # Rate limiting
+    # ------------------------------------------------------------------
+    limiter = Limiter(
+        key_func=get_remote_address,
+        app=app,
+        default_limits=["10 per minute"],
+        storage_uri=os.environ.get("RATELIMIT_STORAGE_URI", "memory://"),
+    )
+    app.extensions["limiter"] = limiter
 
     # ------------------------------------------------------------------
     # Extensions
@@ -112,6 +188,71 @@ def create_app(config: dict | None = None) -> Flask:
     @login_manager.user_loader
     def load_user(user_id: str):  # noqa: WPS430
         return User.query.get(int(user_id))
+
+    # ------------------------------------------------------------------
+    # Request / response logging
+    # ------------------------------------------------------------------
+    @app.before_request
+    def _log_request_start():  # noqa: WPS430
+        g.request_start_time = time.monotonic()
+
+    @app.after_request
+    def _log_request_end(response):  # noqa: WPS430
+        elapsed_ms = (
+            (time.monotonic() - g.request_start_time) * 1000
+            if hasattr(g, "request_start_time")
+            else -1
+        )
+        user_info = (
+            current_user.username
+            if current_user and current_user.is_authenticated
+            else "anonymous"
+        )
+        _logger.info(
+            "%s %s %s %.1fms user=%s",
+            request.method,
+            request.path,
+            response.status_code,
+            elapsed_ms,
+            user_info,
+        )
+        return response
+
+    # ------------------------------------------------------------------
+    # Error handlers
+    # ------------------------------------------------------------------
+    @app.errorhandler(400)
+    def bad_request(exc):  # noqa: WPS430
+        _logger.warning("400 Bad Request: %s %s — %s", request.method, request.path, exc)
+        return jsonify(error="Bad Request", message=str(exc)), 400
+
+    @app.errorhandler(404)
+    def not_found(exc):  # noqa: WPS430
+        _logger.info("404 Not Found: %s %s", request.method, request.path)
+        return jsonify(error="Not Found", message=str(exc)), 404
+
+    @app.errorhandler(429)
+    def rate_limit_exceeded(exc):  # noqa: WPS430
+        _logger.warning(
+            "429 Rate limit exceeded: %s %s — %s", request.method, request.path, exc
+        )
+        return (
+            jsonify(
+                error="Too Many Requests",
+                message="Rate limit exceeded. Please slow down and try again later.",
+            ),
+            429,
+        )
+
+    @app.errorhandler(500)
+    def internal_error(exc):  # noqa: WPS430
+        _logger.error(
+            "500 Internal Server Error: %s %s\n%s",
+            request.method,
+            request.path,
+            traceback.format_exc(),
+        )
+        return jsonify(error="Internal Server Error", message="An unexpected error occurred."), 500
 
     # ------------------------------------------------------------------
     # Blueprints
@@ -136,10 +277,16 @@ def create_app(config: dict | None = None) -> Flask:
     app.register_blueprint(search_bp, url_prefix="/search")
     app.register_blueprint(users_bp, url_prefix="/users")
 
-    # REST API v1
+    # REST API v1 — apply tighter rate limits to upload/extract endpoints
     try:
         from backend.api.routes import api_v1_bp
         app.register_blueprint(api_v1_bp)
+
+        # Apply upload / extract rate limits (5/min) after blueprint registration
+        for _endpoint in ("api_v1.upload_pdf", "api_v1.extract_ocr", "api_v1.extract_ai"):
+            view_func = app.view_functions.get(_endpoint)
+            if view_func:
+                limiter.limit("5 per minute")(view_func)
     except Exception as _api_exc:
         import warnings
         warnings.warn(f"Could not register API v1 blueprint: {_api_exc}", stacklevel=2)
