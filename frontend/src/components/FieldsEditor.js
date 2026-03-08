@@ -11,7 +11,7 @@
  * Props:
  *   fields           {Array}    Extracted field objects from the API
  *   onFieldUpdate    {func}     Called with (fieldId, newValue) to save a field
- *   onFieldHover     {func}     Called with (bbox | null) on hover to highlight PDF
+ *   onFieldHover     {func}     Called with (field | null) on hover to highlight PDF region
  *   loading          {boolean}  Show loading skeleton
  */
 
@@ -62,7 +62,7 @@ function FieldRow({ field, onSave, onHover }) {
     }
   };
 
-  const handleMouseEnter = () => onHover && onHover(field.bbox || null);
+  const handleMouseEnter = () => onHover && onHover(field);
   const handleMouseLeave = () => onHover && onHover(null);
 
   return (
