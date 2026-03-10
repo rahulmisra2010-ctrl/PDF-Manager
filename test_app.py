@@ -612,9 +612,24 @@ class TestTrainingService:
 
     def test_string_similarity(self):
         svc_mod = self._import()
-        assert svc_mod._string_similarity("Rahul", "Rahul") == 1.0
-        assert svc_mod._string_similarity("rahul", "RAHUL") == 1.0
-        assert svc_mod._string_similarity("", "") == 1.0
-        assert svc_mod._string_similarity("abc", "") == 0.0
-        assert 0.0 < svc_mod._string_similarity("Rahul Misra", "Rahul") < 1.0
+        svc = svc_mod.TrainingService()
+        # Exact match → confidence boosted (high similarity)
+        _, delta_exact, used_exact = svc.boost_confidence(
+            "Name", "Rahul Misra", [{"field_name": "Name", "correct_value": "Rahul Misra"}]
+        )
+        assert used_exact is True
+        assert delta_exact == svc.CONFIDENCE_BOOST
+
+        # Completely different value → no boost
+        _, delta_diff, used_diff = svc.boost_confidence(
+            "Name", "John Smith", [{"field_name": "Name", "correct_value": "Rahul Misra"}]
+        )
+        assert used_diff is False
+
+        # Empty extracted value → filled from training
+        value_empty, delta_empty, used_empty = svc.boost_confidence(
+            "Name", "", [{"field_name": "Name", "correct_value": "Rahul Misra"}]
+        )
+        assert used_empty is True
+        assert value_empty == "Rahul Misra"
 

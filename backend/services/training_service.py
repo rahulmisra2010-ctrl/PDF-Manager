@@ -130,12 +130,12 @@ class TrainingService:
             )
             if used:
                 item["field_value"] = value
+                # delta is always > 0 when used=True (CONFIDENCE_BOOST or
+                # FALLBACK_CONFIDENCE), so we always enter this branch.
                 if delta > 0:
                     item["confidence"] = round(
                         min(1.0, item["confidence"] + delta), 4
                     )
-                elif item["confidence"] == 0.0:
-                    item["confidence"] = round(delta, 4)
                 item["training_boosted"] = True
 
         return rag_results
