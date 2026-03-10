@@ -361,3 +361,260 @@ class TestNewModels:
             d = fetched.to_dict()
             assert d["correction_source"] == "train_me"
 
+
+# ─────────────────────────────────────────────────────────────────────────
+# TrainingExample model + API tests
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestTrainingExample:
+    """Tests for the TrainingExample model and /api/v1/training/* endpoints."""
+
+    def _create_doc(self, app):
+        """Insert a Document and return its id."""
+        from models import Document
+        with app.app_context():
+            doc = Document(
+                filename="train.pdf",
+                file_path="/tmp/train.pdf",
+                status="extracted",
+            )
+            db.session.add(doc)
+            db.session.commit()
+            return doc.id
+
+    def test_training_example_model(self, app):
+        """TrainingExample rows can be created and retrieved."""
+        from models import TrainingExample, Document
+        with app.app_context():
+            doc = Document(filename="t.pdf", file_path="/tmp/t.pdf", status="uploaded")
+            db.session.add(doc)
+            db.session.flush()
+            ex = TrainingExample(
+                document_id=doc.id,
+                field_name="Name",
+                correct_value="Rahul Misra",
+            )
+            db.session.add(ex)
+            db.session.commit()
+            fetched = TrainingExample.query.filter_by(document_id=doc.id).first()
+            assert fetched is not None
+            assert fetched.field_name == "Name"
+            assert fetched.correct_value == "Rahul Misra"
+            d = fetched.to_dict()
+            assert d["field_name"] == "Name"
+            assert d["correct_value"] == "Rahul Misra"
+            assert "created_at" in d
+
+    def test_add_training_requires_login(self, client, app):
+        doc_id = self._create_doc(app)
+        resp = client.post(
+            "/api/v1/training/add",
+            json={"document_id": doc_id, "fields": {"Name": "Test"}},
+        )
+        assert resp.status_code in (302, 401)
+
+    def test_add_training_saves_examples(self, client, app):
+        doc_id = self._create_doc(app)
+        _login(client, app)
+        resp = client.post(
+            "/api/v1/training/add",
+            json={
+                "document_id": doc_id,
+                "fields": {
+                    "Name": "Rahul Misra",
+                    "City": "Asansol",
+                    "State": "WB",
+                },
+            },
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert data["document_id"] == doc_id
+        assert len(data["saved"]) == 3
+
+    def test_add_training_persists_to_db(self, client, app):
+        doc_id = self._create_doc(app)
+        _login(client, app)
+        client.post(
+            "/api/v1/training/add",
+            json={"document_id": doc_id, "fields": {"Name": "John Doe"}},
+            headers={"X-CSRFToken": "test"},
+        )
+        from models import TrainingExample
+        with app.app_context():
+            examples = TrainingExample.query.filter_by(
+                document_id=doc_id, field_name="Name"
+            ).all()
+            assert len(examples) == 1
+            assert examples[0].correct_value == "John Doe"
+
+    def test_add_training_replaces_existing(self, client, app):
+        """Calling add_training twice replaces the first set of examples."""
+        doc_id = self._create_doc(app)
+        _login(client, app)
+        client.post(
+            "/api/v1/training/add",
+            json={"document_id": doc_id, "fields": {"Name": "Old Name"}},
+            headers={"X-CSRFToken": "test"},
+        )
+        client.post(
+            "/api/v1/training/add",
+            json={"document_id": doc_id, "fields": {"Name": "New Name"}},
+            headers={"X-CSRFToken": "test"},
+        )
+        from models import TrainingExample
+        with app.app_context():
+            examples = TrainingExample.query.filter_by(document_id=doc_id).all()
+            assert len(examples) == 1
+            assert examples[0].correct_value == "New Name"
+
+    def test_add_training_skips_empty_values(self, client, app):
+        doc_id = self._create_doc(app)
+        _login(client, app)
+        resp = client.post(
+            "/api/v1/training/add",
+            json={
+                "document_id": doc_id,
+                "fields": {"Name": "Rahul", "City": ""},
+            },
+            headers={"X-CSRFToken": "test"},
+        )
+        data = resp.get_json()
+        # Only 'Name' saved; 'City' was blank
+        assert len(data["saved"]) == 1
+        assert data["saved"][0]["field_name"] == "Name"
+
+    def test_add_training_missing_document_id(self, client, app):
+        _login(client, app)
+        resp = client.post(
+            "/api/v1/training/add",
+            json={"fields": {"Name": "test"}},
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 400
+
+    def test_add_training_missing_fields(self, client, app):
+        doc_id = self._create_doc(app)
+        _login(client, app)
+        resp = client.post(
+            "/api/v1/training/add",
+            json={"document_id": doc_id},
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 400
+
+    def test_add_training_doc_not_found(self, client, app):
+        _login(client, app)
+        resp = client.post(
+            "/api/v1/training/add",
+            json={"document_id": 9999, "fields": {"Name": "test"}},
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 404
+
+    def test_list_examples_json(self, client, app):
+        doc_id = self._create_doc(app)
+        _login(client, app)
+        client.post(
+            "/api/v1/training/add",
+            json={"document_id": doc_id, "fields": {"Name": "Rahul"}},
+            headers={"X-CSRFToken": "test"},
+        )
+        resp = client.get("/api/v1/training/examples")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["count"] >= 1
+        assert any(ex["field_name"] == "Name" for ex in data["examples"])
+
+    def test_examples_list_html(self, client, app):
+        _login(client, app)
+        resp = client.get("/training/examples")
+        assert resp.status_code == 200
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# TrainingService unit tests
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestTrainingService:
+    """Unit tests for backend/services/training_service.py."""
+
+    def _import(self):
+        repo_root = os.path.dirname(os.path.abspath(__file__))
+        backend_dir = os.path.join(repo_root, "backend")
+        if backend_dir not in sys.path:
+            sys.path.insert(0, backend_dir)
+        import importlib
+        return importlib.import_module("services.training_service")
+
+    def test_boost_confidence_match_boosts_score(self):
+        svc_mod = self._import()
+        svc = svc_mod.TrainingService()
+        training = [{"field_name": "Name", "correct_value": "Rahul Misra"}]
+        value, delta, used = svc.boost_confidence("Name", "Rahul Misra", training)
+        assert used is True
+        assert delta == svc.CONFIDENCE_BOOST
+        assert value == "Rahul Misra"
+
+    def test_boost_confidence_empty_extracted_uses_training(self):
+        svc_mod = self._import()
+        svc = svc_mod.TrainingService()
+        training = [{"field_name": "City", "correct_value": "Asansol"}]
+        value, delta, used = svc.boost_confidence("City", "", training)
+        assert used is True
+        assert value == "Asansol"
+        assert delta == svc.FALLBACK_CONFIDENCE
+
+    def test_boost_confidence_no_training_data(self):
+        svc_mod = self._import()
+        svc = svc_mod.TrainingService()
+        value, delta, used = svc.boost_confidence("Name", "John", [])
+        assert used is False
+        assert delta == 0.0
+
+    def test_boost_confidence_wrong_field(self):
+        svc_mod = self._import()
+        svc = svc_mod.TrainingService()
+        training = [{"field_name": "City", "correct_value": "Asansol"}]
+        value, delta, used = svc.boost_confidence("Name", "Rahul", training)
+        assert used is False
+
+    def test_apply_training_to_results(self):
+        svc_mod = self._import()
+        svc = svc_mod.TrainingService()
+        results = [
+            {"field_name": "Name", "field_value": "Rahul Misra", "confidence": 0.70},
+            {"field_name": "City", "field_value": "", "confidence": 0.0},
+        ]
+        training = [
+            {"field_name": "Name", "correct_value": "Rahul Misra"},
+            {"field_name": "City", "correct_value": "Asansol"},
+        ]
+        updated = svc.apply_training_to_results(results, training)
+        name_result = next(r for r in updated if r["field_name"] == "Name")
+        city_result = next(r for r in updated if r["field_name"] == "City")
+        # Name matched → confidence boosted
+        assert name_result["confidence"] > 0.70
+        assert name_result.get("training_boosted") is True
+        # City was empty → filled from training
+        assert city_result["field_value"] == "Asansol"
+        assert city_result.get("training_boosted") is True
+
+    def test_apply_training_no_training_returns_unchanged(self):
+        svc_mod = self._import()
+        svc = svc_mod.TrainingService()
+        results = [{"field_name": "Name", "field_value": "Test", "confidence": 0.5}]
+        updated = svc.apply_training_to_results(results, [])
+        assert updated[0]["confidence"] == 0.5
+        assert "training_boosted" not in updated[0]
+
+    def test_string_similarity(self):
+        svc_mod = self._import()
+        assert svc_mod._string_similarity("Rahul", "Rahul") == 1.0
+        assert svc_mod._string_similarity("rahul", "RAHUL") == 1.0
+        assert svc_mod._string_similarity("", "") == 1.0
+        assert svc_mod._string_similarity("abc", "") == 0.0
+        assert 0.0 < svc_mod._string_similarity("Rahul Misra", "Rahul") < 1.0
+

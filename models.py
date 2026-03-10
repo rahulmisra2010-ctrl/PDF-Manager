@@ -12,6 +12,7 @@ Models
 * AuditLog         — immutable audit trail for all user actions
 * ValidationLog    — audit trail for Train Me validation runs
 * FieldCorrection  — per-field corrections applied by Train Me
+* TrainingExample  — labeled training examples for RAG confidence boosting
 """
 
 from __future__ import annotations
@@ -372,4 +373,42 @@ class FieldCorrection(db.Model):
         return (
             f"<FieldCorrection field={self.field_name!r}"
             f" {self.original_value!r} → {self.corrected_value!r}>"
+        )
+
+
+# ---------------------------------------------------------------------------
+# TrainingExample
+# ---------------------------------------------------------------------------
+
+class TrainingExample(db.Model):
+    """A labeled training example for improving RAG extraction confidence.
+
+    Users upload and manually correct address book PDFs, then mark them as
+    training examples.  The RAG extractor uses these examples to boost
+    confidence scores for fields that match training data.
+    """
+
+    __tablename__ = "training_examples"
+
+    id = db.Column(db.Integer, primary_key=True)
+    document_id = db.Column(
+        db.Integer, db.ForeignKey("documents.id"), nullable=False
+    )
+    field_name = db.Column(db.String(255), nullable=False)
+    correct_value = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "document_id": self.document_id,
+            "field_name": self.field_name,
+            "correct_value": self.correct_value,
+            "created_at": self.created_at.isoformat(),
+        }
+
+    def __repr__(self) -> str:
+        return (
+            f"<TrainingExample doc={self.document_id}"
+            f" field={self.field_name!r} value={self.correct_value!r}>"
         )
