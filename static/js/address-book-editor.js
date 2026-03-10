@@ -4,31 +4,22 @@
  * Depends on:
  *   - PDF.js 3.x (loaded from CDN before this script)
  *   - Global variables injected by the Jinja2 template:
- *       PDF_URL       {string}  — URL to fetch the raw PDF
- *       DOC_ID        {number}  — database id of the document
- *       CSRF_TOKEN    {string}  — Flask-WTF CSRF token
- *       UPDATE_URL    {string}  — POST endpoint for single-field AJAX update
+ *       PDF_URL        {string}  — URL to fetch the raw PDF
+ *       DOC_ID         {number}  — database id of the document
+ *       CSRF_TOKEN     {string}  — Flask-WTF CSRF token
+ *       UPDATE_URL     {string}  — POST endpoint for single-field AJAX update
+ *       FIELD_DEFAULTS {object}  — suggested defaults per field name
  */
 
-/* global pdfjsLib, PDF_URL, DOC_ID, CSRF_TOKEN, UPDATE_URL */
+/* global pdfjsLib, PDF_URL, DOC_ID, CSRF_TOKEN, UPDATE_URL, FIELD_DEFAULTS */
 
 (function () {
   "use strict";
 
   // -------------------------------------------------------------------------
-  // Default / suggested field values shown when extracted value is empty
+  // Field metadata (does NOT duplicate FIELD_DEFAULTS — those come from the
+  // template-injected global so defaults live in exactly one place).
   // -------------------------------------------------------------------------
-  var FIELD_DEFAULTS = {
-    "Name":           "Rahul Misra",
-    "Street Address": "Sumoth pally. Durgamandir",
-    "City":           "Asansol",
-    "State":          "WB",
-    "Zip Code":       "713301",
-    "Home Phone":     "",
-    "Cell Phone":     "7699888010",
-    "Work Phone":     "",
-    "Email":          ""
-  };
 
   // Fields that must not be empty when saved
   var REQUIRED_FIELDS = ["Name", "Cell Phone"];
@@ -249,9 +240,10 @@
     var input   = editRow ? editRow.querySelector(".abe-field-edit-input") : null;
     if (!viewEl || !editRow || !input) return;
 
-    // If value is empty, suggest the default
     var fieldName = viewEl.dataset.fieldName || "";
-    if (!input.value && FIELD_DEFAULTS[fieldName]) {
+
+    // If input is empty, pre-fill with the suggested default from FIELD_DEFAULTS
+    if (!input.value && FIELD_DEFAULTS && FIELD_DEFAULTS[fieldName]) {
       input.value = FIELD_DEFAULTS[fieldName];
     }
 
@@ -269,10 +261,10 @@
     if (!viewEl || !editRow) return;
 
     if (restoreValue && input) {
-      // Revert to the value shown in view mode
+      // Restore the value stored in data-raw-value (set on load and after each save)
       var textSpan = viewEl.querySelector(".abe-field-value-text");
-      var currentDisplayed = textSpan ? textSpan.dataset.rawValue || textSpan.textContent.trim() : "";
-      input.value = currentDisplayed;
+      var savedRaw = textSpan ? (textSpan.dataset.rawValue || "") : "";
+      input.value = savedRaw;
     }
 
     editRow.classList.remove("abe-active");
@@ -306,9 +298,12 @@
     var fieldName = viewEl ? (viewEl.dataset.fieldName || "") : "";
 
     if (!textSpan) return;
-    var displayVal = newValue || FIELD_DEFAULTS[fieldName] || "";
-    textSpan.textContent = displayVal || "(empty)";
+
+    // Store the raw saved value for cancel-restore
     textSpan.dataset.rawValue = newValue;
+
+    var displayVal = newValue || (FIELD_DEFAULTS && FIELD_DEFAULTS[fieldName]) || "—";
+    textSpan.textContent = displayVal;
 
     // Toggle placeholder style
     if (!newValue) {
@@ -317,10 +312,9 @@
       textSpan.classList.remove("abe-placeholder");
     }
 
-    // Mark the label's edited badge
+    // Show edited badge on the label if not already present
     var label = group.querySelector(".abe-field-label");
-    var badge = label ? label.querySelector(".abe-edited-badge") : null;
-    if (!badge && label && newValue) {
+    if (label && newValue && !label.querySelector(".abe-edited-badge")) {
       var b = document.createElement("span");
       b.className = "abe-edited-badge";
       b.textContent = "edited";
@@ -339,20 +333,21 @@
 
       if (!viewEl) return;
 
-      // Apply default value to view text if currently empty
+      // Ensure data-raw-value is initialised from the rendered text span content
       var textSpan  = viewEl.querySelector(".abe-field-value-text");
-      var fieldName = viewEl.dataset.fieldName || "";
-      if (textSpan) {
-        var raw = textSpan.dataset.rawValue !== undefined
-          ? textSpan.dataset.rawValue
-          : textSpan.textContent.trim();
+      if (textSpan && textSpan.dataset.rawValue === undefined) {
+        // The template renders the actual extracted value into data-raw-value.
+        // Only fall back to textContent if the attribute is absent.
+        textSpan.dataset.rawValue = textSpan.getAttribute("data-raw-value") || "";
+      }
 
-        if (!raw) {
-          var def = FIELD_DEFAULTS[fieldName] || "";
-          if (def) {
-            textSpan.textContent = def;
-            textSpan.classList.remove("abe-placeholder");
-          }
+      // Apply suggested default to the display text when extracted value is empty
+      var fieldName = viewEl.dataset.fieldName || "";
+      if (textSpan && !textSpan.dataset.rawValue) {
+        var def = (FIELD_DEFAULTS && FIELD_DEFAULTS[fieldName]) || "";
+        if (def) {
+          textSpan.textContent = def;
+          textSpan.classList.remove("abe-placeholder");
         }
       }
 
@@ -377,7 +372,7 @@
         exitEditMode(group, true);
       });
 
-      // Escape key → cancel
+      // Escape key → cancel; Enter → save
       input.addEventListener("keydown", function (e) {
         if (e.key === "Escape") {
           exitEditMode(group, true);

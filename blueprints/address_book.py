@@ -316,7 +316,7 @@ def export(doc_id: int, fmt: str):
     fields = ExtractedField.query.filter_by(document_id=doc_id).all()
     rows = [{"field_name": f.field_name, "value": f.value or ""} for f in fields]
     stem = os.path.splitext(doc.filename)[0]
-    safe_stem = secure_filename(stem) or "address_book"
+    safe_stem = secure_filename(stem) or f"address_book_{doc_id}"
 
     if fmt == "json":
         buf = io.BytesIO(json.dumps(rows, indent=2, ensure_ascii=False).encode("utf-8"))

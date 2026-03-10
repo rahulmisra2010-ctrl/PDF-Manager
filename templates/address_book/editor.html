@@ -320,10 +320,12 @@
    JavaScript globals
 ───────────────────────────────────────────────────────────────────────── #}
 <script>
-  const PDF_URL    = {{ pdf_url | tojson }};
-  const DOC_ID     = {{ doc.id }};
-  const CSRF_TOKEN = {{ csrf_token() | tojson }};
-  const UPDATE_URL = {{ url_for('address_book.update_field', doc_id=doc.id) | tojson }};
+  const PDF_URL      = {{ pdf_url | tojson }};
+  const DOC_ID       = {{ doc.id }};
+  const CSRF_TOKEN   = {{ csrf_token() | tojson }};
+  const UPDATE_URL   = {{ url_for('address_book.update_field', doc_id=doc.id) | tojson }};
+  // Suggested defaults injected from the template so JS does not duplicate them.
+  const FIELD_DEFAULTS = {{ FIELD_DEFAULTS | tojson }};
 </script>
 {% endblock %}
 
