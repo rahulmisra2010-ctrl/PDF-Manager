@@ -14,7 +14,9 @@ POST /address-book/<doc_id>/reject         — reject document (Verifier+)
 GET  /address-book/<doc_id>/export         — download updated PDF
 """
 
+import csv
 import io
+import json
 import os
 from functools import wraps
 
@@ -295,52 +297,117 @@ def reject(doc_id: int):
 @address_book_bp.route("/<int:doc_id>/export")
 @login_required
 def export_pdf(doc_id: int):
-    """Download an updated PDF with edited address book fields overlaid."""
+    """Legacy route: redirect to PDF export."""
+    return redirect(url_for("address_book.export", doc_id=doc_id, fmt="pdf"))
+
+
+@address_book_bp.route("/<int:doc_id>/export/<fmt>")
+@login_required
+def export(doc_id: int, fmt: str):
+    """Export the address book document's fields as CSV, XLSX, JSON, or PDF.
+
+    All formats are served as browser downloads with clean naming:
+    ``{stem}_address_book_edited.{ext}``
+    """
+    if fmt not in ("csv", "xlsx", "json", "pdf"):
+        abort(400)
+
     doc = Document.query.get_or_404(doc_id)
-    svc = _get_pdf_service()
-
-    if svc is None:
-        flash("PDF service unavailable — cannot export.", "danger")
-        return redirect(url_for("address_book.editor", doc_id=doc_id))
-
-    if not os.path.exists(doc.file_path):
-        flash("Export failed: source file not found on disk.", "danger")
-        return redirect(url_for("address_book.editor", doc_id=doc_id))
-
     fields = ExtractedField.query.filter_by(document_id=doc_id).all()
-    field_dicts = [
-        {
-            "field_name": f.field_name,
-            "value": f.value or "",
-            "bbox_x": f.bbox_x,
-            "bbox_y": f.bbox_y,
-            "bbox_width": f.bbox_width,
-            "bbox_height": f.bbox_height,
-            "page_number": f.page_number or 1,
-        }
-        for f in fields
-    ]
+    rows = [{"field_name": f.field_name, "value": f.value or ""} for f in fields]
+    stem = os.path.splitext(doc.filename)[0]
+    safe_stem = secure_filename(stem) or "address_book"
 
-    buf = io.BytesIO()
-    try:
-        svc._export_as_pdf(doc.file_path, field_dicts, buf)
-        buf.seek(0)
-        stem = os.path.splitext(doc.filename)[0]
-        dest_dir = current_app.config.get("PDF_EXPORT_FOLDER", r"D:\destination_folder")
-        os.makedirs(dest_dir, exist_ok=True)
-        dest_path = os.path.join(dest_dir, secure_filename(f"{stem}_address_book.pdf"))
-        with open(dest_path, "wb") as fh:
-            fh.write(buf.read())
-        _log(current_user.id, "export_pdf", "document", str(doc_id))
+    if fmt == "json":
+        buf = io.BytesIO(json.dumps(rows, indent=2, ensure_ascii=False).encode("utf-8"))
+        _log(current_user.id, "export_json", "document", str(doc_id))
         db.session.commit()
-        flash(f"PDF exported successfully to {dest_path}", "success")
-        return redirect(url_for("address_book.editor", doc_id=doc_id))
-    except Exception as exc:
-        current_app.logger.exception(
-            "PDF export failed for doc %s: %s", doc_id, exc
+        return send_file(
+            buf,
+            mimetype="application/json",
+            as_attachment=True,
+            download_name=f"{safe_stem}_address_book_edited.json",
         )
-        flash(f"PDF export failed: {exc}", "danger")
+
+    if fmt == "csv":
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=["field_name", "value"])
+        writer.writeheader()
+        writer.writerows(rows)
+        buf = io.BytesIO(output.getvalue().encode("utf-8"))
+        _log(current_user.id, "export_csv", "document", str(doc_id))
+        db.session.commit()
+        return send_file(
+            buf,
+            mimetype="text/csv",
+            as_attachment=True,
+            download_name=f"{safe_stem}_address_book_edited.csv",
+        )
+
+    if fmt == "pdf":
+        svc = _get_pdf_service()
+        if svc is None:
+            flash("PDF service unavailable — cannot export as PDF.", "danger")
+            return redirect(url_for("address_book.editor", doc_id=doc_id))
+        if not os.path.exists(doc.file_path):
+            flash("Export failed: source file not found on disk.", "danger")
+            return redirect(url_for("address_book.editor", doc_id=doc_id))
+
+        field_dicts = [
+            {
+                "field_name": f.field_name,
+                "value": f.value or "",
+                "bbox_x": f.bbox_x,
+                "bbox_y": f.bbox_y,
+                "bbox_width": f.bbox_width,
+                "bbox_height": f.bbox_height,
+                "page_number": f.page_number or 1,
+            }
+            for f in fields
+        ]
+        buf = io.BytesIO()
+        try:
+            svc._export_as_pdf(doc.file_path, field_dicts, buf)
+            buf.seek(0)
+            _log(current_user.id, "export_pdf", "document", str(doc_id))
+            db.session.commit()
+            return send_file(
+                buf,
+                mimetype="application/pdf",
+                as_attachment=True,
+                download_name=f"{safe_stem}_address_book_edited.pdf",
+            )
+        except Exception as exc:
+            current_app.logger.exception(
+                "PDF export failed for doc %s: %s", doc_id, exc
+            )
+            flash(f"PDF export failed: {exc}", "danger")
+            return redirect(url_for("address_book.editor", doc_id=doc_id))
+
+    # xlsx
+    try:
+        import openpyxl
+    except ImportError:
+        flash("openpyxl is not installed — cannot export as XLSX.", "danger")
         return redirect(url_for("address_book.editor", doc_id=doc_id))
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Address Book"
+    ws.append(["Field", "Value"])
+    for row in rows:
+        ws.append([row["field_name"], row["value"]])
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    _log(current_user.id, "export_xlsx", "document", str(doc_id))
+    db.session.commit()
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=f"{safe_stem}_address_book_edited.xlsx",
+    )
 
 
 # ---------------------------------------------------------------------------
