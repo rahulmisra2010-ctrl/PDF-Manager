@@ -42,6 +42,12 @@
       </button>
     </form>
 
+    {# Train Me #}
+    <button type="button" id="btn-train-me" class="able-btn able-btn-train-me"
+            title="Validate extracted fields against reference data">
+      <i class="bi bi-mortarboard-fill me-1"></i>Train Me
+    </button>
+
     {# Export PDF #}
     <a href="{{ url_for('address_book_live.export_pdf', doc_id=doc.id) }}"
        class="able-btn able-btn-export" title="Download updated PDF">
@@ -61,6 +67,11 @@
     </a>
   </div>
 </div>
+
+{# ─────────────────────────────────────────────────────────────────────────
+   Train Me progress indicator (left → right, field by field)
+───────────────────────────────────────────────────────────────────────── #}
+<div id="train-me-progress" class="tm-progress-bar" style="display:none"></div>
 
 {# ─────────────────────────────────────────────────────────────────────────
    PDF toolbar
@@ -133,13 +144,35 @@
 </form>
 
 {# ─────────────────────────────────────────────────────────────────────────
+   Train Me — modal overlay
+───────────────────────────────────────────────────────────────────────── #}
+<div id="train-me-modal-overlay" class="tm-modal-overlay" style="display:none"></div>
+<div id="train-me-modal" class="tm-modal" style="display:none" role="dialog"
+     aria-modal="true" aria-labelledby="tm-modal-title">
+  <div class="tm-modal-dialog">
+    <div class="tm-modal-header">
+      <h5 id="tm-modal-title">
+        <i class="bi bi-mortarboard-fill me-2"></i>Train Me — Validation Results
+      </h5>
+      <button id="train-me-modal-close" class="tm-modal-close" aria-label="Close">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </div>
+    <div id="train-me-modal-body" class="tm-modal-body">
+      <!-- Populated by train-me.js -->
+    </div>
+  </div>
+</div>
+
+{# ─────────────────────────────────────────────────────────────────────────
    JavaScript globals
 ───────────────────────────────────────────────────────────────────────── #}
 <script>
-  const PDF_URL    = {{ pdf_url | tojson }};
-  const DOC_ID     = {{ doc.id }};
-  const CSRF_TOKEN = {{ csrf_token() | tojson }};
-  const UPDATE_URL = {{ url_for('address_book_live.update_field', doc_id=doc.id) | tojson }};
+  const PDF_URL      = {{ pdf_url | tojson }};
+  const DOC_ID       = {{ doc.id }};
+  const CSRF_TOKEN   = {{ csrf_token() | tojson }};
+  const UPDATE_URL   = {{ url_for('address_book_live.update_field', doc_id=doc.id) | tojson }};
+  const TRAIN_ME_URL = {{ url_for('address_book_live.train_me', doc_id=doc.id) | tojson }};
 
   /* Default bounding boxes for known address-book fields (fractions 0–1) */
   const DEMO_BOXES = {
@@ -163,4 +196,5 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
         crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="{{ url_for('static', filename='js/address-book-live-editor.js') }}"></script>
+<script src="{{ url_for('static', filename='js/train-me.js') }}"></script>
 {% endblock %}

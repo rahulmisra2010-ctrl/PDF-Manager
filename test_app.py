@@ -1,13 +1,18 @@
 import pytest
 import os
 import sys
+import json
 from app import create_app, db
 from models import User
 
 @pytest.fixture
 def app():
     """Create and configure a new app instance for each test."""
-    app = create_app({'TESTING': True, 'SQLALCHEMY_DATABASE_URI': 'sqlite:///:memory:'})
+    app = create_app({
+        'TESTING': True,
+        'SQLALCHEMY_DATABASE_URI': 'sqlite:///:memory:',
+        'WTF_CSRF_ENABLED': False,
+    })
     
     with app.app_context():
         db.create_all()
@@ -24,6 +29,29 @@ def client(app):
 def runner(app):
     """A test runner for the app's CLI commands."""
     return app.test_cli_runner()
+
+# ─────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────
+
+def _login(client, app):
+    """Log in as the default admin user created by create_app."""
+    with app.app_context():
+        user = User.query.filter_by(username="admin").first()
+    # Use a fresh password set on the user
+    with app.app_context():
+        u = User.query.filter_by(username="admin").first()
+        u.set_password("adminpass123")
+        db.session.commit()
+    return client.post("/auth/login", data={
+        "username": "admin",
+        "password": "adminpass123",
+    }, follow_redirects=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Existing tests
+# ─────────────────────────────────────────────────────────────────────────
 
 # Test app initialization
 def test_app_creation(app):
@@ -54,3 +82,282 @@ def test_app_context(app):
     """Test that app context is available."""
     with app.app_context():
         assert db.session is not None
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# ValidationService unit tests
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestValidationService:
+    """Unit tests for backend/services/validation_service.py."""
+
+    def _import(self):
+        """Return the validation_service module, adding backend to sys.path."""
+        repo_root = os.path.dirname(os.path.abspath(__file__))
+        backend_dir = os.path.join(repo_root, "backend")
+        if backend_dir not in sys.path:
+            sys.path.insert(0, backend_dir)
+        import importlib
+        return importlib.import_module("services.validation_service")
+
+    def test_compare_field_exact_match(self):
+        svc = self._import()
+        status, score = svc.compare_field("Rahul Misra", "Rahul Misra")
+        assert status == svc.STATUS_VALIDATED
+        assert score == 1.0
+
+    def test_compare_field_case_insensitive(self):
+        svc = self._import()
+        status, score = svc.compare_field("rahul misra", "Rahul Misra")
+        assert status == svc.STATUS_VALIDATED
+        assert score == 1.0
+
+    def test_compare_field_both_blank(self):
+        svc = self._import()
+        status, score = svc.compare_field("", "")
+        assert status == svc.STATUS_VALIDATED
+        assert score == 1.0
+
+    def test_compare_field_extracted_blank_ref_has_value(self):
+        svc = self._import()
+        status, score = svc.compare_field("", "Asansol")
+        assert status == svc.STATUS_BLANK
+        assert score == 0.0
+
+    def test_compare_field_partial_match(self):
+        svc = self._import()
+        # Remove a period — should be a high (>=0.8) but not 1.0 score
+        status, score = svc.compare_field(
+            "Sumoth pally Durgamandir",
+            "Sumoth pally. Durgamandir",
+        )
+        assert status in (svc.STATUS_NEEDS_REVIEW, svc.STATUS_VALIDATED)
+        assert score > 0.8
+
+    def test_compare_field_no_match(self):
+        svc = self._import()
+        status, score = svc.compare_field("completely different", "Rahul Misra")
+        assert status == svc.STATUS_NEEDS_CORRECTION
+        assert score < 0.8
+
+    def test_load_reference_data_default_set(self):
+        svc = self._import()
+        ref = svc.load_reference_data("mat_pdf_v1")
+        assert isinstance(ref, dict)
+        assert ref.get("Name") == "Rahul Misra"
+        assert ref.get("City") == "Asansol"
+        assert ref.get("Zip Code") == "713301"
+
+    def test_load_reference_data_unknown_set(self):
+        svc = self._import()
+        with pytest.raises(ValueError):
+            svc.load_reference_data("nonexistent_set")
+
+    def test_validate_document_all_correct(self):
+        svc = self._import()
+        fields = [
+            {"field_id": 1, "field_name": "Name", "value": "Rahul Misra"},
+            {"field_id": 2, "field_name": "City", "value": "Asansol"},
+        ]
+        result = svc.validate_document(1, fields, "mat_pdf_v1")
+        assert result["status"] == "validation_complete"
+        assert "timestamp" in result
+        meta = result["validation_metadata"]
+        assert meta["total_fields"] == 2
+        assert meta["validated"] == 2
+        assert meta["accuracy"] == 1.0
+
+    def test_validate_document_with_blank_field(self):
+        svc = self._import()
+        fields = [
+            {"field_id": 1, "field_name": "Name", "value": "Rahul Misra"},
+            {"field_id": 2, "field_name": "City", "value": ""},  # blank
+        ]
+        result = svc.validate_document(1, fields, "mat_pdf_v1")
+        meta = result["validation_metadata"]
+        assert meta["blank_fields"] == 1
+        # The blank field for "City" (ref="Asansol") should be marked corrected
+        blank_result = next(r for r in result["results"] if r["field_name"] == "City")
+        assert blank_result["corrected"] is True
+        assert blank_result["corrected_to"] == "Asansol"
+
+    def test_validate_document_empty_fields_list(self):
+        svc = self._import()
+        result = svc.validate_document(1, [], "mat_pdf_v1")
+        assert result["validation_metadata"]["total_fields"] == 0
+        assert result["validation_metadata"]["accuracy"] == 0.0
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Train Me endpoint integration tests
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestTrainMeEndpoint:
+    """Integration tests for POST /address-book-live/<doc_id>/train-me."""
+
+    def _create_doc_and_fields(self, app):
+        """Helper: insert a Document + ExtractedFields and return doc.id."""
+        from models import Document, ExtractedField
+        with app.app_context():
+            doc = Document(
+                filename="test.pdf",
+                file_path="/tmp/test.pdf",
+                status="extracted",
+            )
+            db.session.add(doc)
+            db.session.flush()
+            for name, val in [
+                ("Name", "Rahul Misra"),
+                ("City", "Asansol"),
+                ("State", "WB"),
+            ]:
+                f = ExtractedField(
+                    document_id=doc.id,
+                    field_name=name,
+                    value=val,
+                    confidence=1.0,
+                )
+                db.session.add(f)
+            db.session.commit()
+            return doc.id
+
+    def test_train_me_requires_login(self, client, app):
+        doc_id = self._create_doc_and_fields(app)
+        resp = client.post(
+            f"/address-book-live/{doc_id}/train-me",
+            json={"reference_set": "mat_pdf_v1", "fields": []},
+        )
+        # Should redirect to login (302) when not authenticated
+        assert resp.status_code in (302, 401)
+
+    def test_train_me_returns_validation_result(self, client, app):
+        doc_id = self._create_doc_and_fields(app)
+        _login(client, app)
+        payload = {
+            "reference_set": "mat_pdf_v1",
+            "fields": [
+                {"field_id": 1, "field_name": "Name", "value": "Rahul Misra"},
+                {"field_id": 2, "field_name": "City", "value": "Asansol"},
+            ],
+        }
+        resp = client.post(
+            f"/address-book-live/{doc_id}/train-me",
+            json=payload,
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["status"] == "validation_complete"
+        assert "timestamp" in data
+        assert "results" in data
+        assert "validation_metadata" in data
+
+    def test_train_me_invalid_fields_type(self, client, app):
+        doc_id = self._create_doc_and_fields(app)
+        _login(client, app)
+        resp = client.post(
+            f"/address-book-live/{doc_id}/train-me",
+            json={"reference_set": "mat_pdf_v1", "fields": "not-a-list"},
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 400
+
+    def test_train_me_unknown_reference_set(self, client, app):
+        doc_id = self._create_doc_and_fields(app)
+        _login(client, app)
+        resp = client.post(
+            f"/address-book-live/{doc_id}/train-me",
+            json={"reference_set": "no_such_set", "fields": []},
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 400
+
+    def test_train_me_persists_validation_log(self, client, app):
+        doc_id = self._create_doc_and_fields(app)
+        _login(client, app)
+        payload = {
+            "reference_set": "mat_pdf_v1",
+            "fields": [
+                {"field_id": 1, "field_name": "Name", "value": "Rahul Misra"},
+            ],
+        }
+        resp = client.post(
+            f"/address-book-live/{doc_id}/train-me",
+            json=payload,
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 200
+        from models import ValidationLog
+        with app.app_context():
+            log = ValidationLog.query.filter_by(document_id=doc_id).first()
+            assert log is not None
+            assert log.reference_set == "mat_pdf_v1"
+            assert log.total_fields == 1
+
+    def test_train_me_doc_not_found(self, client, app):
+        _login(client, app)
+        resp = client.post(
+            "/address-book-live/9999/train-me",
+            json={"reference_set": "mat_pdf_v1", "fields": []},
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 404
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# New model smoke tests
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestNewModels:
+    """Smoke tests for ValidationLog and FieldCorrection models."""
+
+    def test_validation_log_create(self, app):
+        from models import ValidationLog, Document
+        with app.app_context():
+            doc = Document(filename="x.pdf", file_path="/tmp/x.pdf", status="extracted")
+            db.session.add(doc)
+            db.session.flush()
+            log = ValidationLog(
+                document_id=doc.id,
+                reference_set="mat_pdf_v1",
+                total_fields=9,
+                validated_count=7,
+                accuracy_score=0.78,
+            )
+            db.session.add(log)
+            db.session.commit()
+            fetched = ValidationLog.query.get(log.id)
+            assert fetched is not None
+            assert fetched.reference_set == "mat_pdf_v1"
+            assert fetched.accuracy_score == pytest.approx(0.78)
+
+    def test_field_correction_create(self, app):
+        from models import ValidationLog, FieldCorrection, Document
+        with app.app_context():
+            doc = Document(filename="y.pdf", file_path="/tmp/y.pdf", status="extracted")
+            db.session.add(doc)
+            db.session.flush()
+            log = ValidationLog(
+                document_id=doc.id,
+                reference_set="mat_pdf_v1",
+                total_fields=1,
+                validated_count=0,
+                accuracy_score=0.0,
+            )
+            db.session.add(log)
+            db.session.flush()
+            corr = FieldCorrection(
+                validation_log_id=log.id,
+                field_name="City",
+                original_value="",
+                corrected_value="Asansol",
+                correction_source="train_me",
+            )
+            db.session.add(corr)
+            db.session.commit()
+            fetched = FieldCorrection.query.get(corr.id)
+            assert fetched is not None
+            assert fetched.corrected_value == "Asansol"
+            d = fetched.to_dict()
+            assert d["correction_source"] == "train_me"
+

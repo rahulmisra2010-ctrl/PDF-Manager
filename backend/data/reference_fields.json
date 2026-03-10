@@ -1,0 +1,37 @@
+{
+  "reference_sets": {
+    "mat_pdf_v1": {
+      "description": "Reference address book fields from MAT.pdf",
+      "version": "1.0",
+      "created_at": "2026-03-10T00:00:00Z",
+      "fields": {
+        "Name": "Rahul Misra",
+        "Street Address": "Sumoth pally. Durgamandir",
+        "City": "Asansol",
+        "State": "WB",
+        "Zip Code": "713301",
+        "Home Phone": "",
+        "Cell Phone": "7699888010",
+        "Work Phone": "",
+        "Email": ""
+      }
+    },
+    "rag1": {
+      "description": "Reference address book fields from RAG1",
+      "version": "1.0",
+      "created_at": "2026-03-10T00:00:00Z",
+      "fields": {
+        "Name": "",
+        "Street Address": "",
+        "City": "",
+        "State": "",
+        "Zip Code": "",
+        "Home Phone": "",
+        "Cell Phone": "",
+        "Work Phone": "",
+        "Email": ""
+      }
+    }
+  },
+  "default_reference_set": "mat_pdf_v1"
+}

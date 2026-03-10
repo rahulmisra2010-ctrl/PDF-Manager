@@ -31,7 +31,7 @@ from flask import (
 from flask_login import current_user, login_required
 from werkzeug.utils import secure_filename
 
-from models import AuditLog, Document, ExtractedField, FieldEditHistory, db
+from models import AuditLog, Document, ExtractedField, FieldEditHistory, ValidationLog, FieldCorrection, db
 
 address_book_live_bp = Blueprint(
     "address_book_live",
@@ -264,6 +264,104 @@ def extract(doc_id: int):
         flash(f"Extraction failed: {exc}", "danger")
 
     return redirect(url_for("address_book_live.editor", doc_id=doc_id))
+
+
+@address_book_live_bp.route("/<int:doc_id>/train-me", methods=["POST"])
+@login_required
+def train_me(doc_id: int):
+    """Train Me endpoint: validate extracted fields against reference data.
+
+    Expects JSON body::
+
+        {
+          "reference_set": "mat_pdf_v1",
+          "fields": [
+            {"field_id": 1, "field_name": "Name", "value": "Rahul Misra"},
+            ...
+          ]
+        }
+
+    Returns a structured validation result and persists a ``ValidationLog``
+    (and ``FieldCorrection`` rows) to the database.
+    """
+    Document.query.get_or_404(doc_id)
+    data = request.get_json(silent=True) or {}
+
+    reference_set = data.get("reference_set", "mat_pdf_v1")
+    fields = data.get("fields", [])
+
+    if not isinstance(fields, list):
+        return jsonify({"ok": False, "error": "'fields' must be a list"}), 400
+
+    # ------------------------------------------------------------------
+    # Run validation
+    # ------------------------------------------------------------------
+    try:
+        import json as _json
+        import sys as _sys
+        import os as _os
+        _backend = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "backend")
+        if _backend not in _sys.path:
+            _sys.path.append(_backend)
+        from services.validation_service import validate_document  # type: ignore[import]
+    except ImportError as exc:
+        current_app.logger.exception("Could not import validation_service: %s", exc)
+        return jsonify({"ok": False, "error": "Validation service unavailable"}), 503
+
+    try:
+        result = validate_document(doc_id, fields, reference_set)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        current_app.logger.exception("Validation failed for doc %s: %s", doc_id, exc)
+        return jsonify({"ok": False, "error": "Validation failed"}), 500
+
+    # ------------------------------------------------------------------
+    # Persist ValidationLog and FieldCorrection records
+    # ------------------------------------------------------------------
+    try:
+        meta = result["validation_metadata"]
+        log = ValidationLog(
+            document_id=doc_id,
+            reference_set=reference_set,
+            total_fields=meta["total_fields"],
+            validated_count=meta["validated"],
+            accuracy_score=meta["accuracy"],
+            results_json=_json.dumps(result["results"]),
+            created_by=current_user.id,
+        )
+        db.session.add(log)
+        db.session.flush()  # get log.id before adding corrections
+
+        for r in result["results"]:
+            if r.get("corrected"):
+                correction = FieldCorrection(
+                    validation_log_id=log.id,
+                    field_id=r.get("field_id"),
+                    field_name=r["field_name"],
+                    original_value=r.get("extracted_value", ""),
+                    corrected_value=r.get("corrected_to", ""),
+                    correction_source="train_me",
+                )
+                db.session.add(correction)
+
+        _log(
+            current_user.id,
+            "train_me",
+            "document",
+            str(doc_id),
+            details=f"ref={reference_set} acc={meta['accuracy']:.2f}",
+        )
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception(
+            "Failed to persist validation log for doc %s: %s", doc_id, exc
+        )
+        # Return the validation result even if persistence failed
+        result["_warning"] = "Validation results could not be saved to the database."
+
+    return jsonify(result)
 
 
 @address_book_live_bp.route("/<int:doc_id>/export")
