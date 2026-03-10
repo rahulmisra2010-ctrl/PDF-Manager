@@ -439,32 +439,19 @@ class PDFService:
 
         Args:
             original_path: Path to the original PDF file.
-            fields: Field dicts with optional ``bounding_box`` (nested dict with
-                    x0/y0/x1/y1) or flat ``bbox_x``/``bbox_y``/``bbox_width``/
-                    ``bbox_height`` keys, plus ``page_number``.
+            fields: Field dicts with optional ``bounding_box`` and ``page_number``.
             output: Destination — either a file-system path (str) or a
                     writable binary file-like object (e.g. ``io.BytesIO``).
         """
         doc = fitz.open(original_path)
-        fields_without_bbox: list[dict] = []
 
         for field in fields:
             page_number = field.get("page_number", 1)
             if page_number < 1 or page_number > len(doc):
                 continue
             page = doc[page_number - 1]
-            value = str(field.get("value", ""))
-
-            # Support both nested "bounding_box" dict and flat bbox_x/y/width/height
             bbox = field.get("bounding_box")
-            if bbox is None:
-                bx = field.get("bbox_x")
-                by = field.get("bbox_y")
-                bw = field.get("bbox_width")
-                bh = field.get("bbox_height")
-                if (bx is not None and by is not None
-                        and bw is not None and bh is not None):
-                    bbox = {"x0": bx, "y0": by, "x1": bx + bw, "y1": by + bh}
+            value = str(field.get("value", ""))
 
             if bbox:
                 rect = fitz.Rect(
@@ -478,34 +465,6 @@ class PDFService:
                 page.insert_text(
                     rect.tl, value, fontsize=10, color=(0, 0, 0)
                 )
-            else:
-                fields_without_bbox.append(field)
-
-        # Fallback: append a summary page for fields that have no coordinates
-        if fields_without_bbox:
-            _LEFT_MARGIN = 50
-            _TOP_MARGIN = 50
-            _HEADER_LINE_SPACING = 24
-            _BODY_LINE_SPACING = 16
-            _PAGE_BOTTOM_THRESHOLD = 750
-
-            summary_page = doc.new_page()
-            y = _TOP_MARGIN
-            summary_page.insert_text(
-                (_LEFT_MARGIN, y), "Extracted Field Values", fontsize=14, color=(0, 0, 0)
-            )
-            y += _HEADER_LINE_SPACING
-            for field in fields_without_bbox:
-                name = field.get("field_name", "")
-                val = field.get("value", "")
-                line = f"{name}: {val}"
-                summary_page.insert_text(
-                    (_LEFT_MARGIN, y), line, fontsize=10, color=(0, 0, 0)
-                )
-                y += _BODY_LINE_SPACING
-                if y > _PAGE_BOTTOM_THRESHOLD:
-                    summary_page = doc.new_page()
-                    y = _TOP_MARGIN
 
         doc.save(output)
         doc.close()
