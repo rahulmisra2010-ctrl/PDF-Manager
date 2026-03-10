@@ -320,7 +320,6 @@ def train_me(doc_id: int):
     # Persist ValidationLog and FieldCorrection records
     # ------------------------------------------------------------------
     try:
-        import json as _json
         meta = result["validation_metadata"]
         log = ValidationLog(
             document_id=doc_id,
