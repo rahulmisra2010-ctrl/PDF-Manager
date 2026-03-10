@@ -12,6 +12,7 @@ Models
 * AuditLog         — immutable audit trail for all user actions
 * ValidationLog    — audit trail for Train Me validation runs
 * FieldCorrection  — per-field corrections applied by Train Me
+* TrainingExample  — labeled field values used by TrainingService
 """
 
 from __future__ import annotations
@@ -373,3 +374,45 @@ class FieldCorrection(db.Model):
             f"<FieldCorrection field={self.field_name!r}"
             f" {self.original_value!r} → {self.corrected_value!r}>"
         )
+
+
+# ---------------------------------------------------------------------------
+# TrainingExample
+# ---------------------------------------------------------------------------
+
+class TrainingExample(db.Model):
+    """A labeled field value used by TrainingService to fill blanks and
+    correct incorrect extraction results.
+
+    Each row stores one field_name / field_value pair drawn from a confirmed
+    document.  The TrainingService queries these rows to:
+
+    * detect email-domain patterns across all Email examples
+    * auto-generate missing emails using ``firstname@domain``
+    * fill blank fields using the most recent matching value
+    * correct mismatched values when training data disagrees with RAG output
+    """
+
+    __tablename__ = "training_examples"
+
+    id = db.Column(db.Integer, primary_key=True)
+    document_id = db.Column(
+        db.Integer, db.ForeignKey("documents.id"), nullable=False
+    )
+    field_name = db.Column(db.String(255), nullable=False)
+    field_value = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "document_id": self.document_id,
+            "field_name": self.field_name,
+            "field_value": self.field_value,
+            "created_at": self.created_at.isoformat(),
+            "created_by": self.created_by,
+        }
+
+    def __repr__(self) -> str:
+        return f"<TrainingExample {self.field_name!r}={self.field_value!r}>"

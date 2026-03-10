@@ -102,7 +102,14 @@
 <!-- Extracted fields editor -->
 {% if fields %}
 <div class="card">
-  <div class="card-header fw-semibold">Extracted Fields</div>
+  <div class="card-header d-flex justify-content-between align-items-center fw-semibold">
+    <span>Extracted Fields</span>
+    <button type="button" id="btn-mark-training"
+            class="btn btn-outline-success btn-sm"
+            title="Save current extracted fields as training examples to improve future extractions">
+      <i class="bi bi-mortarboard me-1"></i>Mark as Training Example
+    </button>
+  </div>
   <div class="card-body">
     <form method="POST" action="{{ url_for('pdf.edit', doc_id=doc.id) }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -113,6 +120,10 @@
             {{ field.field_name }}
             {% if field.is_edited %}
               <span class="badge bg-warning text-dark ms-1">edited</span>
+            {% endif %}
+            {% if field.confidence_source in ('training', 'training_generated', 'training_completed') %}
+              <span class="badge bg-success ms-1"
+                    title="Value filled/generated from training data">training</span>
             {% endif %}
           </label>
           <input type="text" class="form-control" name="field_{{ field.id }}"
@@ -131,6 +142,44 @@
     </form>
   </div>
 </div>
+
+<script>
+(function () {
+  const btn = document.getElementById('btn-mark-training');
+  if (!btn) return;
+
+  btn.addEventListener('click', function () {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
+
+    fetch('/api/v1/training/add', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.content || '',
+      },
+      body: JSON.stringify({ document_id: {{ doc.id }} }),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data.ok) {
+        btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Saved (' + data.added + ' fields)';
+        btn.classList.remove('btn-outline-success');
+        btn.classList.add('btn-success');
+      } else {
+        btn.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Error: ' + (data.error || 'unknown');
+        btn.classList.add('btn-danger');
+        btn.disabled = false;
+      }
+    })
+    .catch(function (err) {
+      btn.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Network error';
+      btn.classList.add('btn-danger');
+      btn.disabled = false;
+    });
+  });
+})();
+</script>
 {% else %}
 <div class="alert alert-info">
   No fields extracted yet. Click <strong>Extract Fields</strong> to run OCR and field mapping.
