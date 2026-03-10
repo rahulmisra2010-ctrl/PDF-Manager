@@ -308,12 +308,13 @@ def export(doc_id: int, fmt: str):
             svc._export_as_pdf(doc.file_path, field_dicts, buf)
             buf.seek(0)
             stem = doc.filename.rsplit(".", 1)[0]
-            return send_file(
-                buf,
-                mimetype="application/pdf",
-                as_attachment=True,
-                download_name=f"{stem}_export.pdf",
-            )
+            dest_dir = current_app.config.get("PDF_EXPORT_FOLDER", r"D:\destination_folder")
+            os.makedirs(dest_dir, exist_ok=True)
+            dest_path = os.path.join(dest_dir, secure_filename(f"{stem}_export.pdf"))
+            with open(dest_path, "wb") as fh:
+                fh.write(buf.read())
+            flash(f"PDF exported successfully to {dest_path}", "success")
+            return redirect(url_for("pdf.detail", doc_id=doc_id))
         except Exception as exc:
             current_app.logger.exception(
                 "PDF export failed for doc %s: %s", doc_id, exc

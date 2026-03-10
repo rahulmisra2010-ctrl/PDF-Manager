@@ -90,6 +90,7 @@ def create_app(config: dict | None = None) -> Flask:
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["UPLOAD_FOLDER"] = os.environ.get("UPLOAD_DIR", "uploads")
     app.config["EXPORT_FOLDER"] = os.environ.get("EXPORT_DIR", "exports")
+    app.config["PDF_EXPORT_FOLDER"] = os.environ.get("PDF_EXPORT_DIR", r"D:\destination_folder")
     app.config["MAX_CONTENT_LENGTH"] = (
         int(os.environ.get("MAX_UPLOAD_SIZE_MB", 50)) * 1024 * 1024
     )
