@@ -11,7 +11,7 @@ GET  /pdf/<id>                      — view document detail + fields
 POST /pdf/<id>/edit                 — save edited field values
 POST /pdf/<id>/approve              — mark document approved (Verifier+)
 POST /pdf/<id>/reject               — mark document rejected (Verifier+)
-GET  /pdf/<id>/export/<fmt>         — export fields as csv / xlsx / json
+GET  /pdf/<id>/export/<fmt>         — export fields as csv / xlsx / json / pdf
 GET  /pdf/<id>/serve-pdf            — serve the raw PDF file (for PDF.js)
 GET  /pdf/<id>/extract-overlay      — PDF viewer with editable field overlays
 GET  /pdf/<id>/rag-extract          — split-layout RAG extraction UI
@@ -244,8 +244,8 @@ def reject(doc_id: int):
 @pdf_bp.route("/<int:doc_id>/export/<fmt>")
 @login_required
 def export(doc_id: int, fmt: str):
-    """Export the document's extracted fields as CSV, XLSX, or JSON."""
-    if fmt not in ("csv", "xlsx", "json"):
+    """Export the document's extracted fields as CSV, XLSX, JSON, or PDF."""
+    if fmt not in ("csv", "xlsx", "json", "pdf"):
         abort(400)
 
     doc = Document.query.get_or_404(doc_id)
@@ -273,6 +273,48 @@ def export(doc_id: int, fmt: str):
             as_attachment=True,
             download_name=f"{doc.filename}_fields.csv",
         )
+
+    if fmt == "pdf":
+        svc = _get_pdf_service()
+        if svc is None:
+            flash("PDF service unavailable — cannot export as PDF.", "danger")
+            return redirect(url_for("pdf.detail", doc_id=doc_id))
+        if not os.path.exists(doc.file_path):
+            flash("Export failed: source file not found on disk.", "danger")
+            return redirect(url_for("pdf.detail", doc_id=doc_id))
+
+        field_dicts = [
+            {
+                "field_name": f.field_name,
+                "value": f.value or "",
+                "bbox_x": f.bbox_x,
+                "bbox_y": f.bbox_y,
+                "bbox_width": f.bbox_width,
+                "bbox_height": f.bbox_height,
+                "page_number": f.page_number or 1,
+            }
+            for f in fields
+        ]
+
+        buf = io.BytesIO()
+        try:
+            svc._export_as_pdf(doc.file_path, field_dicts, buf)
+            buf.seek(0)
+            stem = os.path.splitext(doc.filename)[0]
+            _log(current_user.id, "export_pdf", "document", str(doc_id))
+            db.session.commit()
+            return send_file(
+                buf,
+                mimetype="application/pdf",
+                as_attachment=True,
+                download_name=f"{stem}_fields.pdf",
+            )
+        except Exception as exc:
+            current_app.logger.exception(
+                "PDF export failed for doc %s: %s", doc_id, exc
+            )
+            flash("PDF export failed — please try again or contact support.", "danger")
+            return redirect(url_for("pdf.detail", doc_id=doc_id))
 
     # xlsx
     try:
