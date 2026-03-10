@@ -286,11 +286,17 @@ def export_pdf(doc_id: int):
         {
             "field_name": f.field_name,
             "value": f.value or "",
-            "bbox_x": f.bbox_x,
-            "bbox_y": f.bbox_y,
-            "bbox_width": f.bbox_width,
-            "bbox_height": f.bbox_height,
             "page_number": f.page_number or 1,
+            "bounding_box": (
+                {
+                    "x0": f.bbox_x,
+                    "y0": f.bbox_y,
+                    "x1": f.bbox_x + (f.bbox_width or 0),
+                    "y1": f.bbox_y + (f.bbox_height or 0),
+                }
+                if f.bbox_x is not None and f.bbox_y is not None
+                else None
+            ),
         }
         for f in fields
     ]
