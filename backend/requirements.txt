@@ -30,3 +30,9 @@ openpyxl>=3.1.0
 # Utilities
 python-multipart>=0.0.20
 python-dotenv>=1.0.1
+
+# RAG / LangChain / HuggingFace (optional — graceful fallback when unavailable)
+# Uncomment to enable full RAG extraction pipeline:
+# langchain>=0.2.0
+# langchain-community>=0.2.0
+# sentence-transformers>=2.7.0

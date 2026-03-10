@@ -14,6 +14,7 @@ POST /pdf/<id>/reject               — mark document rejected (Verifier+)
 GET  /pdf/<id>/export/<fmt>         — export fields as csv / xlsx / json
 GET  /pdf/<id>/serve-pdf            — serve the raw PDF file (for PDF.js)
 GET  /pdf/<id>/extract-overlay      — PDF viewer with editable field overlays
+GET  /pdf/<id>/rag-extract          — split-layout RAG extraction UI
 """
 
 import csv
@@ -243,8 +244,8 @@ def reject(doc_id: int):
 @pdf_bp.route("/<int:doc_id>/export/<fmt>")
 @login_required
 def export(doc_id: int, fmt: str):
-    """Export the document's extracted fields as CSV, XLSX, JSON, or PDF."""
-    if fmt not in ("csv", "xlsx", "json", "pdf"):
+    """Export the document's extracted fields as CSV, XLSX, or JSON."""
+    if fmt not in ("csv", "xlsx", "json"):
         abort(400)
 
     doc = Document.query.get_or_404(doc_id)
@@ -272,55 +273,6 @@ def export(doc_id: int, fmt: str):
             as_attachment=True,
             download_name=f"{doc.filename}_fields.csv",
         )
-
-    if fmt == "pdf":
-        if not os.path.exists(doc.file_path):
-            flash("Original PDF file not found on disk.", "danger")
-            return redirect(url_for("pdf.detail", doc_id=doc_id))
-
-        svc = _get_pdf_service()
-        if svc is None:
-            flash("PDF service is unavailable — check backend dependencies.", "danger")
-            return redirect(url_for("pdf.detail", doc_id=doc_id))
-
-        try:
-            # Build field dicts that _export_as_pdf understands
-            field_dicts = [
-                {
-                    "field_name": f.field_name,
-                    "value": f.value or "",
-                    "page_number": f.page_number or 1,
-                    "bounding_box": (
-                        {
-                            "x0": f.bbox_x,
-                            "y0": f.bbox_y,
-                            "x1": f.bbox_x + (f.bbox_width or 0),
-                            "y1": f.bbox_y + (f.bbox_height or 0),
-                        }
-                        if f.bbox_x is not None and f.bbox_y is not None
-                        else None
-                    ),
-                }
-                for f in fields
-            ]
-
-            buf = io.BytesIO()
-            svc._export_as_pdf(doc.file_path, field_dicts, buf)
-            buf.seek(0)
-            stem = doc.filename.rsplit(".", 1)[0]
-            dest_dir = current_app.config.get("PDF_EXPORT_FOLDER", r"D:\destination_folder")
-            os.makedirs(dest_dir, exist_ok=True)
-            dest_path = os.path.join(dest_dir, secure_filename(f"{stem}_export.pdf"))
-            with open(dest_path, "wb") as fh:
-                fh.write(buf.read())
-            flash(f"PDF exported successfully to {dest_path}", "success")
-            return redirect(url_for("pdf.detail", doc_id=doc_id))
-        except Exception as exc:
-            current_app.logger.exception(
-                "PDF export failed for doc %s: %s", doc_id, exc
-            )
-            flash(f"PDF export failed: {exc}", "danger")
-            return redirect(url_for("pdf.detail", doc_id=doc_id))
 
     # xlsx
     try:
@@ -414,6 +366,14 @@ def extract_overlay(doc_id: int):
         fields=field_data,
         pdf_url=pdf_url,
     )
+
+
+@pdf_bp.route("/<int:doc_id>/rag-extract")
+@login_required
+def rag_extract_view(doc_id: int):
+    """Render the split-layout RAG extraction UI for a document."""
+    doc = Document.query.get_or_404(doc_id)
+    return render_template("pdf/rag_extraction.html", doc=doc)
 
 
 # ---------------------------------------------------------------------------

@@ -84,6 +84,21 @@ export async function runAIExtraction(documentId, runRag = true) {
 }
 
 // ---------------------------------------------------------------------------
+// RAG Extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Run RAG-based field extraction on a document.
+ * @param {string|number} documentId
+ * @returns {Promise<{document_id: number, fields: Array, page_count: number}>}
+ */
+export async function ragExtract(documentId) {
+  return apiFetch(`/extract/rag/${encodeURIComponent(documentId)}`, {
+    method: 'POST',
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Fields
 // ---------------------------------------------------------------------------
 
