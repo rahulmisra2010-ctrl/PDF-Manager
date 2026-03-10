@@ -56,6 +56,7 @@ models/
 *.log
 *.db
 instance/
+rag_data/
 
 # --- Docker ---
 *.override.yml

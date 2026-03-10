@@ -90,7 +90,6 @@ def create_app(config: dict | None = None) -> Flask:
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["UPLOAD_FOLDER"] = os.environ.get("UPLOAD_DIR", "uploads")
     app.config["EXPORT_FOLDER"] = os.environ.get("EXPORT_DIR", "exports")
-    app.config["PDF_EXPORT_FOLDER"] = os.environ.get("PDF_EXPORT_DIR", r"D:\destination_folder")
     app.config["MAX_CONTENT_LENGTH"] = (
         int(os.environ.get("MAX_UPLOAD_SIZE_MB", 50)) * 1024 * 1024
     )
@@ -126,6 +125,7 @@ def create_app(config: dict | None = None) -> Flask:
     from blueprints.pdf_editor import pdf_editor_bp
     from blueprints.address_book import address_book_bp
     from blueprints.address_book_live import address_book_live_bp
+    from blueprints.rag import rag_bp
 
     app.register_blueprint(auth_bp, url_prefix="/auth")
     app.register_blueprint(pdf_bp, url_prefix="/pdf")
@@ -133,6 +133,7 @@ def create_app(config: dict | None = None) -> Flask:
     app.register_blueprint(pdf_editor_bp, url_prefix="/live-pdf")
     app.register_blueprint(address_book_bp, url_prefix="/address-book")
     app.register_blueprint(address_book_live_bp, url_prefix="/address-book-live")
+    app.register_blueprint(rag_bp)  # url_prefix="/api/v1" is set in the blueprint
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(search_bp, url_prefix="/search")
     app.register_blueprint(users_bp, url_prefix="/users")

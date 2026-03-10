@@ -71,6 +71,8 @@ print()
 print("Sub-commands:")
 print("  demo <pdf_path>  —  run OCR extraction on a single PDF and")
 print("                       print the mapped address-book fields.")
+print("  sample           —  interactively upload and process PDF files")
+print("                       using the full RAG extraction pipeline.")
 print()
 
 # ---------------------------------------------------------------------------
@@ -108,6 +110,28 @@ if len(sys.argv) >= 2 and sys.argv[1] == "demo":
         )
         sys.exit(1)
 
+    sys.exit(0)
+
+# ---------------------------------------------------------------------------
+# 'sample' sub-command — interactive batch PDF upload with RAG extraction
+# ---------------------------------------------------------------------------
+if len(sys.argv) >= 2 and sys.argv[1] == "sample":
+    # Add backend to sys.path so the CLI module and services can be imported
+    if _BACKEND_DIR not in sys.path:
+        sys.path.insert(0, _BACKEND_DIR)
+
+    try:
+        from cli.sample_uploader import SampleUploader  # type: ignore[import]
+    except (ImportError, ModuleNotFoundError) as exc:
+        print(
+            f"Error: Could not import SampleUploader — {exc}\n"
+            "Run:  pip install -r backend/requirements.txt",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    uploader = SampleUploader(backend_dir=_BACKEND_DIR)
+    uploader.run()
     sys.exit(0)
 
 # ---------------------------------------------------------------------------
