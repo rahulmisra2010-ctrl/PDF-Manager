@@ -297,7 +297,9 @@ def export(doc_id: int, fmt: str):
                             "x1": f.bbox_x + f.bbox_width,
                             "y1": f.bbox_y + f.bbox_height,
                         }
-                        if f.bbox_x is not None
+                        if (f.bbox_x is not None and f.bbox_y is not None
+                                and f.bbox_width is not None
+                                and f.bbox_height is not None)
                         else None
                     ),
                 }
