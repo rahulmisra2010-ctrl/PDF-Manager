@@ -453,12 +453,29 @@ class PDFService:
             bbox = field.get("bounding_box")
             value = str(field.get("value", ""))
 
+            # Also support flat bbox_x/bbox_y/bbox_width/bbox_height format
+            if bbox is None and field.get("bbox_x") is not None:
+                bx = field["bbox_x"]
+                by = field["bbox_y"]
+                bw = field.get("bbox_width") or 0
+                bh = field.get("bbox_height") or 0
+                bbox = {
+                    "x0": bx,
+                    "y0": by,
+                    "x1": bx + bw,
+                    "y1": by + bh,
+                }
+
             if bbox:
+                x1 = bbox.get("x1")
+                y1 = bbox.get("y1")
+                if x1 is None or y1 is None:
+                    continue
                 rect = fitz.Rect(
                     bbox.get("x0", 0),
                     bbox.get("y0", 0),
-                    bbox.get("x1", 100),
-                    bbox.get("y1", 20),
+                    x1,
+                    y1,
                 )
                 # White-out original area then write updated value
                 page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1))
