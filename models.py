@@ -10,6 +10,8 @@ Models
 * OCRCharacterData — per-character OCR confidence + bounding boxes
 * RAGEmbedding     — vector embeddings for RAG search
 * AuditLog         — immutable audit trail for all user actions
+* ValidationLog    — audit trail for Train Me validation runs
+* FieldCorrection  — per-field corrections applied by Train Me
 """
 
 from __future__ import annotations
@@ -273,3 +275,101 @@ class AuditLog(db.Model):
 
     def __repr__(self) -> str:
         return f"<AuditLog action={self.action!r} at={self.timestamp}>"
+
+
+# ---------------------------------------------------------------------------
+# ValidationLog
+# ---------------------------------------------------------------------------
+
+class ValidationLog(db.Model):
+    """Audit trail for each Train Me validation run."""
+
+    __tablename__ = "validation_logs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    document_id = db.Column(
+        db.Integer, db.ForeignKey("documents.id"), nullable=False
+    )
+    reference_set = db.Column(db.String(100), nullable=False)
+    validation_timestamp = db.Column(
+        db.DateTime, nullable=False, default=datetime.utcnow
+    )
+    total_fields = db.Column(db.Integer, nullable=False, default=0)
+    validated_count = db.Column(db.Integer, nullable=False, default=0)
+    accuracy_score = db.Column(db.Float, nullable=False, default=0.0)
+    results_json = db.Column(db.Text, nullable=True)  # JSON field-by-field details
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    corrections = db.relationship(
+        "FieldCorrection",
+        backref="validation_log",
+        lazy="dynamic",
+        cascade="all, delete-orphan",
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "document_id": self.document_id,
+            "reference_set": self.reference_set,
+            "validation_timestamp": self.validation_timestamp.isoformat(),
+            "total_fields": self.total_fields,
+            "validated_count": self.validated_count,
+            "accuracy_score": self.accuracy_score,
+            "created_by": self.created_by,
+            "created_at": self.created_at.isoformat(),
+        }
+
+    def __repr__(self) -> str:
+        return (
+            f"<ValidationLog doc={self.document_id} ref={self.reference_set!r}"
+            f" acc={self.accuracy_score:.2f}>"
+        )
+
+
+# ---------------------------------------------------------------------------
+# FieldCorrection
+# ---------------------------------------------------------------------------
+
+class FieldCorrection(db.Model):
+    """Records a single field correction applied during a Train Me run."""
+
+    __tablename__ = "field_corrections"
+
+    CORRECTION_SOURCES = ("train_me", "manual", "rag")
+
+    id = db.Column(db.Integer, primary_key=True)
+    validation_log_id = db.Column(
+        db.Integer, db.ForeignKey("validation_logs.id"), nullable=False
+    )
+    field_id = db.Column(
+        db.Integer, db.ForeignKey("extracted_fields.id"), nullable=True
+    )
+    field_name = db.Column(db.String(100), nullable=False)
+    original_value = db.Column(db.Text, nullable=True)
+    corrected_value = db.Column(db.Text, nullable=True)
+    correction_source = db.Column(
+        db.String(20), nullable=False, default="train_me"
+    )
+    validated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "validation_log_id": self.validation_log_id,
+            "field_id": self.field_id,
+            "field_name": self.field_name,
+            "original_value": self.original_value,
+            "corrected_value": self.corrected_value,
+            "correction_source": self.correction_source,
+            "validated_at": self.validated_at.isoformat(),
+            "created_at": self.created_at.isoformat(),
+        }
+
+    def __repr__(self) -> str:
+        return (
+            f"<FieldCorrection field={self.field_name!r}"
+            f" {self.original_value!r} → {self.corrected_value!r}>"
+        )
