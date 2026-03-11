@@ -682,7 +682,7 @@ class TestTrainingAPI:
             json={"document_id": doc_id},
             headers={"X-CSRFToken": "test"},
         )
-        # Fields is None — endpoint auto-loads from DB, may return 0 added or ok
+        # Fields is None -- endpoint auto-loads from DB, may return 0 added or ok
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["ok"] is True

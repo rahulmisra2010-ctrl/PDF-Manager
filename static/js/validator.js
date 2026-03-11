@@ -268,6 +268,7 @@
         body: JSON.stringify({ selections: selections }),
       })
         .then(function (r) {
+          if (!r.ok) throw new Error("Server returned " + r.status);
           return r.json();
         })
         .then(function (data) {

@@ -16,6 +16,11 @@ Usage::
 from models import FieldCorrection, TrainingExample, db
 
 
+def _score_confidence(count: int, base: float, ceiling: float) -> float:
+    """Compute a confidence score that scales from *base* (rare) toward *ceiling* (frequent)."""
+    return round(min(ceiling, base + (count / max(count + 5, 1)) * (ceiling - base)), 2)
+
+
 def find_best_matches(doc_id: int, blank_fields: list, top_n: int = 3) -> dict:
     """Find best-fit values from training data for blank or suspicious fields.
 
@@ -96,11 +101,9 @@ def find_best_matches(doc_id: int, blank_fields: list, top_n: int = 3) -> dict:
             val = row.val
             if val and val not in seen_values:
                 seen_values.add(val)
-                # Confidence scales from 0.70 (rare) → 0.99 (very frequent)
-                confidence = min(0.99, 0.70 + (row.cnt / max(row.cnt + 5, 1)) * 0.29)
                 field_suggestions.append({
                     "value": val,
-                    "confidence": round(confidence, 2),
+                    "confidence": _score_confidence(row.cnt, base=0.70, ceiling=0.99),
                     "source": "training",
                     "count": row.cnt,
                 })
@@ -132,10 +135,9 @@ def find_best_matches(doc_id: int, blank_fields: list, top_n: int = 3) -> dict:
                 if val and val not in seen_values:
                     seen_values.add(val)
                     # Slightly lower ceiling than training examples
-                    confidence = min(0.89, 0.60 + (row.cnt / max(row.cnt + 5, 1)) * 0.29)
                     field_suggestions.append({
                         "value": val,
-                        "confidence": round(confidence, 2),
+                        "confidence": _score_confidence(row.cnt, base=0.60, ceiling=0.89),
                         "source": "correction",
                         "count": row.cnt,
                     })
