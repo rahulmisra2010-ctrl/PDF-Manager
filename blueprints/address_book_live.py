@@ -9,6 +9,7 @@ GET  /address-book-live/<doc_id>                — live overlay editor interfac
 POST /address-book-live/<doc_id>/update-field   — AJAX: update a single field value
 POST /address-book-live/<doc_id>/save           — save all field changes
 POST /address-book-live/<doc_id>/extract        — re-run OCR field extraction
+GET  /address-book-live/<doc_id>/prefill        — return saved field suggestions
 GET  /address-book-live/<doc_id>/export         — download updated PDF
 """
 
@@ -31,7 +32,7 @@ from flask import (
 from flask_login import current_user, login_required
 from werkzeug.utils import secure_filename
 
-from models import AuditLog, Document, ExtractedField, FieldEditHistory, ValidationLog, FieldCorrection, db
+from models import AuditLog, Document, ExtractedField, FieldEditHistory, ValidationLog, FieldCorrection, TrainingExample, db
 
 address_book_live_bp = Blueprint(
     "address_book_live",
@@ -362,6 +363,86 @@ def train_me(doc_id: int):
         result["_warning"] = "Validation results could not be saved to the database."
 
     return jsonify(result)
+
+
+@address_book_live_bp.route("/<int:doc_id>/prefill")
+@login_required
+def prefill(doc_id: int):
+    """Return saved/most-used field values as pre-fill suggestions.
+
+    Aggregates corrected values from ``FieldCorrection`` (Train Me runs) and
+    confirmed values from ``TrainingExample`` records, returning the most
+    frequently used values for each address-book field.
+
+    Returns JSON::
+
+        {
+          "ok": true,
+          "suggestions": {
+            "Name":  ["Alice Smith", "Bob Jones"],
+            "Email": ["alice@example.com"],
+            ...
+          }
+        }
+    """
+    Document.query.get_or_404(doc_id)  # verify document exists (404 if not)
+
+    MAX_PER_FIELD = 5
+    suggestions: dict = {}
+
+    # --- FieldCorrection records (from Train Me runs) ---
+    correction_rows = (
+        db.session.query(
+            FieldCorrection.field_name,
+            FieldCorrection.corrected_value,
+            db.func.count(FieldCorrection.corrected_value).label("cnt"),
+        )
+        .filter(
+            FieldCorrection.corrected_value.isnot(None),
+            FieldCorrection.corrected_value != "",
+        )
+        .group_by(FieldCorrection.field_name, FieldCorrection.corrected_value)
+        .order_by(db.desc("cnt"))
+        .all()
+    )
+
+    for row in correction_rows:
+        field_name = row.field_name
+        value = row.corrected_value
+        bucket = suggestions.setdefault(field_name, [])
+        if value not in bucket and len(bucket) < MAX_PER_FIELD:
+            bucket.append(value)
+
+    # --- TrainingExample records ---
+    training_rows = (
+        db.session.query(
+            TrainingExample.field_name,
+            db.func.coalesce(TrainingExample.field_value, TrainingExample.correct_value).label("val"),
+            db.func.count(
+                db.func.coalesce(TrainingExample.field_value, TrainingExample.correct_value)
+            ).label("cnt"),
+        )
+        .filter(
+            db.func.coalesce(TrainingExample.field_value, TrainingExample.correct_value).isnot(None),
+            db.func.coalesce(TrainingExample.field_value, TrainingExample.correct_value) != "",
+        )
+        .group_by(
+            TrainingExample.field_name,
+            db.func.coalesce(TrainingExample.field_value, TrainingExample.correct_value),
+        )
+        .order_by(db.desc("cnt"))
+        .all()
+    )
+
+    for row in training_rows:
+        field_name = row.field_name
+        value = row.val
+        if value:
+            bucket = suggestions.setdefault(field_name, [])
+            if value not in bucket and len(bucket) < MAX_PER_FIELD:
+                bucket.append(value)
+
+    return jsonify({"ok": True, "suggestions": suggestions})
 
 
 @address_book_live_bp.route("/<int:doc_id>/export")
