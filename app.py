@@ -136,6 +136,7 @@ def create_app(config: dict | None = None) -> Flask:
     app.register_blueprint(address_book_live_bp, url_prefix="/address-book-live")
     app.register_blueprint(rag_bp)  # url_prefix="/api/v1" is set in the blueprint
     app.register_blueprint(training_bp)  # routes defined per-function
+    app.register_blueprint(training_bp)  # url_prefix="/api/v1" is set in the blueprint
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(search_bp, url_prefix="/search")
     app.register_blueprint(users_bp, url_prefix="/users")

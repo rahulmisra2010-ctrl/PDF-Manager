@@ -387,6 +387,115 @@ class TestTrainingExample:
         from models import TrainingExample, Document
         with app.app_context():
             doc = Document(filename="t.pdf", file_path="/tmp/t.pdf", status="uploaded")
+# TrainingService unit tests
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestTrainingService:
+    """Unit tests for backend/services/training_service.py."""
+
+    def _get_svc(self):
+        import importlib, sys, os
+        backend = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend")
+        if backend not in sys.path:
+            sys.path.insert(0, backend)
+        return importlib.import_module("services.training_service").TrainingService()
+
+    # extract_domain_pattern
+    def test_extract_domain_single(self):
+        svc = self._get_svc()
+        assert svc.extract_domain_pattern(["john@example.com"]) == "example.com"
+
+    def test_extract_domain_majority(self):
+        svc = self._get_svc()
+        emails = ["john@example.com", "jane@example.com", "bob@other.org"]
+        assert svc.extract_domain_pattern(emails) == "example.com"
+
+    def test_extract_domain_empty(self):
+        svc = self._get_svc()
+        assert svc.extract_domain_pattern([]) == ""
+
+    def test_extract_domain_invalid(self):
+        svc = self._get_svc()
+        assert svc.extract_domain_pattern(["notanemail", ""]) == ""
+
+    # generate_email
+    def test_generate_email_full_name(self):
+        svc = self._get_svc()
+        assert svc.generate_email("Rahul Misra", "example.com") == "rahul@example.com"
+
+    def test_generate_email_single_name(self):
+        svc = self._get_svc()
+        assert svc.generate_email("John", "example.com") == "john@example.com"
+
+    def test_generate_email_no_name(self):
+        svc = self._get_svc()
+        assert svc.generate_email("", "example.com") == ""
+
+    def test_generate_email_no_domain(self):
+        svc = self._get_svc()
+        assert svc.generate_email("John Doe", "") == ""
+
+    # fill_blank_fields — email generation
+    def test_fill_blank_email_generated(self):
+        svc = self._get_svc()
+        fields = [
+            {"field_name": "Name",  "field_value": "Rahul Misra", "confidence": 1.0},
+            {"field_name": "Email", "field_value": "",             "confidence": 0.0},
+        ]
+        training = [
+            {"field_name": "Email", "field_value": "john@example.com"},
+            {"field_name": "Email", "field_value": "jane@example.com"},
+        ]
+        result = svc.fill_blank_fields(fields, training)
+        email_field = next(f for f in result if f["field_name"] == "Email")
+        assert email_field["field_value"] == "rahul@example.com"
+        assert email_field["confidence_source"] == "training_generated"
+
+    def test_fill_blank_city_from_training(self):
+        svc = self._get_svc()
+        fields = [
+            {"field_name": "City",  "field_value": "", "confidence": 0.0},
+        ]
+        training = [
+            {"field_name": "City", "field_value": "Asansol"},
+            {"field_name": "City", "field_value": "Asansol"},
+        ]
+        result = svc.fill_blank_fields(fields, training)
+        city = next(f for f in result if f["field_name"] == "City")
+        assert city["field_value"] == "Asansol"
+        assert city["confidence_source"] == "training"
+
+    def test_existing_email_not_overwritten(self):
+        svc = self._get_svc()
+        fields = [
+            {"field_name": "Name",  "field_value": "John Doe",          "confidence": 1.0},
+            {"field_name": "Email", "field_value": "john@custom.org",   "confidence": 0.9},
+        ]
+        training = [
+            {"field_name": "Email", "field_value": "other@example.com"},
+        ]
+        result = svc.fill_blank_fields(fields, training)
+        email_field = next(f for f in result if f["field_name"] == "Email")
+        assert email_field["field_value"] == "john@custom.org"
+
+    def test_no_training_data_unchanged(self):
+        svc = self._get_svc()
+        fields = [{"field_name": "City", "field_value": "", "confidence": 0.0}]
+        result = svc.fill_blank_fields(fields, [])
+        assert result[0]["field_value"] == ""
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# TrainingExample model smoke tests
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestTrainingExampleModel:
+    """Smoke tests for the TrainingExample model."""
+
+    def test_create_training_example(self, app):
+        from models import TrainingExample, Document
+        with app.app_context():
+            doc = Document(filename="t.pdf", file_path="/tmp/t.pdf", status="extracted")
             db.session.add(doc)
             db.session.flush()
             ex = TrainingExample(
@@ -415,6 +524,59 @@ class TestTrainingExample:
 
     def test_add_training_saves_examples(self, client, app):
         doc_id = self._create_doc(app)
+                field_name="Email",
+                field_value="rahul@example.com",
+            )
+            db.session.add(ex)
+            db.session.commit()
+            fetched = TrainingExample.query.get(ex.id)
+            assert fetched is not None
+            assert fetched.field_value == "rahul@example.com"
+            d = fetched.to_dict()
+            assert d["field_name"] == "Email"
+            assert "created_at" in d
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Training API integration tests
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestTrainingAPI:
+    """Integration tests for /api/v1/training/* endpoints."""
+
+    def _create_doc_and_fields(self, app):
+        from models import Document, ExtractedField
+        with app.app_context():
+            doc = Document(filename="tr.pdf", file_path="/tmp/tr.pdf", status="extracted")
+            db.session.add(doc)
+            db.session.flush()
+            for name, val in [("Name", "Rahul Misra"), ("Email", "rahul@example.com")]:
+                db.session.add(ExtractedField(
+                    document_id=doc.id, field_name=name, value=val, confidence=1.0
+                ))
+            db.session.commit()
+            return doc.id
+
+    def test_add_requires_login(self, client, app):
+        doc_id = self._create_doc_and_fields(app)
+        resp = client.post("/api/v1/training/add", json={"document_id": doc_id})
+        assert resp.status_code in (302, 401)
+
+    def test_add_auto_loads_fields(self, client, app):
+        doc_id = self._create_doc_and_fields(app)
+        _login(client, app)
+        resp = client.post(
+            "/api/v1/training/add",
+            json={"document_id": doc_id},
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert data["added"] == 2
+
+    def test_add_with_explicit_fields(self, client, app):
+        doc_id = self._create_doc_and_fields(app)
         _login(client, app)
         resp = client.post(
             "/api/v1/training/add",
@@ -425,6 +587,7 @@ class TestTrainingExample:
                     "City": "Asansol",
                     "State": "WB",
                 },
+                "fields": [{"field_name": "City", "field_value": "Asansol"}],
             },
             headers={"X-CSRFToken": "test"},
         )
@@ -501,6 +664,51 @@ class TestTrainingExample:
         resp = client.post(
             "/api/v1/training/add",
             json={"document_id": doc_id},
+        assert data["added"] == 1
+
+    def test_list_returns_examples(self, client, app):
+        doc_id = self._create_doc_and_fields(app)
+        _login(client, app)
+        client.post(
+            "/api/v1/training/add",
+            json={"document_id": doc_id},
+            headers={"X-CSRFToken": "test"},
+        )
+        resp = client.get("/api/v1/training/list")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert data["count"] >= 2
+
+    def test_delete_example(self, client, app):
+        doc_id = self._create_doc_and_fields(app)
+        _login(client, app)
+        # Add
+        client.post(
+            "/api/v1/training/add",
+            json={"document_id": doc_id},
+            headers={"X-CSRFToken": "test"},
+        )
+        # List to get an ID
+        list_resp = client.get("/api/v1/training/list")
+        examples = list_resp.get_json()["examples"]
+        assert examples
+        ex_id = examples[0]["id"]
+        # Delete
+        resp = client.delete(
+            f"/api/v1/training/{ex_id}",
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert data["deleted_id"] == ex_id
+
+    def test_add_missing_document_id(self, client, app):
+        _login(client, app)
+        resp = client.post(
+            "/api/v1/training/add",
+            json={"fields": []},
             headers={"X-CSRFToken": "test"},
         )
         assert resp.status_code == 400
@@ -510,6 +718,11 @@ class TestTrainingExample:
         resp = client.post(
             "/api/v1/training/add",
             json={"document_id": 9999, "fields": {"Name": "test"}},
+    def test_add_doc_not_found(self, client, app):
+        _login(client, app)
+        resp = client.post(
+            "/api/v1/training/add",
+            json={"document_id": 99999},
             headers={"X-CSRFToken": "test"},
         )
         assert resp.status_code == 404
