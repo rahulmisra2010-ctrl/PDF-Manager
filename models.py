@@ -384,6 +384,17 @@ class FieldCorrection(db.Model):
 class TrainingExample(db.Model):
     """A labeled training example for improving RAG extraction confidence.
 
+    Users upload and manually correct address book PDFs, then mark them as
+    training examples. The RAG extractor uses these examples to boost
+    confidence scores for fields that match training data.
+
+    Each row stores one field_name / field_value pair drawn from a confirmed
+    document. The TrainingService queries these rows to:
+
+    * detect email-domain patterns across all Email examples
+    * auto-generate missing emails using ``firstname@domain``
+    * fill blank fields using the most recent matching value
+    * correct mismatched values when training data disagrees with RAG output
     Each row stores one field_name / field_value pair drawn from a confirmed
     document.  The TrainingService queries these rows to fill blank fields and
     correct incorrect extraction results.
