@@ -3,29 +3,24 @@ blueprints/training.py — Training examples API and UI blueprint.
 
 Routes
 ------
-POST /api/v1/training/add         — save labeled training examples for a document
-GET  /api/v1/training/examples    — list all training examples as JSON
-GET  /training/examples           — HTML view of all training examples
+POST   /api/v1/training/add        — save labeled training examples for a document
+GET    /api/v1/training/examples   — list all training examples as JSON
+GET    /api/v1/training/list       — list all stored training examples (with filters)
+DELETE /api/v1/training/<id>       — remove a single training example
+GET    /training/examples          — HTML view of all training examples
 """
 
 from __future__ import annotations
 
-from flask import Blueprint, current_app, jsonify, redirect, render_template, request, url_for
-blueprints/training.py — Training Examples API blueprint.
-
-Routes
-------
-POST   /api/v1/training/add        — save extracted fields as training examples
-GET    /api/v1/training/list       — list all stored training examples
-DELETE /api/v1/training/<id>       — remove a single training example
-"""
-
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, jsonify, render_template, request
 from flask_login import current_user, login_required
 
 from models import AuditLog, Document, ExtractedField, TrainingExample, db
 
-training_bp = Blueprint("training", __name__)
+# UI blueprint — serves rendered HTML pages (no API prefix)
+training_ui_bp = Blueprint("training_ui", __name__)
+
+# API blueprint — all routes are prefixed with /api/v1
 training_bp = Blueprint("training", __name__, url_prefix="/api/v1")
 
 
@@ -33,7 +28,7 @@ training_bp = Blueprint("training", __name__, url_prefix="/api/v1")
 # POST /api/v1/training/add
 # ---------------------------------------------------------------------------
 
-@training_bp.route("/api/v1/training/add", methods=["POST"])
+@training_bp.route("/training/add", methods=["POST"])
 @login_required
 def add_training():
     """Save labeled training examples for a document.
@@ -60,32 +55,6 @@ def add_training():
     data = request.get_json(silent=True) or {}
     document_id = data.get("document_id")
     fields = data.get("fields")
-@training_bp.route("/training/add", methods=["POST"])
-@login_required
-def add_training():
-    """Mark extracted fields for a document as training examples.
-
-    JSON body::
-
-        {
-          "document_id": 1,
-          "fields": [
-            {"field_name": "Name",  "field_value": "Rahul Misra"},
-            {"field_name": "Email", "field_value": "rahul@example.com"},
-            ...
-          ]
-        }
-
-    Alternatively, omit ``fields`` to auto-load all
-    :class:`~models.ExtractedField` rows for the document.
-
-    Returns::
-
-        {"ok": true, "added": 9, "document_id": 1}
-    """
-    data = request.get_json(silent=True) or {}
-    document_id = data.get("document_id")
-    fields = data.get("fields")  # may be None → auto-load from DB
 
     if not document_id:
         return jsonify({"ok": False, "error": "document_id is required"}), 400
@@ -131,7 +100,7 @@ def add_training():
 # GET /api/v1/training/examples
 # ---------------------------------------------------------------------------
 
-@training_bp.route("/api/v1/training/examples", methods=["GET"])
+@training_bp.route("/training/examples", methods=["GET"])
 @login_required
 def list_examples_json():
     """Return all training examples as JSON."""
@@ -142,78 +111,6 @@ def list_examples_json():
             "examples": [ex.to_dict() for ex in examples],
         }
     )
-
-
-# ---------------------------------------------------------------------------
-# GET /training/examples
-# ---------------------------------------------------------------------------
-
-@training_bp.route("/training/examples")
-@login_required
-def examples_list():
-    """HTML view — display all training examples grouped by document."""
-    examples = (
-        TrainingExample.query
-        .order_by(TrainingExample.document_id, TrainingExample.field_name)
-        .all()
-    )
-
-    # Group by document
-    grouped: dict[int, dict] = {}
-    for ex in examples:
-        doc_id = ex.document_id
-        if doc_id not in grouped:
-            doc = Document.query.get(doc_id)
-            grouped[doc_id] = {
-                "document": doc,
-                "examples": [],
-            }
-        grouped[doc_id]["examples"].append(ex)
-
-    return render_template(
-        "training/examples_list.html",
-        grouped=grouped,
-        total=len(examples),
-    )
-    Document.query.get_or_404(document_id)  # 404 if document not found
-
-    # If caller didn't supply fields, load them from the DB
-    if fields is None:
-        db_fields = ExtractedField.query.filter_by(document_id=document_id).all()
-        fields = [
-            {"field_name": f.field_name, "field_value": f.value or ""}
-            for f in db_fields
-        ]
-
-    if not isinstance(fields, list):
-        return jsonify({"ok": False, "error": "'fields' must be a list"}), 400
-
-    added = 0
-    for item in fields:
-        field_name = (item.get("field_name") or "").strip()
-        field_value = (item.get("field_value") or item.get("value") or "").strip()
-        if not field_name:
-            continue
-        example = TrainingExample(
-            document_id=document_id,
-            field_name=field_name,
-            field_value=field_value,
-            created_by=current_user.id,
-        )
-        db.session.add(example)
-        added += 1
-
-    if added:
-        _log(
-            current_user.id,
-            "training_add",
-            "document",
-            str(document_id),
-            f"added {added} training example(s)",
-        )
-        db.session.commit()
-
-    return jsonify({"ok": True, "added": added, "document_id": document_id})
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +169,39 @@ def delete_training(example_id: int):
 
 
 # ---------------------------------------------------------------------------
+# GET /training/examples  (UI — HTML view)
+# ---------------------------------------------------------------------------
+
+@training_ui_bp.route("/training/examples")
+@login_required
+def examples_list():
+    """HTML view — display all training examples grouped by document."""
+    examples = (
+        TrainingExample.query
+        .order_by(TrainingExample.document_id, TrainingExample.field_name)
+        .all()
+    )
+
+    # Group by document
+    grouped: dict[int, dict] = {}
+    for ex in examples:
+        doc_id = ex.document_id
+        if doc_id not in grouped:
+            doc = Document.query.get(doc_id)
+            grouped[doc_id] = {
+                "document": doc,
+                "examples": [],
+            }
+        grouped[doc_id]["examples"].append(ex)
+
+    return render_template(
+        "training/examples_list.html",
+        grouped=grouped,
+        total=len(examples),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -279,13 +209,13 @@ def _rebuild_rag_embeddings(document_id: int) -> None:
     """Attempt to rebuild RAG embeddings for *document_id* after training data update."""
     try:
         import os
+        import sys
         from services.rag_service import RAGService  # type: ignore[import]
 
         doc = Document.query.get(document_id)
         if doc is None or not doc.file_path:
             return
 
-        import sys
         _root = current_app.root_path
         _backend = os.path.join(_root, "backend")
         if _backend not in sys.path:
