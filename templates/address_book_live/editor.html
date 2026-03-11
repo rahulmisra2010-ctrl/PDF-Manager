@@ -42,6 +42,12 @@
       </button>
     </form>
 
+    {# Pre-fill from Defaults #}
+    <button type="button" id="btn-prefill" class="able-btn able-btn-prefill"
+            title="Auto-fill blank fields with saved/previously used values">
+      <i class="bi bi-lightning-charge-fill me-1"></i>Pre-fill from Defaults
+    </button>
+
     {# Train Me #}
     <button type="button" id="btn-train-me" class="able-btn able-btn-train-me"
             title="Validate extracted fields against reference data">
@@ -173,6 +179,7 @@
   const CSRF_TOKEN   = {{ csrf_token() | tojson }};
   const UPDATE_URL   = {{ url_for('address_book_live.update_field', doc_id=doc.id) | tojson }};
   const TRAIN_ME_URL = {{ url_for('address_book_live.train_me', doc_id=doc.id) | tojson }};
+  const PREFILL_URL  = {{ url_for('address_book_live.prefill', doc_id=doc.id) | tojson }};
 
   /* Default bounding boxes for known address-book fields (fractions 0–1) */
   const DEMO_BOXES = {

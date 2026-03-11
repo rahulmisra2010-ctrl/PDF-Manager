@@ -8,11 +8,12 @@
  *       DOC_ID        {number}  — database id of the document
  *       CSRF_TOKEN    {string}  — Flask-WTF CSRF token
  *       UPDATE_URL    {string}  — POST endpoint for single-field AJAX update
+ *       PREFILL_URL   {string}  — GET endpoint for pre-fill suggestions
  *       DEMO_BOXES    {object}  — default bounding boxes (normalised 0–1)
  *       FIELDS        {Array}   — extracted field data from Flask
  */
 
-/* global pdfjsLib, PDF_URL, DOC_ID, CSRF_TOKEN, UPDATE_URL, DEMO_BOXES, FIELDS */
+/* global pdfjsLib, PDF_URL, DOC_ID, CSRF_TOKEN, UPDATE_URL, PREFILL_URL, DEMO_BOXES, FIELDS */
 
 (function () {
   "use strict";
@@ -55,6 +56,10 @@
   var btnZoomFit  = document.getElementById("btn-zoom-fit");
   var saveForm    = document.getElementById("able-save-form");
   var btnSavePdf  = document.getElementById("btn-save-pdf");
+  var btnPrefill  = document.getElementById("btn-prefill");
+
+  // Pre-fill suggestions cache: { "Name": ["Alice Smith", ...], ... }
+  var prefillSuggestions = {};
 
   // -------------------------------------------------------------------------
   // Utility
@@ -448,7 +453,101 @@
   });
 
   // -------------------------------------------------------------------------
+  // Pre-fill: fetch suggestions from server and run a callback when done
+  // -------------------------------------------------------------------------
+  function loadPrefillSuggestions(callback) {
+    if (typeof PREFILL_URL === "undefined") {
+      if (callback) callback();
+      return;
+    }
+    fetch(PREFILL_URL, {
+      headers: { "X-CSRFToken": CSRF_TOKEN },
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.ok && data.suggestions) {
+          prefillSuggestions = data.suggestions;
+        }
+        if (callback) callback();
+      })
+      .catch(function (err) {
+        console.warn("Could not fetch pre-fill suggestions:", err);
+        if (callback) callback();
+      });
+  }
+
+  // Warm the suggestions cache on page load (silent, no callback needed)
+  function fetchPrefillSuggestions() {
+    loadPrefillSuggestions(null);
+  }
+
+  // -------------------------------------------------------------------------
+  // Pre-fill: populate blank overlay inputs with saved suggestions
+  // -------------------------------------------------------------------------
+  function applyPrefill() {
+    if (!overlay) return;
+
+    var inputs = overlay.querySelectorAll(".able-field-input[data-field-name]");
+    var filledCount = 0;
+
+    inputs.forEach(function (input) {
+      // Only fill blank fields
+      if (input.value && input.value.trim() !== "") return;
+
+      var fieldName = input.dataset.fieldName;
+      var suggestions = prefillSuggestions[fieldName];
+      if (!suggestions || !suggestions.length) return;
+
+      var suggestion = suggestions[0];
+      if (!suggestion) return;
+
+      input.value = suggestion;
+      input.classList.add("able-unsaved", "able-prefilled");
+
+      // Sync the hidden save-form input
+      var fieldId = input.dataset.fieldId;
+      var hidden = document.getElementById("save-field-" + fieldId);
+      if (hidden) hidden.value = suggestion;
+
+      // Remove the animation class after it completes
+      input.addEventListener("animationend", function () {
+        input.classList.remove("able-prefilled");
+      }, { once: true });
+
+      filledCount++;
+    });
+
+    if (filledCount === 0) {
+      setStatus(
+        Object.keys(prefillSuggestions).length === 0
+          ? "No saved defaults found. Use Train Me to save values."
+          : "All fields already filled — no defaults applied."
+      );
+    } else {
+      setStatus(filledCount + " field(s) pre-filled from saved defaults.");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Pre-fill button handler
+  // -------------------------------------------------------------------------
+  if (btnPrefill) {
+    btnPrefill.addEventListener("click", function () {
+      // If suggestions have already been fetched, apply immediately;
+      // otherwise fetch first, then apply.
+      if (Object.keys(prefillSuggestions).length > 0) {
+        applyPrefill();
+      } else {
+        loadPrefillSuggestions(function () {
+          applyPrefill();
+        });
+      }
+    });
+  }
+
+  // -------------------------------------------------------------------------
   // Boot
   // -------------------------------------------------------------------------
+  fetchPrefillSuggestions();
   loadPDF();
 })();
