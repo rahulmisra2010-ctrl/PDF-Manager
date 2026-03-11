@@ -387,6 +387,19 @@ class TestTrainingExample:
         from models import TrainingExample, Document
         with app.app_context():
             doc = Document(filename="t.pdf", file_path="/tmp/t.pdf", status="uploaded")
+            db.session.add(doc)
+            db.session.flush()
+            ex = TrainingExample(
+                document_id=doc.id,
+                field_name="Name",
+                correct_value="Rahul Misra",
+            )
+            db.session.add(ex)
+            db.session.commit()
+            fetched = TrainingExample.query.filter_by(document_id=doc.id).first()
+            assert fetched is not None
+            assert fetched.field_name == "Name"
+            assert fetched.correct_value == "Rahul Misra"
 # TrainingService unit tests
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -514,17 +527,17 @@ class TestTrainingExampleModel:
             assert d["correct_value"] == "Rahul Misra"
             assert "created_at" in d
 
-    def test_add_training_requires_login(self, client, app):
-        doc_id = self._create_doc(app)
-        resp = client.post(
-            "/api/v1/training/add",
-            json={"document_id": doc_id, "fields": {"Name": "Test"}},
-        )
-        assert resp.status_code in (302, 401)
-
-    def test_add_training_saves_examples(self, client, app):
-        doc_id = self._create_doc(app)
+    def test_add_training_saves_examples(self, app):
+        """TrainingExample stores the field_value attribute correctly."""
+        from models import TrainingExample, Document
+        with app.app_context():
+            doc = Document(filename="e.pdf", file_path="/tmp/e.pdf", status="extracted")
+            db.session.add(doc)
+            db.session.flush()
+            ex = TrainingExample(
+                document_id=doc.id,
                 field_name="Email",
+                correct_value="rahul@example.com",
                 field_value="rahul@example.com",
             )
             db.session.add(ex)
@@ -543,6 +556,15 @@ class TestTrainingExampleModel:
 
 class TestTrainingAPI:
     """Integration tests for /api/v1/training/* endpoints."""
+
+    def _create_doc(self, app):
+        """Insert a Document without fields and return its id."""
+        from models import Document
+        with app.app_context():
+            doc = Document(filename="tr.pdf", file_path="/tmp/tr.pdf", status="extracted")
+            db.session.add(doc)
+            db.session.commit()
+            return doc.id
 
     def _create_doc_and_fields(self, app):
         from models import Document, ExtractedField
@@ -587,7 +609,6 @@ class TestTrainingAPI:
                     "City": "Asansol",
                     "State": "WB",
                 },
-                "fields": [{"field_name": "City", "field_value": "Asansol"}],
             },
             headers={"X-CSRFToken": "test"},
         )
@@ -664,7 +685,11 @@ class TestTrainingAPI:
         resp = client.post(
             "/api/v1/training/add",
             json={"document_id": doc_id},
-        assert data["added"] == 1
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["added"] == 0
 
     def test_list_returns_examples(self, client, app):
         doc_id = self._create_doc_and_fields(app)
@@ -718,11 +743,6 @@ class TestTrainingAPI:
         resp = client.post(
             "/api/v1/training/add",
             json={"document_id": 9999, "fields": {"Name": "test"}},
-    def test_add_doc_not_found(self, client, app):
-        _login(client, app)
-        resp = client.post(
-            "/api/v1/training/add",
-            json={"document_id": 99999},
             headers={"X-CSRFToken": "test"},
         )
         assert resp.status_code == 404

@@ -55,10 +55,6 @@ def _get_training_service():
         from services.training_service import TrainingService  # type: ignore[import]
         return TrainingService()
     except Exception:
-        current_app.logger.exception("Failed to initialise TrainingService")
-        from services.training_service import TrainingService  # type: ignore[import]
-        return TrainingService()
-    except Exception:
         current_app.logger.warning("TrainingService unavailable; skipping training intelligence.")
         return None
 
@@ -102,25 +98,6 @@ def rag_extract(doc_id: int):
         current_app.logger.exception("RAG extraction failed for doc %s", doc_id)
         return jsonify({"error": f"RAG extraction failed: {exc}"}), 500
 
-    # Apply training examples to boost confidence scores
-    training_svc = _get_training_service()
-    if training_svc is not None:
-        try:
-            training_examples = [
-                ex.to_dict() for ex in TrainingExample.query.all()
-            ]
-            if training_examples:
-                rag_fields = training_svc.apply_training_to_results(
-                    rag_fields, training_examples
-                )
-                current_app.logger.info(
-                    "RAG: applied %d training example(s) for doc %s",
-                    len(training_examples),
-                    doc_id,
-                )
-        except Exception as exc:
-            current_app.logger.warning(
-                "RAG: failed to apply training examples for doc %s: %s", doc_id, exc
     # Apply training intelligence: fill blank fields and correct incorrect
     # values using patterns learned from stored training examples.
     training_svc = _get_training_service()
