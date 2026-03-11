@@ -1,12 +1,15 @@
 """
 blueprints/training.py — Training examples API and UI blueprint.
 
-Routes
+Routes (api/v1 prefix set on training_bp Blueprint)
 ------
 POST   /api/v1/training/add        — save extracted fields as training examples
 GET    /api/v1/training/list       — list all stored training examples
 GET    /api/v1/training/examples   — list all training examples as JSON
 DELETE /api/v1/training/<id>       — remove a single training example
+
+Routes (no prefix — registered on training_ui_bp Blueprint)
+------
 GET    /training/examples          — HTML view of all training examples
 """
 
@@ -193,18 +196,9 @@ def delete_training(example_id: int):
 
 
 # ---------------------------------------------------------------------------
-# GET /training/examples  (HTML page — note: no /api/v1 prefix here because
-# the blueprint prefix is /api/v1, so /training/examples → /api/v1/training/examples
-# For the bare HTML URL /training/examples, register on the app directly via
-# a second blueprint without prefix, or adjust the URL below)
+# GET /training/examples  (HTML page — served by training_ui_bp without
+# the /api/v1 prefix so that the URL stays at /training/examples)
 # ---------------------------------------------------------------------------
-
-@training_bp.route("/training/examples/html", methods=["GET"])
-@login_required
-def examples_list_html():
-    """HTML view — display all training examples grouped by document (API-prefixed path)."""
-    return _render_examples_list()
-
 
 @training_ui_bp.route("/training/examples", methods=["GET"])
 @login_required
@@ -214,7 +208,7 @@ def examples_list():
 
 
 def _render_examples_list():
-    """Shared helper for both HTML views of training examples."""
+    """Render the training examples HTML page, grouped by document."""
     examples = (
         TrainingExample.query
         .order_by(TrainingExample.document_id, TrainingExample.field_name)

@@ -596,6 +596,8 @@ class TestTrainingAPI:
         data = resp.get_json()
         assert data["ok"] is True
         assert data["document_id"] == doc_id
+        # Only 1 field saved: the duplicate "fields" key means the list format
+        # [{"field_name": "City", ...}] wins in Python dicts (last value).
         assert len(data["saved"]) == 1
 
     def test_add_training_persists_to_db(self, client, app):
