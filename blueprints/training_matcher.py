@@ -78,10 +78,7 @@ def find_suggestions(
         session.query(
             correction_model.field_name,
             correction_model.corrected_value,
-            session.query(correction_model.corrected_value)
-            .group_by(correction_model.corrected_value)
-            .count
-            if False else correction_model.corrected_value,  # placeholder
+            correction_model.created_at,
         )
         .filter(
             correction_model.field_name.in_(field_names),

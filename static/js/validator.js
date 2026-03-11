@@ -34,6 +34,13 @@ function showAlert(message, type = "danger") {
   setTimeout(() => { alertEl.style.display = "none"; }, 5000);
 }
 
+function showAlertNode(node, type = "danger") {
+  alertEl.className = `vld-alert vld-alert-${type}`;
+  alertEl.replaceChildren(node);
+  alertEl.style.display = "block";
+  setTimeout(() => { alertEl.style.display = "none"; }, 5000);
+}
+
 function updatePreview(fieldName, value) {
   const rows = document.querySelectorAll(`.vld-preview-row[data-field="${CSS.escape(fieldName)}"]`);
   rows.forEach(row => {
@@ -239,11 +246,16 @@ btnApply.addEventListener("click", async () => {
     const data = await resp.json();
     if (!data.ok) throw new Error(data.error || "Apply failed");
 
-    showAlert(
-      `${data.updated_fields.length} field(s) updated. ` +
-      `<a href="${data.download_url}" class="vld-alert-link">Download PDF</a>`,
-      "success"
-    );
+    // Build the success message safely (avoid XSS from server-supplied URL)
+    const count = Number(data.updated_fields.length);
+    const alertMsg = document.createElement("span");
+    alertMsg.textContent = `${count} field(s) updated. `;
+    const link = document.createElement("a");
+    link.href = data.download_url;
+    link.className = "vld-alert-link";
+    link.textContent = "Download PDF";
+    alertMsg.appendChild(link);
+    showAlertNode(alertMsg, "success");
   } catch (err) {
     showAlert(`Apply failed: ${err.message}`);
   } finally {

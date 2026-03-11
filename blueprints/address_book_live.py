@@ -623,6 +623,7 @@ def apply_selections(doc_id: int):
 
     updated_fields = []
     for field_name, new_value in selections.items():
+        str_value = str(new_value) if new_value is not None else ""
         field = ExtractedField.query.filter_by(
             document_id=doc_id, field_name=field_name
         ).first()
@@ -631,21 +632,21 @@ def apply_selections(doc_id: int):
             field = ExtractedField(
                 document_id=doc_id,
                 field_name=field_name,
-                value=str(new_value),
+                value=str_value,
                 confidence=1.0,
             )
             db.session.add(field)
-        elif str(new_value) != (field.value or ""):
+        elif str_value != (field.value or ""):
             history = FieldEditHistory(
                 field_id=field.id,
                 old_value=field.value,
-                new_value=str(new_value),
+                new_value=str_value,
                 edited_by=current_user.id,
             )
             db.session.add(history)
             if not field.is_edited:
                 field.original_value = field.value
-            field.value = str(new_value)
+            field.value = str_value
             field.is_edited = True
             field.version += 1
 
