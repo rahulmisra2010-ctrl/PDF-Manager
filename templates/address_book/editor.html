@@ -18,6 +18,21 @@
 }.get(doc.status, 'secondary') %}
 
 {# ─────────────────────────────────────────────────────────────────────────
+   Default / suggested field values shown when extracted value is empty
+───────────────────────────────────────────────────────────────────────── #}
+{% set FIELD_DEFAULTS = {
+  'Name':           'Rahul Misra',
+  'Street Address': 'Sumoth pally. Durgamandir',
+  'City':           'Asansol',
+  'State':          'WB',
+  'Zip Code':       '713301',
+  'Home Phone':     '',
+  'Cell Phone':     '7699888010',
+  'Work Phone':     '',
+  'Email':          ''
+} %}
+
+{# ─────────────────────────────────────────────────────────────────────────
    Top header row
 ───────────────────────────────────────────────────────────────────────── #}
 <div class="abe-header">
@@ -64,11 +79,40 @@
     </form>
     {% endif %}
 
-    {# Export PDF #}
-    <a href="{{ url_for('address_book.export_pdf', doc_id=doc.id) }}"
-       class="abe-btn abe-btn-export" title="Download updated PDF">
-      <i class="bi bi-file-earmark-arrow-down me-1"></i>Export PDF
-    </a>
+    {# Export dropdown — PDF / CSV / XLSX / JSON #}
+    <div class="dropdown d-inline-block">
+      <button type="button" class="abe-btn abe-btn-export dropdown-toggle"
+              data-bs-toggle="dropdown" aria-expanded="false"
+              title="Export document fields">
+        <i class="bi bi-file-earmark-arrow-down me-1"></i>Export
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li>
+          <a class="dropdown-item"
+             href="{{ url_for('address_book.export', doc_id=doc.id, fmt='pdf') }}">
+            <i class="bi bi-file-earmark-pdf me-2 text-danger"></i>PDF
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item"
+             href="{{ url_for('address_book.export', doc_id=doc.id, fmt='csv') }}">
+            <i class="bi bi-file-earmark-spreadsheet me-2 text-success"></i>CSV
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item"
+             href="{{ url_for('address_book.export', doc_id=doc.id, fmt='xlsx') }}">
+            <i class="bi bi-file-earmark-excel me-2 text-success"></i>XLSX
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item"
+             href="{{ url_for('address_book.export', doc_id=doc.id, fmt='json') }}">
+            <i class="bi bi-file-earmark-code me-2 text-primary"></i>JSON
+          </a>
+        </li>
+      </ul>
+    </div>
 
     {# Save All (triggers hidden form) #}
     <button type="button" id="btn-save-all" class="abe-btn abe-btn-save"
@@ -98,36 +142,63 @@
     <div class="abe-form-scroll">
       {% if ordered_fields %}
         {% for field_name, field in ordered_fields %}
+          {# Determine display value: extracted → default → placeholder #}
+          {% set raw_value   = field.value if field and field.value else '' %}
+          {% set display_val = raw_value if raw_value else FIELD_DEFAULTS.get(field_name, '') %}
+          {% set is_required = field_name in ('Name', 'Cell Phone') %}
+
           <div class="abe-field-group">
-            <label class="abe-field-label" for="input-{{ loop.index }}">
+            <label class="abe-field-label">
               {{ field_name }}
+              {% if is_required %}<span class="abe-required-star">*</span>{% endif %}
               {% if field and field.is_edited %}
                 <span class="abe-edited-badge">edited</span>
               {% endif %}
             </label>
-            {% if field %}
-              <input
-                id="input-{{ loop.index }}"
-                type="text"
-                class="abe-field-input {% if field.is_edited %}abe-edited{% endif %}"
-                data-field-id="{{ field.id }}"
-                value="{{ field.value or '' }}"
-                placeholder="—"
-                autocomplete="off"
-              >
-              {% if field.is_edited and field.original_value %}
-                <div class="abe-field-meta">
-                  Original: {{ field.original_value }}
-                </div>
+
+            {# ── View mode (clickable) ──────────────────────────────── #}
+            <div class="abe-field-view"
+                 {% if field %}
+                   data-field-id="{{ field.id }}"
+                 {% else %}
+                   data-no-field="1"
+                 {% endif %}
+                 data-field-name="{{ field_name }}"
+                 title="{% if field %}Click to edit{% else %}Run Extract Fields first{% endif %}">
+              <span class="abe-field-value-text
+                           {% if not raw_value and not display_val %}abe-placeholder{% endif %}"
+                    data-raw-value="{{ raw_value }}">
+                {{ display_val if display_val else '—' }}
+              </span>
+              {% if field %}
+                <i class="bi bi-pencil-fill abe-pencil-icon"></i>
               {% endif %}
-            {% else %}
-              <input
-                id="input-{{ loop.index }}"
-                type="text"
-                class="abe-field-input"
-                placeholder="Not extracted — run Extract Fields"
-                disabled
-              >
+            </div>
+
+            {# ── Edit mode (shown on click, extracted fields only) ───── #}
+            {% if field %}
+            <div class="abe-field-edit-row"
+                 data-field-id="{{ field.id }}"
+                 data-field-name="{{ field_name }}">
+              <input type="text"
+                     class="abe-field-edit-input"
+                     data-field-id="{{ field.id }}"
+                     data-field-name="{{ field_name }}"
+                     value="{{ raw_value }}"
+                     placeholder="{{ FIELD_DEFAULTS.get(field_name, '') }}"
+                     autocomplete="off">
+              <div class="abe-field-edit-actions">
+                <button type="button" class="abe-btn-save-field">Save</button>
+                <button type="button" class="abe-btn-cancel-field">Cancel</button>
+              </div>
+              <div class="abe-field-error"></div>
+            </div>
+            {% endif %}
+
+            {% if field and field.is_edited and field.original_value %}
+              <div class="abe-field-meta">
+                Original: {{ field.original_value }}
+              </div>
             {% endif %}
           </div>
         {% endfor %}
@@ -242,14 +313,19 @@
   {% endfor %}
 </form>
 
+{# Toast container (populated by JavaScript) #}
+<div id="abe-toast-container"></div>
+
 {# ─────────────────────────────────────────────────────────────────────────
    JavaScript globals
 ───────────────────────────────────────────────────────────────────────── #}
 <script>
-  const PDF_URL    = {{ pdf_url | tojson }};
-  const DOC_ID     = {{ doc.id }};
-  const CSRF_TOKEN = {{ csrf_token() | tojson }};
-  const UPDATE_URL = {{ url_for('address_book.update_field', doc_id=doc.id) | tojson }};
+  const PDF_URL      = {{ pdf_url | tojson }};
+  const DOC_ID       = {{ doc.id }};
+  const CSRF_TOKEN   = {{ csrf_token() | tojson }};
+  const UPDATE_URL   = {{ url_for('address_book.update_field', doc_id=doc.id) | tojson }};
+  // Suggested defaults injected from the template so JS does not duplicate them.
+  const FIELD_DEFAULTS = {{ FIELD_DEFAULTS | tojson }};
 </script>
 {% endblock %}
 
@@ -258,3 +334,4 @@
         crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="{{ url_for('static', filename='js/address-book-editor.js') }}"></script>
 {% endblock %}
+

@@ -139,6 +139,12 @@
   letter-spacing: 0.03em;
 }
 
+.abe-required-star {
+  color: #dc3545;
+  margin-left: 0.15rem;
+}
+
+/* Legacy input style (used by hidden save form, extra fields still use inputs) */
 .abe-field-input {
   width: 100%;
   padding: 0.4rem 0.6rem;
@@ -181,6 +187,143 @@
   border-radius: 0.25rem;
   vertical-align: middle;
   margin-left: 0.3rem;
+}
+
+/* --------------------------------------------------------------------------
+   Inline view / edit mode
+   -------------------------------------------------------------------------- */
+
+/* View mode: clickable display row */
+.abe-field-view {
+  display: flex;
+  align-items: center;
+  padding: 0.42rem 0.6rem;
+  font-size: 0.9rem;
+  border: 1px solid transparent;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: #212529;
+  cursor: pointer;
+  transition: background-color 0.22s ease, border-color 0.22s ease,
+              box-shadow 0.22s ease;
+  position: relative;
+  min-height: 2.2rem;
+  user-select: none;
+}
+
+/* Non-editable fields (no DB record) */
+.abe-field-view[data-no-field="1"] {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* Hover highlight & glow */
+.abe-field-view:not([data-no-field]):hover {
+  background-color: #f0f4ff;
+  border-color: #b8d0fb;
+  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.09);
+}
+
+.abe-field-value-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.abe-field-value-text.abe-placeholder {
+  color: #adb5bd;
+  font-style: italic;
+}
+
+/* Pencil icon — hidden until hover */
+.abe-pencil-icon {
+  opacity: 0;
+  margin-left: 0.45rem;
+  color: #6c757d;
+  font-size: 0.72rem;
+  transition: opacity 0.2s ease;
+  flex-shrink: 0;
+}
+
+.abe-field-view:not([data-no-field]):hover .abe-pencil-icon {
+  opacity: 1;
+}
+
+/* Edit mode row */
+.abe-field-edit-row {
+  display: none;
+  flex-direction: column;
+  gap: 0.35rem;
+  animation: abeSlideDown 0.2s ease;
+}
+
+.abe-field-edit-row.abe-active {
+  display: flex;
+}
+
+@keyframes abeSlideDown {
+  from { opacity: 0; transform: translateY(-5px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.abe-field-edit-input {
+  width: 100%;
+  padding: 0.42rem 0.6rem;
+  font-size: 0.9rem;
+  border: 1.5px solid #0d6efd;
+  border-radius: 0.375rem;
+  background: #fff;
+  color: #212529;
+  box-shadow: 0 0 0 0.18rem rgba(13, 110, 253, 0.2);
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.abe-field-edit-input.abe-invalid {
+  border-color: #dc3545;
+  box-shadow: 0 0 0 0.18rem rgba(220, 53, 69, 0.2);
+}
+
+.abe-field-edit-actions {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.abe-btn-save-field {
+  background: #0d6efd;
+  color: #fff;
+  border: none;
+  border-radius: 0.3rem;
+  padding: 0.22rem 0.65rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-weight: 500;
+}
+.abe-btn-save-field:hover { background: #0b5ed7; }
+
+.abe-btn-cancel-field {
+  background: transparent;
+  color: #6c757d;
+  border: 1px solid #ced4da;
+  border-radius: 0.3rem;
+  padding: 0.22rem 0.65rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-weight: 500;
+}
+.abe-btn-cancel-field:hover { background: #f8f9fa; }
+
+.abe-field-error {
+  font-size: 0.72rem;
+  color: #dc3545;
+  display: none;
+}
+.abe-field-error.abe-visible {
+  display: block;
 }
 
 /* --------------------------------------------------------------------------
@@ -300,6 +443,49 @@
 .abe-no-pdf i {
   font-size: 3rem;
   color: #dee2e6;
+}
+
+/* --------------------------------------------------------------------------
+   Toast notifications
+   -------------------------------------------------------------------------- */
+#abe-toast-container {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  pointer-events: none;
+}
+
+.abe-toast {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border-radius: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+  pointer-events: auto;
+  animation: abeToastIn 0.25s ease;
+  max-width: 320px;
+}
+
+.abe-toast-success { background: #198754; }
+.abe-toast-error   { background: #dc3545; }
+.abe-toast-info    { background: #0d6efd; }
+
+@keyframes abeToastIn {
+  from { opacity: 0; transform: translateX(22px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes abeToastOut {
+  from { opacity: 1; transform: translateX(0); }
+  to   { opacity: 0; transform: translateX(22px); }
 }
 
 /* --------------------------------------------------------------------------
