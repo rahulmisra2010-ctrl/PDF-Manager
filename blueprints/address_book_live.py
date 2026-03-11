@@ -33,6 +33,8 @@ from flask_login import current_user, login_required
 from werkzeug.utils import secure_filename
 
 from models import AuditLog, Document, ExtractedField, FieldEditHistory, ValidationLog, FieldCorrection, TrainingExample, db
+from blueprints.validation import validate_fields_data
+from blueprints.training_matcher import find_best_matches
 
 address_book_live_bp = Blueprint(
     "address_book_live",
@@ -500,6 +502,137 @@ def export_pdf(doc_id: int):
         )
         flash(f"PDF export failed: {exc}", "danger")
         return redirect(url_for("address_book_live.editor", doc_id=doc_id))
+
+
+@address_book_live_bp.route("/<int:doc_id>/validate-and-suggest")
+@login_required
+def validate_and_suggest(doc_id: int):
+    """Complete pipeline: validate fields → find training-data suggestions.
+
+    Step 1 — validates extracted fields (blank, wrong format, low confidence).
+    Step 2 — queries training data for top suggestions on problem fields.
+
+    Returns JSON::
+
+        {
+            "ok": true,
+            "doc_id": <int>,
+            "extracted": [...],
+            "issues": [...],
+            "fields": {...},
+            "blank_fields": [...],
+            "suggestions": {"Name": [{"value": ..., "confidence": ..., ...}], ...}
+        }
+    """
+    Document.query.get_or_404(doc_id)
+    db_fields = ExtractedField.query.filter_by(document_id=doc_id).all()
+
+    field_dicts = [
+        {
+            "field_id": f.id,
+            "field_name": f.field_name,
+            "value": f.value or "",
+            "confidence": f.confidence,
+        }
+        for f in db_fields
+    ]
+
+    # Step 1: Validate
+    validation_result = validate_fields_data(field_dicts)
+
+    # Step 2: Collect field names that need suggestions
+    problem_fields = list(validation_result["blank_fields"])
+    for issue in validation_result["issues"]:
+        fn = issue["field_name"]
+        if issue["issue_type"] in ("invalid_format", "low_confidence") and fn not in problem_fields:
+            problem_fields.append(fn)
+
+    suggestions = find_best_matches(doc_id, problem_fields)
+
+    return jsonify({
+        "ok": True,
+        "doc_id": doc_id,
+        "extracted": field_dicts,
+        "issues": validation_result["issues"],
+        "fields": validation_result["fields"],
+        "blank_fields": validation_result["blank_fields"],
+        "suggestions": suggestions,
+    })
+
+
+@address_book_live_bp.route("/<int:doc_id>/apply-selections", methods=["POST"])
+@login_required
+def apply_selections(doc_id: int):
+    """Apply user-chosen values to document fields.
+
+    Expects JSON body::
+
+        {"selections": {"Name": "John Smith", "Email": "john@example.com"}}
+
+    Returns::
+
+        {"ok": true, "applied": {"Name": "John Smith", ...}, "updated_count": 2}
+    """
+    Document.query.get_or_404(doc_id)
+    data = request.get_json(silent=True) or {}
+    selections = data.get("selections", {})
+
+    if not selections:
+        return jsonify({"ok": False, "error": "No selections provided"}), 400
+
+    updated: dict = {}
+    for field_name, new_value in selections.items():
+        field = ExtractedField.query.filter_by(
+            document_id=doc_id,
+            field_name=field_name,
+        ).first()
+
+        if field and str(new_value) != (field.value or ""):
+            history = FieldEditHistory(
+                field_id=field.id,
+                old_value=field.value,
+                new_value=str(new_value),
+                edited_by=current_user.id,
+            )
+            db.session.add(history)
+            if not field.is_edited:
+                field.original_value = field.value
+            field.value = str(new_value)
+            field.is_edited = True
+            field.version += 1
+            updated[field_name] = new_value
+
+    if updated:
+        _log(
+            current_user.id,
+            "apply_selections",
+            "document",
+            str(doc_id),
+            details=f"Applied {len(updated)} field selection(s) from validator",
+        )
+        db.session.commit()
+
+    return jsonify({
+        "ok": True,
+        "applied": updated,
+        "updated_count": len(updated),
+    })
+
+
+@address_book_live_bp.route("/<int:doc_id>/validator")
+@login_required
+def validator_page(doc_id: int):
+    """Render the smart field validator / suggestion UI for *doc_id*."""
+    doc = Document.query.get_or_404(doc_id)
+    return render_template(
+        "validator.html",
+        doc=doc,
+        validate_url=url_for("address_book_live.validate_and_suggest", doc_id=doc_id),
+        apply_url=url_for("address_book_live.apply_selections", doc_id=doc_id),
+        export_url=url_for("address_book_live.export_pdf", doc_id=doc_id),
+        editor_url=url_for("address_book_live.editor", doc_id=doc_id),
+        csrf_token=current_app.jinja_env.globals["csrf_token"](),
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -121,19 +121,7 @@ def rag_extract(doc_id: int):
         except Exception as exc:
             current_app.logger.warning(
                 "RAG: failed to apply training examples for doc %s: %s", doc_id, exc
-    # Apply training intelligence: fill blank fields and correct incorrect
-    # values using patterns learned from stored training examples.
-    training_svc = _get_training_service()
-    if training_svc is not None:
-        try:
-            rag_fields = training_svc.apply_training(rag_fields)
-        except Exception as exc:
-            current_app.logger.warning(
-                "TrainingService.apply_training failed for doc %s (%s); "
-                "using raw RAG results.",
-                doc_id, exc,
             )
-
     # Persist results — remove old fields, insert fresh ones
     ExtractedField.query.filter_by(document_id=doc_id).delete()
     saved: list[dict] = []
