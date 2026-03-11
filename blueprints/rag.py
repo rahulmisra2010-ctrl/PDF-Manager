@@ -121,7 +121,7 @@ def rag_extract(doc_id: int):
         except Exception as exc:
             current_app.logger.warning(
                 "RAG: failed to apply training examples for doc %s: %s", doc_id, exc
-    # Apply training intelligence: fill blank fields and correct incorrect
+            )
     # values using patterns learned from stored training examples.
     training_svc = _get_training_service()
     if training_svc is not None:
