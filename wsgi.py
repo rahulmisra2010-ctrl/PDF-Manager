@@ -1,8 +1,5 @@
 import os
-from your_flask_app import create_app
-
-# Set the environment variable for Flask
-os.environ['FLASK_ENV'] = 'production'
+from app import create_app
 
 app = create_app()
 
