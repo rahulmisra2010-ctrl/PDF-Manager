@@ -415,7 +415,8 @@ def extract_overlay(doc_id: int):
 def rag_extract_view(doc_id: int):
     """Render the split-layout RAG extraction UI for a document."""
     doc = Document.query.get_or_404(doc_id)
-    return render_template("pdf/rag_extraction.html", doc=doc)
+    pdf_url = url_for("pdf.serve_pdf", doc_id=doc_id)
+    return render_template("pdf/rag_extraction.html", doc=doc, pdf_url=pdf_url)
 
 
 # ---------------------------------------------------------------------------
