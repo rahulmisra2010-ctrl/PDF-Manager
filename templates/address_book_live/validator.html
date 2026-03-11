@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Field Validator — {{ doc.filename }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/address-book-live-editor.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/validator.css') }}">
+{% endblock %}
+
+{% block content %}
+{# ─────────────────────────────────────────────────────────────────────────
+   Top header bar
+───────────────────────────────────────────────────────────────────────── #}
+{% set status_cls = {
+  'uploaded':  'secondary',
+  'extracted': 'info',
+  'edited':    'warning',
+  'approved':  'success',
+  'rejected':  'danger'
+}.get(doc.status, 'secondary') %}
+
+<div class="able-header">
+  <div class="able-title">
+    <i class="bi bi-shield-check text-primary"></i>
+    <span class="able-filename">{{ doc.filename }}</span>
+    <span class="badge bg-{{ status_cls }} ms-2">{{ doc.status }}</span>
+    <span class="able-page-count">Field Validator</span>
+  </div>
+  <div class="able-actions">
+    <a href="{{ editor_url }}" class="able-btn able-btn-secondary">
+      <i class="bi bi-arrow-left me-1"></i>Back to Editor
+    </a>
+    <a href="{{ export_url }}" class="able-btn able-btn-export" id="btn-export-pdf">
+      <i class="bi bi-file-earmark-arrow-down me-1"></i>Export PDF
+    </a>
+  </div>
+</div>
+
+{# ─────────────────────────────────────────────────────────────────────────
+   Validator panel
+───────────────────────────────────────────────────────────────────────── #}
+<div id="validator-loading" class="vld-loading">
+  <div class="vld-spinner"></div>
+  <p>Analysing fields and loading suggestions…</p>
+</div>
+
+<div id="validator-panel" class="vld-panel" style="display:none">
+
+  {# Summary row #}
+  <div id="vld-summary" class="vld-summary"></div>
+
+  {# Fields with issues — injected by JS #}
+  <div id="vld-issues-section" style="display:none">
+    <h5 class="vld-section-title">
+      <i class="bi bi-exclamation-triangle-fill text-warning me-2"></i>
+      Fields Needing Attention
+    </h5>
+    <p class="vld-hint">
+      Select the best value for each field below, or type a custom value.
+      Click <strong>Apply Selections</strong> when you are done.
+    </p>
+    <div id="vld-issues-list"></div>
+
+    <div class="vld-apply-bar">
+      <button id="btn-apply" class="able-btn able-btn-success">
+        <i class="bi bi-check2-all me-1"></i>Apply Selections
+      </button>
+      <span id="vld-apply-status" class="vld-apply-status"></span>
+    </div>
+  </div>
+
+  {# All-fields table #}
+  <h5 class="vld-section-title mt-3">
+    <i class="bi bi-table me-2"></i>All Extracted Fields
+  </h5>
+  <table class="vld-fields-table">
+    <thead>
+      <tr>
+        <th>Field</th>
+        <th>Current Value</th>
+        <th>Confidence</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody id="vld-fields-tbody"></tbody>
+  </table>
+</div>
+
+{# ─────────────────────────────────────────────────────────────────────────
+   JavaScript globals
+───────────────────────────────────────────────────────────────────────── #}
+<script>
+  const VALIDATE_URL = {{ validate_url | tojson }};
+  const APPLY_URL    = {{ apply_url    | tojson }};
+  const CSRF_TOKEN   = {{ csrf_token   | tojson }};
+  const EDITOR_URL   = {{ editor_url   | tojson }};
+</script>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/validator.js') }}"></script>
+{% endblock %}

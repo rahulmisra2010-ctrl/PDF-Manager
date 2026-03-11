@@ -79,6 +79,7 @@
 .able-btn-save      { background: #0a3d62; color: #fff; }
 .able-btn-export    { background: #6f42c1; color: #fff; }
 .able-btn-prefill   { background: #fd7e14; color: #fff; }
+.able-btn-validate  { background: #0f9d58; color: #fff; }
 
 /* --------------------------------------------------------------------------
    Pre-fill highlight animation — briefly flashes newly populated inputs

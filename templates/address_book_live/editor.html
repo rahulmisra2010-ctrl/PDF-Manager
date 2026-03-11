@@ -48,6 +48,13 @@
       <i class="bi bi-lightning-charge-fill me-1"></i>Pre-fill from Defaults
     </button>
 
+    {# Validate & Suggest #}
+    <a href="{{ url_for('address_book_live.validator_page', doc_id=doc.id) }}"
+       class="able-btn able-btn-validate"
+       title="Validate fields and get smart suggestions from training data">
+      <i class="bi bi-shield-check me-1"></i>Validate &amp; Suggest
+    </a>
+
     {# Train Me #}
     <button type="button" id="btn-train-me" class="able-btn able-btn-train-me"
             title="Validate extracted fields against reference data">
