@@ -79,6 +79,7 @@ def add_training():
                 field_name=str(field_name).strip(),
                 correct_value=correct_value_str,
                 field_value=correct_value_str,
+                created_by=current_user.id,
             )
             db.session.add(ex)
             saved.append({"field_name": ex.field_name, "correct_value": ex.correct_value})
