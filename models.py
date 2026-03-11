@@ -395,6 +395,9 @@ class TrainingExample(db.Model):
     * auto-generate missing emails using ``firstname@domain``
     * fill blank fields using the most recent matching value
     * correct mismatched values when training data disagrees with RAG output
+    Each row stores one field_name / field_value pair drawn from a confirmed
+    document.  The TrainingService queries these rows to fill blank fields and
+    correct incorrect extraction results.
     """
 
     __tablename__ = "training_examples"
