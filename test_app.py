@@ -387,11 +387,26 @@ class TestTrainingExample:
         from models import TrainingExample, Document
         with app.app_context():
             doc = Document(filename="t.pdf", file_path="/tmp/t.pdf", status="uploaded")
-# TrainingService unit tests
+            db.session.add(doc)
+            db.session.flush()
+            ex = TrainingExample(
+                document_id=doc.id,
+                field_name="Name",
+                correct_value="Rahul Misra",
+            )
+            db.session.add(ex)
+            db.session.commit()
+            fetched = TrainingExample.query.filter_by(document_id=doc.id).first()
+            assert fetched is not None
+            assert fetched.field_name == "Name"
+            assert fetched.correct_value == "Rahul Misra"
+
+
+# TrainingService unit tests (fill_blank_fields / email generation)
 # ─────────────────────────────────────────────────────────────────────────
 
-class TestTrainingService:
-    """Unit tests for backend/services/training_service.py."""
+class TestTrainingServiceFillBlank:
+    """Unit tests for TrainingService fill_blank_fields and email helpers."""
 
     def _get_svc(self):
         import importlib, sys, os
@@ -514,28 +529,6 @@ class TestTrainingExampleModel:
             assert d["correct_value"] == "Rahul Misra"
             assert "created_at" in d
 
-    def test_add_training_requires_login(self, client, app):
-        doc_id = self._create_doc(app)
-        resp = client.post(
-            "/api/v1/training/add",
-            json={"document_id": doc_id, "fields": {"Name": "Test"}},
-        )
-        assert resp.status_code in (302, 401)
-
-    def test_add_training_saves_examples(self, client, app):
-        doc_id = self._create_doc(app)
-                field_name="Email",
-                field_value="rahul@example.com",
-            )
-            db.session.add(ex)
-            db.session.commit()
-            fetched = TrainingExample.query.get(ex.id)
-            assert fetched is not None
-            assert fetched.field_value == "rahul@example.com"
-            d = fetched.to_dict()
-            assert d["field_name"] == "Email"
-            assert "created_at" in d
-
 
 # ─────────────────────────────────────────────────────────────────────────
 # Training API integration tests
@@ -554,6 +547,14 @@ class TestTrainingAPI:
                 db.session.add(ExtractedField(
                     document_id=doc.id, field_name=name, value=val, confidence=1.0
                 ))
+            db.session.commit()
+            return doc.id
+
+    def _create_doc(self, app):
+        from models import Document
+        with app.app_context():
+            doc = Document(filename="train.pdf", file_path="/tmp/train.pdf", status="extracted")
+            db.session.add(doc)
             db.session.commit()
             return doc.id
 
@@ -595,7 +596,7 @@ class TestTrainingAPI:
         data = resp.get_json()
         assert data["ok"] is True
         assert data["document_id"] == doc_id
-        assert len(data["saved"]) == 3
+        assert len(data["saved"]) == 1
 
     def test_add_training_persists_to_db(self, client, app):
         doc_id = self._create_doc(app)
@@ -661,10 +662,15 @@ class TestTrainingAPI:
     def test_add_training_missing_fields(self, client, app):
         doc_id = self._create_doc(app)
         _login(client, app)
+        # No fields supplied and doc has no extracted fields → added == 0
         resp = client.post(
             "/api/v1/training/add",
             json={"document_id": doc_id},
-        assert data["added"] == 1
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["added"] == 0
 
     def test_list_returns_examples(self, client, app):
         doc_id = self._create_doc_and_fields(app)
@@ -718,6 +724,10 @@ class TestTrainingAPI:
         resp = client.post(
             "/api/v1/training/add",
             json={"document_id": 9999, "fields": {"Name": "test"}},
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 404
+
     def test_add_doc_not_found(self, client, app):
         _login(client, app)
         resp = client.post(
@@ -845,4 +855,105 @@ class TestTrainingService:
         )
         assert used_empty is True
         assert value_empty == "Rahul Misra"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Pre-fill / Get Defaults endpoint tests
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestPrefillEndpoint:
+    """Integration tests for the /address-book-live/<doc_id>/prefill and
+    /address-book-live/<doc_id>/get-defaults endpoints."""
+
+    def _create_doc(self, app):
+        from models import Document
+        with app.app_context():
+            doc = Document(filename="pf.pdf", file_path="/tmp/pf.pdf", status="extracted")
+            db.session.add(doc)
+            db.session.commit()
+            return doc.id
+
+    def _create_corrections(self, app, doc_id):
+        """Seed FieldCorrection rows that the prefill endpoint aggregates."""
+        from models import ValidationLog, FieldCorrection
+        with app.app_context():
+            log = ValidationLog(
+                document_id=doc_id,
+                reference_set="mat_pdf_v1",
+                total_fields=1,
+                validated_count=1,
+                accuracy_score=1.0,
+            )
+            db.session.add(log)
+            db.session.flush()
+            db.session.add(FieldCorrection(
+                validation_log_id=log.id,
+                field_name="Name",
+                original_value="",
+                corrected_value="Rahul Misra",
+                correction_source="train_me",
+            ))
+            db.session.commit()
+
+    def test_prefill_requires_login(self, client, app):
+        doc_id = self._create_doc(app)
+        resp = client.get(f"/address-book-live/{doc_id}/prefill")
+        assert resp.status_code in (302, 401)
+
+    def test_prefill_doc_not_found(self, client, app):
+        _login(client, app)
+        resp = client.get("/address-book-live/9999/prefill")
+        assert resp.status_code == 404
+
+    def test_prefill_returns_ok_with_no_data(self, client, app):
+        doc_id = self._create_doc(app)
+        _login(client, app)
+        resp = client.get(f"/address-book-live/{doc_id}/prefill")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert "suggestions" in data
+        assert isinstance(data["suggestions"], dict)
+
+    def test_prefill_returns_field_corrections(self, client, app):
+        doc_id = self._create_doc(app)
+        self._create_corrections(app, doc_id)
+        _login(client, app)
+        resp = client.get(f"/address-book-live/{doc_id}/prefill")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert "Name" in data["suggestions"]
+        assert "Rahul Misra" in data["suggestions"]["Name"]
+
+    def test_get_defaults_requires_login(self, client, app):
+        doc_id = self._create_doc(app)
+        resp = client.get(f"/address-book-live/{doc_id}/get-defaults")
+        assert resp.status_code in (302, 401)
+
+    def test_get_defaults_doc_not_found(self, client, app):
+        _login(client, app)
+        resp = client.get("/address-book-live/9999/get-defaults")
+        assert resp.status_code == 404
+
+    def test_get_defaults_returns_ok_with_no_data(self, client, app):
+        doc_id = self._create_doc(app)
+        _login(client, app)
+        resp = client.get(f"/address-book-live/{doc_id}/get-defaults")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert "suggestions" in data
+
+    def test_get_defaults_matches_prefill(self, client, app):
+        """get-defaults and prefill should return identical responses."""
+        doc_id = self._create_doc(app)
+        self._create_corrections(app, doc_id)
+        _login(client, app)
+        prefill_resp = client.get(f"/address-book-live/{doc_id}/prefill")
+        defaults_resp = client.get(f"/address-book-live/{doc_id}/get-defaults")
+        assert prefill_resp.status_code == 200
+        assert defaults_resp.status_code == 200
+        assert prefill_resp.get_json() == defaults_resp.get_json()
+
 

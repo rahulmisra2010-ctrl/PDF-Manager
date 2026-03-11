@@ -66,8 +66,8 @@
           </a>
         </li>
         <li class="nav-item">
-          <a class="nav-link {% if request.blueprint == 'training' %}active{% endif %}"
-             href="{{ url_for('training.examples_list') }}">
+          <a class="nav-link {% if request.blueprint in ('training', 'training_ui') %}active{% endif %}"
+             href="{{ url_for('training_ui.examples_list') }}">
             <i class="bi bi-mortarboard me-2"></i>Training Data
             {% if training_examples_count %}
             <span class="badge bg-primary ms-1">{{ training_examples_count }}</span>

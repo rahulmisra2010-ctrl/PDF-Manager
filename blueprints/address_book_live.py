@@ -365,6 +365,28 @@ def train_me(doc_id: int):
     return jsonify(result)
 
 
+@address_book_live_bp.route("/<int:doc_id>/get-defaults")
+@login_required
+def get_defaults(doc_id: int):
+    """Return most-used field values as pre-fill suggestions.
+
+    Alias for the ``prefill`` endpoint, satisfying the ``/get_defaults``
+    interface described in the feature specification.
+
+    Returns JSON::
+
+        {
+          "ok": true,
+          "suggestions": {
+            "Name":  ["Alice Smith", "Bob Jones"],
+            "Email": ["alice@example.com"],
+            ...
+          }
+        }
+    """
+    return prefill(doc_id)
+
+
 @address_book_live_bp.route("/<int:doc_id>/prefill")
 @login_required
 def prefill(doc_id: int):
