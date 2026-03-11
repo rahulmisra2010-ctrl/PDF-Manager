@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Validate & Suggest — {{ doc.filename }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/validator.css') }}">
+{% endblock %}
+
+{% block content %}
+{# ──────────────────────────────────────────────────────────────
+   Page header
+────────────────────────────────────────────────────────────── #}
+<div class="vld-header">
+  <div class="vld-title">
+    <i class="bi bi-shield-check text-success"></i>
+    <span>Validate &amp; Suggest</span>
+    <span class="vld-filename">{{ doc.filename }}</span>
+  </div>
+  <div class="vld-header-actions">
+    <button id="btn-run-validate" class="vld-btn vld-btn-primary">
+      <i class="bi bi-play-fill me-1"></i>Run Validation
+    </button>
+    <a href="{{ url_for('address_book_live.editor', doc_id=doc.id) }}"
+       class="vld-btn vld-btn-secondary">
+      <i class="bi bi-arrow-left me-1"></i>Back to Editor
+    </a>
+  </div>
+</div>
+
+{# ──────────────────────────────────────────────────────────────
+   Loading spinner (hidden initially)
+────────────────────────────────────────────────────────────── #}
+<div id="vld-loading" class="vld-loading" style="display:none">
+  <div class="vld-spinner"></div>
+  <span>Analyzing fields…</span>
+</div>
+
+{# ──────────────────────────────────────────────────────────────
+   Summary bar (hidden until run)
+────────────────────────────────────────────────────────────── #}
+<div id="vld-summary" class="vld-summary" style="display:none">
+  <span id="vld-summary-text"></span>
+</div>
+
+{# ──────────────────────────────────────────────────────────────
+   Main two-column layout: issues + preview
+────────────────────────────────────────────────────────────── #}
+<div class="vld-layout">
+
+  {# Left panel: field issues + suggestions #}
+  <div class="vld-panel vld-panel-issues">
+    <h2 class="vld-panel-title">
+      <i class="bi bi-exclamation-triangle me-1"></i>Issues &amp; Suggestions
+    </h2>
+    <div id="vld-issues-list" class="vld-issues-list">
+      <p class="vld-placeholder">Click <strong>Run Validation</strong> to analyse the extracted fields.</p>
+    </div>
+
+    {# Apply selections button #}
+    <div id="vld-apply-section" class="vld-apply-section" style="display:none">
+      <button id="btn-apply" class="vld-btn vld-btn-apply">
+        <i class="bi bi-check2-circle me-1"></i>Apply Selected Values
+      </button>
+    </div>
+  </div>
+
+  {# Right panel: live preview of current values #}
+  <div class="vld-panel vld-panel-preview">
+    <h2 class="vld-panel-title">
+      <i class="bi bi-eye me-1"></i>Preview
+    </h2>
+    <div id="vld-preview-list" class="vld-preview-list">
+      {% for field in fields %}
+      <div class="vld-preview-row" data-field="{{ field.field_name }}">
+        <span class="vld-preview-label">{{ field.field_name }}</span>
+        <span class="vld-preview-value" id="preview-{{ loop.index }}">
+          {{ field.value or '—' }}
+        </span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+</div>
+
+{# ──────────────────────────────────────────────────────────────
+   Success / Error alerts
+────────────────────────────────────────────────────────────── #}
+<div id="vld-alert" class="vld-alert" style="display:none" role="alert"></div>
+
+{# ──────────────────────────────────────────────────────────────
+   JS globals
+────────────────────────────────────────────────────────────── #}
+<script>
+  const VALIDATE_URL = {{ validate_url | tojson }};
+  const APPLY_URL    = {{ apply_url | tojson }};
+  const CSRF_TOKEN   = {{ csrf_token() | tojson }};
+  const FIELDS       = {{ fields | tojson }};
+</script>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/validator.js') }}"></script>
+{% endblock %}

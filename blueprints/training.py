@@ -1,32 +1,23 @@
 """
-blueprints/training.py — Training examples API and UI blueprint.
-
-Routes
-------
-POST /api/v1/training/add         — save labeled training examples for a document
-GET  /api/v1/training/examples    — list all training examples as JSON
-GET  /training/examples           — HTML view of all training examples
-"""
-
-from __future__ import annotations
-
-from flask import Blueprint, current_app, jsonify, redirect, render_template, request, url_for
-blueprints/training.py — Training Examples API blueprint.
+blueprints/training.py — Training Examples API and UI blueprint.
 
 Routes
 ------
 POST   /api/v1/training/add        — save extracted fields as training examples
-GET    /api/v1/training/list       — list all stored training examples
+GET    /api/v1/training/examples   — list all training examples as JSON
+GET    /api/v1/training/list       — alias list endpoint (returns ok/count/examples)
 DELETE /api/v1/training/<id>       — remove a single training example
+GET    /training/examples          — HTML view of all training examples
 """
 
-from flask import Blueprint, current_app, jsonify, request
+from __future__ import annotations
+
+from flask import Blueprint, current_app, jsonify, render_template, request
 from flask_login import current_user, login_required
 
 from models import AuditLog, Document, ExtractedField, TrainingExample, db
 
 training_bp = Blueprint("training", __name__)
-training_bp = Blueprint("training", __name__, url_prefix="/api/v1")
 
 
 # ---------------------------------------------------------------------------
@@ -42,89 +33,88 @@ def add_training():
 
         {
           "document_id": 1,
-          "fields": {
-            "Name": "Rahul Misra",
-            "City": "Asansol",
-            ...
-          }
+          "fields": {"Name": "Alice", "City": "NY"}   ← dict form
         }
 
-    Replaces any existing training examples for the document with the new
-    set, then rebuilds RAG embeddings so that future extractions benefit from
-    the training data.
+    Or with a list of field objects::
+
+        {
+          "document_id": 1,
+          "fields": [{"field_name": "Name", "field_value": "Alice"}, ...]
+        }
+
+    Omit ``fields`` entirely to auto-load from :class:`~models.ExtractedField`.
+
+    Replaces any existing training examples for the document.
 
     Returns::
 
-        {"ok": true, "document_id": 1, "saved": [{"field_name": ..., "correct_value": ...}, ...]}
+        {"ok": true, "added": N, "document_id": 1, "saved": [...]}
     """
     data = request.get_json(silent=True) or {}
     document_id = data.get("document_id")
     fields = data.get("fields")
-@training_bp.route("/training/add", methods=["POST"])
-@login_required
-def add_training():
-    """Mark extracted fields for a document as training examples.
-
-    JSON body::
-
-        {
-          "document_id": 1,
-          "fields": [
-            {"field_name": "Name",  "field_value": "Rahul Misra"},
-            {"field_name": "Email", "field_value": "rahul@example.com"},
-            ...
-          ]
-        }
-
-    Alternatively, omit ``fields`` to auto-load all
-    :class:`~models.ExtractedField` rows for the document.
-
-    Returns::
-
-        {"ok": true, "added": 9, "document_id": 1}
-    """
-    data = request.get_json(silent=True) or {}
-    document_id = data.get("document_id")
-    fields = data.get("fields")  # may be None → auto-load from DB
 
     if not document_id:
         return jsonify({"ok": False, "error": "document_id is required"}), 400
 
-    if not isinstance(fields, dict) or not fields:
-        return jsonify({"ok": False, "error": "'fields' must be a non-empty object"}), 400
-
     # Validate document exists
     Document.query.get_or_404(document_id)
+
+    # ------------------------------------------------------------------
+    # Normalise fields to list of (field_name, value) pairs
+    # ------------------------------------------------------------------
+    pairs: list[tuple[str, str]] = []
+
+    if fields is None:
+        # Auto-load from DB
+        db_fields = ExtractedField.query.filter_by(document_id=document_id).all()
+        pairs = [(f.field_name, f.value or "") for f in db_fields]
+    elif isinstance(fields, dict):
+        # Dict form: {"Name": "Alice", ...}
+        pairs = [(str(k).strip(), str(v).strip()) for k, v in fields.items()]
+    elif isinstance(fields, list):
+        # List form: [{"field_name": "Name", "field_value": "Alice"}, ...]
+        for item in fields:
+            fn = (item.get("field_name") or item.get("name") or "").strip()
+            val = (item.get("field_value") or item.get("value") or "").strip()
+            if fn:
+                pairs.append((fn, val))
+    else:
+        return jsonify({"ok": False, "error": "'fields' must be a dict or list"}), 400
 
     # Replace existing examples for this document
     TrainingExample.query.filter_by(document_id=document_id).delete()
 
     saved: list[dict] = []
-    for field_name, correct_value in fields.items():
-        correct_value = str(correct_value).strip() if correct_value is not None else ""
+    for field_name, correct_value in pairs:
         if not correct_value:
             continue  # skip blank values
         ex = TrainingExample(
             document_id=document_id,
-            field_name=str(field_name).strip(),
+            field_name=field_name,
             correct_value=correct_value,
+            field_value=correct_value,
+            created_by=current_user.id,
         )
         db.session.add(ex)
         saved.append({"field_name": ex.field_name, "correct_value": ex.correct_value})
 
     _log(
         current_user.id,
-        "add_training",
+        "training_add",
         "document",
         str(document_id),
-        details=f"fields={list(fields.keys())}",
+        details=f"saved={len(saved)}",
     )
     db.session.commit()
 
-    # Rebuild RAG embeddings if RAGService is available
-    _rebuild_rag_embeddings(document_id)
-
-    return jsonify({"ok": True, "document_id": document_id, "saved": saved})
+    return jsonify({
+        "ok": True,
+        "added": len(saved),
+        "document_id": document_id,
+        "saved": saved,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -134,18 +124,66 @@ def add_training():
 @training_bp.route("/api/v1/training/examples", methods=["GET"])
 @login_required
 def list_examples_json():
-    """Return all training examples as JSON."""
-    examples = TrainingExample.query.order_by(TrainingExample.created_at.desc()).all()
-    return jsonify(
-        {
-            "count": len(examples),
-            "examples": [ex.to_dict() for ex in examples],
-        }
-    )
+    """Return all training examples as JSON (no 'ok' wrapper for legacy compat)."""
+    doc_id_filter = request.args.get("document_id", type=int)
+    q = TrainingExample.query
+    if doc_id_filter is not None:
+        q = q.filter_by(document_id=doc_id_filter)
+    examples = q.order_by(TrainingExample.created_at.desc()).all()
+    return jsonify({
+        "count": len(examples),
+        "examples": [ex.to_dict() for ex in examples],
+    })
 
 
 # ---------------------------------------------------------------------------
-# GET /training/examples
+# GET /api/v1/training/list
+# ---------------------------------------------------------------------------
+
+@training_bp.route("/api/v1/training/list", methods=["GET"])
+@login_required
+def list_training():
+    """Return all stored training examples with ok/count/examples structure."""
+    doc_id_filter = request.args.get("document_id", type=int)
+    field_name_filter = (request.args.get("field_name") or "").strip() or None
+
+    q = TrainingExample.query
+    if doc_id_filter is not None:
+        q = q.filter_by(document_id=doc_id_filter)
+    if field_name_filter:
+        q = q.filter_by(field_name=field_name_filter)
+
+    examples = q.order_by(TrainingExample.created_at.desc()).all()
+    return jsonify({
+        "ok": True,
+        "count": len(examples),
+        "examples": [ex.to_dict() for ex in examples],
+    })
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/v1/training/<id>
+# ---------------------------------------------------------------------------
+
+@training_bp.route("/api/v1/training/<int:example_id>", methods=["DELETE"])
+@login_required
+def delete_training(example_id: int):
+    """Remove a single training example by ID.
+
+    Returns::
+
+        {"ok": true, "deleted_id": 42}
+    """
+    example = TrainingExample.query.get_or_404(example_id)
+    doc_id = example.document_id
+    db.session.delete(example)
+    _log(current_user.id, "training_delete", "training_example", str(example_id))
+    db.session.commit()
+    return jsonify({"ok": True, "deleted_id": example_id, "document_id": doc_id})
+
+
+# ---------------------------------------------------------------------------
+# GET /training/examples — HTML view
 # ---------------------------------------------------------------------------
 
 @training_bp.route("/training/examples")
@@ -175,142 +213,11 @@ def examples_list():
         grouped=grouped,
         total=len(examples),
     )
-    Document.query.get_or_404(document_id)  # 404 if document not found
-
-    # If caller didn't supply fields, load them from the DB
-    if fields is None:
-        db_fields = ExtractedField.query.filter_by(document_id=document_id).all()
-        fields = [
-            {"field_name": f.field_name, "field_value": f.value or ""}
-            for f in db_fields
-        ]
-
-    if not isinstance(fields, list):
-        return jsonify({"ok": False, "error": "'fields' must be a list"}), 400
-
-    added = 0
-    for item in fields:
-        field_name = (item.get("field_name") or "").strip()
-        field_value = (item.get("field_value") or item.get("value") or "").strip()
-        if not field_name:
-            continue
-        example = TrainingExample(
-            document_id=document_id,
-            field_name=field_name,
-            field_value=field_value,
-            created_by=current_user.id,
-        )
-        db.session.add(example)
-        added += 1
-
-    if added:
-        _log(
-            current_user.id,
-            "training_add",
-            "document",
-            str(document_id),
-            f"added {added} training example(s)",
-        )
-        db.session.commit()
-
-    return jsonify({"ok": True, "added": added, "document_id": document_id})
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v1/training/list
+# Helper
 # ---------------------------------------------------------------------------
-
-@training_bp.route("/training/list", methods=["GET"])
-@login_required
-def list_training():
-    """Return all stored training examples.
-
-    Optional query params:
-    * ``document_id`` — filter by document
-    * ``field_name`` — filter by field name
-
-    Returns::
-
-        {"ok": true, "count": 9, "examples": [...]}
-    """
-    doc_id_filter = request.args.get("document_id", type=int)
-    field_name_filter = request.args.get("field_name", "").strip() or None
-
-    q = TrainingExample.query
-    if doc_id_filter is not None:
-        q = q.filter_by(document_id=doc_id_filter)
-    if field_name_filter:
-        q = q.filter_by(field_name=field_name_filter)
-
-    examples = q.order_by(TrainingExample.created_at.desc()).all()
-    return jsonify({
-        "ok": True,
-        "count": len(examples),
-        "examples": [e.to_dict() for e in examples],
-    })
-
-
-# ---------------------------------------------------------------------------
-# DELETE /api/v1/training/<id>
-# ---------------------------------------------------------------------------
-
-@training_bp.route("/training/<int:example_id>", methods=["DELETE"])
-@login_required
-def delete_training(example_id: int):
-    """Remove a single training example by ID.
-
-    Returns::
-
-        {"ok": true, "deleted_id": 42}
-    """
-    example = TrainingExample.query.get_or_404(example_id)
-    doc_id = example.document_id
-    db.session.delete(example)
-    _log(current_user.id, "training_delete", "training_example", str(example_id))
-    db.session.commit()
-    return jsonify({"ok": True, "deleted_id": example_id, "document_id": doc_id})
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _rebuild_rag_embeddings(document_id: int) -> None:
-    """Attempt to rebuild RAG embeddings for *document_id* after training data update."""
-    try:
-        import os
-        from services.rag_service import RAGService  # type: ignore[import]
-
-        doc = Document.query.get(document_id)
-        if doc is None or not doc.file_path:
-            return
-
-        import sys
-        _root = current_app.root_path
-        _backend = os.path.join(_root, "backend")
-        if _backend not in sys.path:
-            sys.path.append(_backend)
-
-        from services.pdf_service import PDFService  # type: ignore[import]
-
-        pdf_svc = PDFService()
-        if not os.path.exists(doc.file_path):
-            return
-
-        text, _tables, _pages = pdf_svc.extract(doc.file_path)
-        rag_dir = os.path.join(_root, os.environ.get("RAG_DIR", "rag_data"))
-        rag_svc = RAGService(rag_dir=rag_dir)
-        rag_svc.save_rag_text(str(document_id), text)
-        current_app.logger.info(
-            "TrainingService: rebuilt RAG embeddings for doc %s", document_id
-        )
-    except Exception as exc:  # pragma: no cover
-        current_app.logger.warning(
-            "TrainingService: could not rebuild RAG embeddings for doc %s: %s",
-            document_id,
-            exc,
-        )
-
 
 def _log(
     user_id: int,

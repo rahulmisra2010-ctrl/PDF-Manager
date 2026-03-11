@@ -3,14 +3,17 @@ blueprints/address_book_live.py — Live Overlay Address Book PDF Editor bluepri
 
 Routes
 ------
-GET  /address-book-live/                        — redirect to document list
-GET  /address-book-live/upload                  — redirect to PDF upload
-GET  /address-book-live/<doc_id>                — live overlay editor interface
-POST /address-book-live/<doc_id>/update-field   — AJAX: update a single field value
-POST /address-book-live/<doc_id>/save           — save all field changes
-POST /address-book-live/<doc_id>/extract        — re-run OCR field extraction
-GET  /address-book-live/<doc_id>/prefill        — return saved field suggestions
-GET  /address-book-live/<doc_id>/export         — download updated PDF
+GET  /address-book-live/                                   — redirect to document list
+GET  /address-book-live/upload                             — redirect to PDF upload
+GET  /address-book-live/<doc_id>                           — live overlay editor interface
+POST /address-book-live/<doc_id>/update-field              — AJAX: update a single field value
+POST /address-book-live/<doc_id>/save                      — save all field changes
+POST /address-book-live/<doc_id>/extract                   — re-run OCR field extraction
+GET  /address-book-live/<doc_id>/prefill                   — return saved field suggestions
+GET  /address-book-live/<doc_id>/export                    — download updated PDF
+POST /address-book-live/<doc_id>/validate_and_suggest      — complete validation + suggestion pipeline
+POST /address-book-live/<doc_id>/apply_selections          — apply user-selected values and generate PDF
+GET  /address-book-live/<doc_id>/validator                 — render validation UI
 """
 
 import io
@@ -500,6 +503,171 @@ def export_pdf(doc_id: int):
         )
         flash(f"PDF export failed: {exc}", "danger")
         return redirect(url_for("address_book_live.editor", doc_id=doc_id))
+
+
+# ---------------------------------------------------------------------------
+# Validation & Suggestion Routes
+# ---------------------------------------------------------------------------
+
+@address_book_live_bp.route("/<int:doc_id>/validator")
+@login_required
+def validator(doc_id: int):
+    """Render the validation & suggestion UI for a document."""
+    doc = Document.query.get_or_404(doc_id)
+    fields = ExtractedField.query.filter_by(document_id=doc_id).all()
+    field_data = [
+        {
+            "id": f.id,
+            "field_name": f.field_name,
+            "value": f.value or "",
+            "confidence": round(f.confidence, 2),
+        }
+        for f in fields
+    ]
+    validate_url = url_for("address_book_live.validate_and_suggest", doc_id=doc_id)
+    apply_url = url_for("address_book_live.apply_selections", doc_id=doc_id)
+    return render_template(
+        "validator.html",
+        doc=doc,
+        fields=field_data,
+        validate_url=validate_url,
+        apply_url=apply_url,
+    )
+
+
+@address_book_live_bp.route("/<int:doc_id>/validate_and_suggest", methods=["POST"])
+@login_required
+def validate_and_suggest(doc_id: int):
+    """Run the validation + suggestion pipeline and return JSON results.
+
+    Returns JSON::
+
+        {
+          "ok": true,
+          "validation": { "issues": [...], "total_score": int, "summary": "..." },
+          "suggestions": { "Name": [{"value": "...", "confidence": 0.8, ...}], ... }
+        }
+    """
+    Document.query.get_or_404(doc_id)
+    fields = ExtractedField.query.filter_by(document_id=doc_id).all()
+    field_dicts = [
+        {
+            "field_name": f.field_name,
+            "value": f.value or "",
+            "confidence": f.confidence,
+        }
+        for f in fields
+    ]
+
+    # --- Validation ---
+    from blueprints.validation import validate_fields
+    validation_result = validate_fields(field_dicts)
+
+    # --- Suggestions from training data ---
+    from blueprints.training_matcher import find_suggestions
+    try:
+        suggestions = find_suggestions(
+            field_dicts,
+            session=db.session,
+            correction_model=FieldCorrection,
+            training_model=TrainingExample,
+        )
+    except Exception as exc:
+        current_app.logger.exception("Training matcher failed for doc %s: %s", doc_id, exc)
+        suggestions = {}
+
+    _log(current_user.id, "validate_and_suggest", "document", str(doc_id))
+    db.session.commit()
+
+    return jsonify({
+        "ok": True,
+        "validation": {
+            "issues": validation_result["issues"],
+            "total_score": validation_result["total_score"],
+            "fields_with_issues": validation_result["fields_with_issues"],
+            "summary": validation_result["summary"],
+        },
+        "suggestions": suggestions,
+    })
+
+
+@address_book_live_bp.route("/<int:doc_id>/apply_selections", methods=["POST"])
+@login_required
+def apply_selections(doc_id: int):
+    """Apply user-selected field values and generate an updated PDF.
+
+    Expects JSON body::
+
+        {
+          "selections": {
+            "Name": "Alice Smith",
+            "Email": "alice@example.com",
+            ...
+          }
+        }
+
+    Returns JSON::
+
+        {
+          "ok": true,
+          "download_url": "/address-book-live/<doc_id>/export",
+          "updated_fields": ["Name", "Email"]
+        }
+    """
+    doc = Document.query.get_or_404(doc_id)
+    data = request.get_json(silent=True) or {}
+    selections: dict = data.get("selections", {})
+
+    if not isinstance(selections, dict):
+        return jsonify({"ok": False, "error": "'selections' must be a dict"}), 400
+
+    updated_fields = []
+    for field_name, new_value in selections.items():
+        field = ExtractedField.query.filter_by(
+            document_id=doc_id, field_name=field_name
+        ).first()
+        if field is None:
+            # Create a new field if it doesn't exist yet
+            field = ExtractedField(
+                document_id=doc_id,
+                field_name=field_name,
+                value=str(new_value),
+                confidence=1.0,
+            )
+            db.session.add(field)
+        elif str(new_value) != (field.value or ""):
+            history = FieldEditHistory(
+                field_id=field.id,
+                old_value=field.value,
+                new_value=str(new_value),
+                edited_by=current_user.id,
+            )
+            db.session.add(history)
+            if not field.is_edited:
+                field.original_value = field.value
+            field.value = str(new_value)
+            field.is_edited = True
+            field.version += 1
+
+        updated_fields.append(field_name)
+
+    if updated_fields:
+        doc.status = "edited"
+        _log(
+            current_user.id,
+            "apply_selections",
+            "document",
+            str(doc_id),
+            details=f"fields={','.join(updated_fields)}",
+        )
+        db.session.commit()
+
+    download_url = url_for("address_book_live.export_pdf", doc_id=doc_id)
+    return jsonify({
+        "ok": True,
+        "download_url": download_url,
+        "updated_fields": updated_fields,
+    })
 
 
 # ---------------------------------------------------------------------------
