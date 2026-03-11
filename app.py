@@ -135,10 +135,24 @@ def create_app(config: dict | None = None) -> Flask:
     app.register_blueprint(address_book_bp, url_prefix="/address-book")
     app.register_blueprint(address_book_live_bp, url_prefix="/address-book-live")
     app.register_blueprint(rag_bp)  # url_prefix="/api/v1" is set in the blueprint
+    app.register_blueprint(training_bp)  # routes defined per-function
     app.register_blueprint(training_bp)  # url_prefix="/api/v1" is set in the blueprint
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(search_bp, url_prefix="/search")
     app.register_blueprint(users_bp, url_prefix="/users")
+
+    # ------------------------------------------------------------------
+    # Context processor — make training example count available in all templates
+    # ------------------------------------------------------------------
+    from models import TrainingExample  # noqa: E402
+
+    @app.context_processor
+    def inject_training_count():  # noqa: WPS430
+        try:
+            count = TrainingExample.query.count()
+        except Exception:
+            count = 0
+        return {"training_examples_count": count}
 
     # REST API v1
     try:

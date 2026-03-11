@@ -16,7 +16,7 @@ import os
 from flask import Blueprint, current_app, jsonify, request, send_file
 from flask_login import current_user, login_required
 
-from models import AuditLog, Document, ExtractedField, FieldEditHistory, db
+from models import AuditLog, Document, ExtractedField, FieldEditHistory, TrainingExample, db
 
 rag_bp = Blueprint("rag", __name__, url_prefix="/api/v1")
 
@@ -47,6 +47,15 @@ def _get_rag_service():
 
 def _get_training_service():
     try:
+        import sys
+        import os
+        _backend = os.path.join(current_app.root_path, "backend")
+        if _backend not in sys.path:
+            sys.path.append(_backend)
+        from services.training_service import TrainingService  # type: ignore[import]
+        return TrainingService()
+    except Exception:
+        current_app.logger.exception("Failed to initialise TrainingService")
         from services.training_service import TrainingService  # type: ignore[import]
         return TrainingService()
     except Exception:
@@ -93,6 +102,25 @@ def rag_extract(doc_id: int):
         current_app.logger.exception("RAG extraction failed for doc %s", doc_id)
         return jsonify({"error": f"RAG extraction failed: {exc}"}), 500
 
+    # Apply training examples to boost confidence scores
+    training_svc = _get_training_service()
+    if training_svc is not None:
+        try:
+            training_examples = [
+                ex.to_dict() for ex in TrainingExample.query.all()
+            ]
+            if training_examples:
+                rag_fields = training_svc.apply_training_to_results(
+                    rag_fields, training_examples
+                )
+                current_app.logger.info(
+                    "RAG: applied %d training example(s) for doc %s",
+                    len(training_examples),
+                    doc_id,
+                )
+        except Exception as exc:
+            current_app.logger.warning(
+                "RAG: failed to apply training examples for doc %s: %s", doc_id, exc
     # Apply training intelligence: fill blank fields and correct incorrect
     # values using patterns learned from stored training examples.
     training_svc = _get_training_service()

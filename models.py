@@ -12,6 +12,7 @@ Models
 * AuditLog         — immutable audit trail for all user actions
 * ValidationLog    — audit trail for Train Me validation runs
 * FieldCorrection  — per-field corrections applied by Train Me
+* TrainingExample  — labeled training examples for RAG confidence boosting
 * TrainingExample  — labeled field values used by TrainingService
 """
 
@@ -381,6 +382,11 @@ class FieldCorrection(db.Model):
 # ---------------------------------------------------------------------------
 
 class TrainingExample(db.Model):
+    """A labeled training example for improving RAG extraction confidence.
+
+    Users upload and manually correct address book PDFs, then mark them as
+    training examples.  The RAG extractor uses these examples to boost
+    confidence scores for fields that match training data.
     """A labeled field value used by TrainingService to fill blanks and
     correct incorrect extraction results.
 
@@ -400,6 +406,8 @@ class TrainingExample(db.Model):
         db.Integer, db.ForeignKey("documents.id"), nullable=False
     )
     field_name = db.Column(db.String(255), nullable=False)
+    correct_value = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     field_value = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
@@ -409,6 +417,15 @@ class TrainingExample(db.Model):
             "id": self.id,
             "document_id": self.document_id,
             "field_name": self.field_name,
+            "correct_value": self.correct_value,
+            "created_at": self.created_at.isoformat(),
+        }
+
+    def __repr__(self) -> str:
+        return (
+            f"<TrainingExample doc={self.document_id}"
+            f" field={self.field_name!r} value={self.correct_value!r}>"
+        )
             "field_value": self.field_value,
             "created_at": self.created_at.isoformat(),
             "created_by": self.created_by,

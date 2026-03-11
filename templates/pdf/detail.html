@@ -54,6 +54,12 @@
     <i class="bi bi-robot me-1"></i>RAG Extract
   </a>
 
+  {% if fields %}
+  <button class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#trainModal">
+    <i class="bi bi-mortarboard me-1"></i>Mark as Training Example
+  </button>
+  {% endif %}
+
   {% if current_user.role in ('Admin', 'Verifier') %}
   <form method="POST" action="{{ url_for('pdf.approve', doc_id=doc.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -184,5 +190,102 @@
 <div class="alert alert-info">
   No fields extracted yet. Click <strong>Extract Fields</strong> to run OCR and field mapping.
 </div>
+{% endif %}
+
+<!-- Mark as Training Example modal -->
+{% if fields %}
+<div class="modal fade" id="trainModal" tabindex="-1" aria-labelledby="trainModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="trainModalLabel">
+          <i class="bi bi-mortarboard me-2"></i>Mark as Training Example
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p>The current extracted field values for <strong>{{ doc.filename }}</strong> will be saved
+           as labeled training data.  Future RAG extractions will use these examples to improve
+           confidence scores.</p>
+        <p class="text-muted small">Make sure you have corrected any incorrect fields before
+           marking this document as a training example.</p>
+        <div id="trainStatus"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-success" id="confirmTrainBtn">
+          <i class="bi bi-check-circle me-1"></i>Confirm &amp; Save
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_scripts %}
+{% if fields %}
+<script>
+(function () {
+  const csrfToken = "{{ csrf_token() }}";
+  const docId = {{ doc.id }};
+
+  // Build field map from the current form values
+  function collectFields() {
+    const fields = {};
+    {% for field in fields %}
+    const input{{ field.id }} = document.querySelector('input[name="field_{{ field.id }}"]');
+    if (input{{ field.id }}) {
+      fields[{{ field.field_name | tojson }}] = input{{ field.id }}.value;
+    }
+    {% endfor %}
+    return fields;
+  }
+
+  document.getElementById("confirmTrainBtn").addEventListener("click", function () {
+    const btn = this;
+    const statusEl = document.getElementById("trainStatus");
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
+    statusEl.innerHTML = "";
+
+    const fields = collectFields();
+
+    fetch("/api/v1/training/add", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": csrfToken,
+      },
+      body: JSON.stringify({ document_id: docId, fields: fields }),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data.ok) {
+        statusEl.innerHTML =
+          '<div class="alert alert-success mb-0">' +
+          '<i class="bi bi-check-circle me-1"></i>' +
+          'Saved ' + data.saved.length + ' training example(s).</div>';
+        btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Saved!';
+      } else {
+        statusEl.innerHTML =
+          '<div class="alert alert-danger mb-0">' +
+          '<i class="bi bi-exclamation-triangle me-1"></i>' +
+          (data.error || "Unknown error") + "</div>";
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Confirm &amp; Save';
+      }
+    })
+    .catch(function (err) {
+      statusEl.innerHTML =
+        '<div class="alert alert-danger mb-0">Request failed: ' + err + "</div>";
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Confirm &amp; Save';
+    });
+  });
+})();
+</script>
 {% endif %}
 {% endblock %}

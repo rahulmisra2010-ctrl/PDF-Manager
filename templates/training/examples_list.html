@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Training Examples — PDF Manager{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h2 class="mb-1">
+      <i class="bi bi-mortarboard-fill text-primary me-2"></i>Training Examples
+    </h2>
+    <span class="badge bg-primary">{{ total }} example(s)</span>
+  </div>
+  <a href="{{ url_for('pdf.list_documents') }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-arrow-left me-1"></i>Back to Documents
+  </a>
+</div>
+
+{% if total == 0 %}
+<div class="alert alert-info">
+  <i class="bi bi-info-circle me-2"></i>
+  No training examples yet.  Open a document, extract fields, correct any mistakes, then click
+  <strong>Mark as Training Example</strong> to add it here.
+</div>
+{% else %}
+{% for doc_id, group in grouped.items() %}
+<div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span class="fw-semibold">
+      <i class="bi bi-file-earmark-pdf text-danger me-2"></i>
+      {% if group.document %}
+        <a href="{{ url_for('pdf.detail', doc_id=group.document.id) }}">{{ group.document.filename }}</a>
+        <small class="text-muted ms-2">(doc #{{ group.document.id }})</small>
+      {% else %}
+        Document #{{ doc_id }}
+      {% endif %}
+    </span>
+    <span class="badge bg-secondary">{{ group.examples | length }} field(s)</span>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Field</th>
+          <th>Correct Value</th>
+          <th>Saved At</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ex in group.examples %}
+        <tr>
+          <td class="fw-semibold">{{ ex.field_name }}</td>
+          <td>{{ ex.correct_value }}</td>
+          <td class="text-muted small">{{ ex.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+{% endblock %}
