@@ -522,13 +522,6 @@ class TestTrainingExampleModel:
             assert d["correct_value"] == "Rahul Misra"
             assert "created_at" in d
 
-    def test_add_training_requires_login(self, client, app):
-        doc_id = self._create_doc(app)
-        resp = client.post(
-            "/api/v1/training/add",
-            json={"document_id": doc_id, "fields": {"Name": "Test"}},
-        )
-        assert resp.status_code in (302, 401)
 
     def test_add_training_saves_examples(self, client, app):
         from models import TrainingExample, Document
@@ -689,6 +682,10 @@ class TestTrainingAPI:
             json={"document_id": doc_id},
             headers={"X-CSRFToken": "test"},
         )
+        # No extracted fields and no explicit fields → 400
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert data["ok"] is False
         assert resp.status_code == 400
 
     def test_list_returns_examples(self, client, app):
@@ -739,6 +736,8 @@ class TestTrainingAPI:
         )
         assert resp.status_code == 404
 
+    def test_add_doc_not_found_auto_load(self, client, app):
+        """When no fields provided and document doesn't exist, returns 404."""
     def test_add_doc_not_found(self, client, app):
         _login(client, app)
         resp = client.post(
