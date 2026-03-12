@@ -37,15 +37,49 @@
           class="d-inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="able-btn able-btn-primary"
-              title="Run OCR and extract address book fields">
+              title="Run OCR and extract address book fields (AcroForm + Layout + OCR + Regex)">
         <i class="bi bi-cpu-fill me-1"></i>Extract Fields
       </button>
     </form>
 
+    {# Extract All (all strategies in parallel) #}
+    <button type="button" id="btn-extract-all" class="able-btn able-btn-primary"
+            title="Run all extraction strategies in parallel (AcroForm + Layout + OCR + Regex + RAG)">
+      <i class="bi bi-collection-fill me-1"></i>Extract All
+    </button>
+
+    {# AI Extract #}
+    <a href="{{ url_for('ai_pdf.view', doc_id=doc.id) }}"
+       class="able-btn" style="background:#6f42c1;color:#fff;"
+       title="AI-powered NLP field identification">
+      <i class="bi bi-stars me-1"></i>AI Extract
+    </a>
+
+    {# RAG Extract #}
+    <a href="{{ url_for('pdf.rag_extract_view', doc_id=doc.id) }}"
+       class="able-btn" style="background:#0d6efd;color:#fff;"
+       title="Retrieval-Augmented Generation: query training data for field suggestions">
+      <i class="bi bi-robot me-1"></i>RAG Extract
+    </a>
+
+    {# Auto-Detect #}
+    <button type="button" id="btn-auto-detect" class="able-btn"
+            style="background:#198754;color:#fff;"
+            title="Automatic field detection with confidence gates (≥90% accepted)">
+      <i class="bi bi-magic me-1"></i>Auto-Detect
+    </button>
+
     {# Pre-fill from Defaults #}
     <button type="button" id="btn-prefill" class="able-btn able-btn-prefill"
             title="Auto-fill blank fields with saved/previously used values">
-      <i class="bi bi-lightning-charge-fill me-1"></i>Pre-fill from Defaults
+      <i class="bi bi-lightning-charge-fill me-1"></i>Pre-fill
+    </button>
+
+    {# Mark as Training #}
+    <button type="button" id="btn-mark-training" class="able-btn"
+            style="background:#20c997;color:#fff;"
+            title="Save extracted fields as training examples to improve future extractions">
+      <i class="bi bi-mortarboard me-1"></i>Mark as Training
     </button>
 
     {# Train Me #}
@@ -196,6 +230,108 @@
 
   /* Field data from Flask */
   const FIELDS = {{ fields | tojson }};
+</script>
+
+{# ─────────────────────────────────────────────────────────────────────────
+   Extract All / Auto-Detect / Mark as Training handlers
+───────────────────────────────────────────────────────────────────────── #}
+<script>
+(function () {
+  'use strict';
+  const csrfToken = CSRF_TOKEN;
+  const docId = DOC_ID;
+
+  function showToast(msg, type) {
+    type = type || 'info';
+    const el = document.createElement('div');
+    el.className = 'alert alert-' + type + ' position-fixed bottom-0 end-0 m-3 shadow';
+    el.style.zIndex = '9999';
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(function () { el.remove(); }, 4000);
+  }
+
+  function apiPost(url, body) {
+    return fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrfToken,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    }).then(function (r) { return r.json(); });
+  }
+
+  /* ── Extract All ── */
+  var btnExtractAll = document.getElementById('btn-extract-all');
+  if (btnExtractAll) {
+    btnExtractAll.addEventListener('click', function () {
+      btnExtractAll.disabled = true;
+      btnExtractAll.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Running…';
+      apiPost('/api/v1/extract/all/' + docId)
+        .then(function (data) {
+          if (data.fields) {
+            showToast('Extracted ' + data.total_extracted + ' field(s) using all strategies (avg confidence: ' + Math.round((data.average_confidence || 0) * 100) + '%). Reloading…', 'success');
+            setTimeout(function () { location.reload(); }, 1500);
+          } else {
+            showToast('Extract All failed: ' + (data.error || 'unknown error'), 'danger');
+            btnExtractAll.disabled = false;
+            btnExtractAll.innerHTML = '<i class="bi bi-collection-fill me-1"></i>Extract All';
+          }
+        })
+        .catch(function (err) {
+          showToast('Request failed: ' + err, 'danger');
+          btnExtractAll.disabled = false;
+          btnExtractAll.innerHTML = '<i class="bi bi-collection-fill me-1"></i>Extract All';
+        });
+    });
+  }
+
+  /* ── Auto-Detect ── */
+  var btnAutoDetect = document.getElementById('btn-auto-detect');
+  if (btnAutoDetect) {
+    btnAutoDetect.addEventListener('click', function () {
+      btnAutoDetect.disabled = true;
+      btnAutoDetect.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Detecting…';
+      apiPost('/api/v1/auto-detect/' + docId, { threshold: 0.90 })
+        .then(function (data) {
+          var msg = 'Auto-Detect: ' + (data.total_accepted || 0) + ' field(s) accepted, ' + (data.total_flagged || 0) + ' flagged for review. Reloading…';
+          showToast(msg, 'success');
+          setTimeout(function () { location.reload(); }, 1500);
+        })
+        .catch(function (err) {
+          showToast('Auto-Detect failed: ' + err, 'danger');
+          btnAutoDetect.disabled = false;
+          btnAutoDetect.innerHTML = '<i class="bi bi-magic me-1"></i>Auto-Detect';
+        });
+    });
+  }
+
+  /* ── Mark as Training ── */
+  var btnMarkTraining = document.getElementById('btn-mark-training');
+  if (btnMarkTraining) {
+    btnMarkTraining.addEventListener('click', function () {
+      btnMarkTraining.disabled = true;
+      btnMarkTraining.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
+      apiPost('/api/v1/training/add', { document_id: docId })
+        .then(function (data) {
+          if (data.ok) {
+            btnMarkTraining.innerHTML = '<i class="bi bi-check-circle me-1"></i>Saved (' + data.added + ')';
+            btnMarkTraining.style.background = '#198754';
+          } else {
+            showToast('Error: ' + (data.error || 'unknown'), 'danger');
+            btnMarkTraining.disabled = false;
+            btnMarkTraining.innerHTML = '<i class="bi bi-mortarboard me-1"></i>Mark as Training';
+          }
+        })
+        .catch(function (err) {
+          showToast('Request failed: ' + err, 'danger');
+          btnMarkTraining.disabled = false;
+          btnMarkTraining.innerHTML = '<i class="bi bi-mortarboard me-1"></i>Mark as Training';
+        });
+    });
+  }
+})();
 </script>
 {% endblock %}
 

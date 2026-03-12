@@ -37,7 +37,7 @@
 {% else %}
 {% for doc_id, group in grouped.items() %}
 <div class="card mb-4">
-  <div class="card-header d-flex justify-content-between align-items-center">
+  <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
     <span class="fw-semibold">
       <i class="bi bi-file-earmark-pdf text-danger me-2"></i>
       {% if group.document %}
@@ -54,8 +54,44 @@
         Document #{{ doc_id }}
       {% endif %}
     </span>
-    <div class="d-flex align-items-center gap-2">
+    <div class="d-flex align-items-center gap-1 flex-wrap">
       <span class="badge bg-secondary">{{ group.examples | length }} field(s)</span>
+      {% if group.document and group.document.status != 'training' %}
+        {# Full extraction tools for non-sample documents #}
+        <button type="button"
+                class="btn btn-sm btn-outline-secondary btn-extract-all"
+                data-doc-id="{{ group.document.id }}"
+                title="Run all extraction strategies in parallel">
+          <i class="bi bi-collection-fill me-1"></i>Extract All
+        </button>
+        <a href="{{ url_for('ai_pdf.view', doc_id=group.document.id) }}"
+           class="btn btn-sm" style="border:1px solid #6f42c1;color:#6f42c1;"
+           title="AI-powered NLP field identification">
+          <i class="bi bi-stars me-1"></i>AI Extract
+        </a>
+        <a href="{{ url_for('pdf.pdf_viewer', doc_id=group.document.id) }}"
+           class="btn btn-sm btn-outline-info" title="PDF Viewer">
+          <i class="bi bi-file-earmark-richtext me-1"></i>Viewer
+        </a>
+        <a href="{{ url_for('pdf.extract_overlay', doc_id=group.document.id) }}"
+           class="btn btn-sm btn-outline-warning" title="Overlay View">
+          <i class="bi bi-layers me-1"></i>Overlay
+        </a>
+        <a href="{{ url_for('pdf_editor.editor', doc_id=group.document.id) }}"
+           class="btn btn-sm btn-outline-warning" title="Live Editor">
+          <i class="bi bi-pencil-square me-1"></i>Editor
+        </a>
+        <a href="{{ url_for('pdf.rag_extract_view', doc_id=group.document.id) }}"
+           class="btn btn-sm btn-outline-primary" title="RAG Extract">
+          <i class="bi bi-robot me-1"></i>RAG
+        </a>
+        <button type="button"
+                class="btn btn-sm btn-outline-success btn-auto-detect"
+                data-doc-id="{{ group.document.id }}"
+                title="Auto-Detect with confidence gates">
+          <i class="bi bi-magic me-1"></i>Auto-Detect
+        </button>
+      {% endif %}
       <form method="POST"
             action="{{ url_for('training.delete_sample', doc_id=doc_id) }}"
             onsubmit="return confirm('Delete this sample and all its training examples?');"
@@ -90,4 +126,74 @@
 </div>
 {% endfor %}
 {% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+  'use strict';
+  var csrfToken = document.querySelector('meta[name="csrf-token"]')
+                  ? document.querySelector('meta[name="csrf-token"]').content
+                  : '';
+
+  function showToast(msg, type) {
+    type = type || 'info';
+    var el = document.createElement('div');
+    el.className = 'alert alert-' + type + ' position-fixed bottom-0 end-0 m-3 shadow';
+    el.style.zIndex = '9999';
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(function () { el.remove(); }, 4000);
+  }
+
+  function apiPost(url, body, btn, orig) {
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+      body: body ? JSON.stringify(body) : undefined,
+    })
+    .then(function (r) { return r.json(); })
+    .catch(function (err) {
+      showToast('Request failed: ' + err, 'danger');
+      if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+    });
+  }
+
+  document.querySelectorAll('.btn-extract-all').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var docId = btn.dataset.docId;
+      var orig = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Running…';
+      apiPost('/api/v1/extract/all/' + docId, null, btn, orig)
+        .then(function (data) {
+          if (!data) return;
+          if (data.fields !== undefined) {
+            showToast('Extracted ' + data.total_extracted + ' field(s) for doc #' + docId, 'success');
+          } else {
+            showToast('Error: ' + (data.error || 'unknown'), 'danger');
+          }
+          btn.disabled = false;
+          btn.innerHTML = orig;
+        });
+    });
+  });
+
+  document.querySelectorAll('.btn-auto-detect').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var docId = btn.dataset.docId;
+      var orig = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Detecting…';
+      apiPost('/api/v1/auto-detect/' + docId, { threshold: 0.90 }, btn, orig)
+        .then(function (data) {
+          if (!data) return;
+          showToast('Auto-Detect doc #' + docId + ': ' + (data.total_accepted || 0) + ' accepted, ' + (data.total_flagged || 0) + ' flagged', 'success');
+          btn.disabled = false;
+          btn.innerHTML = orig;
+        });
+    });
+  });
+})();
+</script>
 {% endblock %}

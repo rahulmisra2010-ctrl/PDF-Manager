@@ -29,33 +29,50 @@
 <div class="d-flex flex-wrap gap-2 mb-4">
   <form method="POST" action="{{ url_for('pdf.extract', doc_id=doc.id) }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button class="btn btn-primary btn-sm">
+    <button class="btn btn-primary btn-sm"
+            title="Run OCR and extract address book fields (AcroForm + Layout + OCR + Regex)">
       <i class="bi bi-cpu me-1"></i>Extract Fields
     </button>
   </form>
 
-  <a href="{{ url_for('ai_pdf.view', doc_id=doc.id) }}" class="btn btn-info btn-sm text-white">
+  <button type="button" id="btn-extract-all-detail" class="btn btn-secondary btn-sm"
+          title="Run all extraction strategies in parallel (AcroForm + Layout + OCR + Regex + RAG)">
+    <i class="bi bi-collection-fill me-1"></i>Extract All
+  </button>
+
+  <a href="{{ url_for('ai_pdf.view', doc_id=doc.id) }}" class="btn btn-info btn-sm text-white"
+     title="AI-powered NLP field identification">
     <i class="bi bi-stars me-1"></i>AI Extract
   </a>
 
-  <a href="{{ url_for('pdf.pdf_viewer', doc_id=doc.id) }}" class="btn btn-info btn-sm text-white">
+  <a href="{{ url_for('pdf.pdf_viewer', doc_id=doc.id) }}" class="btn btn-info btn-sm text-white"
+     title="Embedded PDF display with annotation and field highlighting">
     <i class="bi bi-file-earmark-richtext me-1"></i>PDF Viewer
   </a>
 
-  <a href="{{ url_for('pdf.extract_overlay', doc_id=doc.id) }}" class="btn btn-warning btn-sm">
+  <a href="{{ url_for('pdf.extract_overlay', doc_id=doc.id) }}" class="btn btn-warning btn-sm"
+     title="Visual field mapping on PDF with bounding boxes and confidence scores">
     <i class="bi bi-layers me-1"></i>Overlay View
   </a>
 
-  <a href="{{ url_for('pdf_editor.editor', doc_id=doc.id) }}" class="btn btn-warning btn-sm">
+  <a href="{{ url_for('pdf_editor.editor', doc_id=doc.id) }}" class="btn btn-warning btn-sm"
+     title="Real-time field editing with auto-suggestions and validation">
     <i class="bi bi-pencil-square me-1"></i>Live Editor
   </a>
 
-  <a href="{{ url_for('pdf.rag_extract_view', doc_id=doc.id) }}" class="btn btn-primary btn-sm">
+  <a href="{{ url_for('pdf.rag_extract_view', doc_id=doc.id) }}" class="btn btn-primary btn-sm"
+     title="Retrieval-Augmented Generation: query training data for field suggestions">
     <i class="bi bi-robot me-1"></i>RAG Extract
   </a>
 
+  <button type="button" id="btn-auto-detect-detail" class="btn btn-success btn-sm"
+          title="Automatic field detection with confidence gates (≥90% accepted, lower flagged for review)">
+    <i class="bi bi-magic me-1"></i>Auto-Detect
+  </button>
+
   {% if fields %}
-  <button class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#trainModal">
+  <button class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#trainModal"
+          title="Save extracted data as training samples to improve future extractions">
     <i class="bi bi-mortarboard me-1"></i>Mark as Training Example
   </button>
   {% endif %}
@@ -225,6 +242,76 @@
 {% endblock %}
 
 {% block extra_scripts %}
+{# ── Extract All / Auto-Detect handlers (always present) ── #}
+<script>
+(function () {
+  'use strict';
+  var csrfToken = "{{ csrf_token() }}";
+  var docId = {{ doc.id }};
+
+  function showToast(msg, type) {
+    type = type || 'info';
+    var el = document.createElement('div');
+    el.className = 'alert alert-' + type + ' position-fixed bottom-0 end-0 m-3 shadow';
+    el.style.zIndex = '9999';
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(function () { el.remove(); }, 4000);
+  }
+
+  function apiPost(url, body) {
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+      body: body ? JSON.stringify(body) : undefined,
+    }).then(function (r) { return r.json(); });
+  }
+
+  var btnExtractAll = document.getElementById('btn-extract-all-detail');
+  if (btnExtractAll) {
+    btnExtractAll.addEventListener('click', function () {
+      btnExtractAll.disabled = true;
+      btnExtractAll.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Running…';
+      apiPost('/api/v1/extract/all/' + docId)
+        .then(function (data) {
+          if (data.fields !== undefined) {
+            showToast('Extracted ' + data.total_extracted + ' field(s) (avg: ' + Math.round((data.average_confidence || 0) * 100) + '% confidence). Reloading…', 'success');
+            setTimeout(function () { location.reload(); }, 1500);
+          } else {
+            showToast('Extract All failed: ' + (data.error || 'unknown'), 'danger');
+            btnExtractAll.disabled = false;
+            btnExtractAll.innerHTML = '<i class="bi bi-collection-fill me-1"></i>Extract All';
+          }
+        })
+        .catch(function (err) {
+          showToast('Request failed: ' + err, 'danger');
+          btnExtractAll.disabled = false;
+          btnExtractAll.innerHTML = '<i class="bi bi-collection-fill me-1"></i>Extract All';
+        });
+    });
+  }
+
+  var btnAutoDetect = document.getElementById('btn-auto-detect-detail');
+  if (btnAutoDetect) {
+    btnAutoDetect.addEventListener('click', function () {
+      btnAutoDetect.disabled = true;
+      btnAutoDetect.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Detecting…';
+      apiPost('/api/v1/auto-detect/' + docId, { threshold: 0.90 })
+        .then(function (data) {
+          var msg = 'Auto-Detect: ' + (data.total_accepted || 0) + ' accepted, ' + (data.total_flagged || 0) + ' flagged for review. Reloading…';
+          showToast(msg, 'success');
+          setTimeout(function () { location.reload(); }, 1500);
+        })
+        .catch(function (err) {
+          showToast('Auto-Detect failed: ' + err, 'danger');
+          btnAutoDetect.disabled = false;
+          btnAutoDetect.innerHTML = '<i class="bi bi-magic me-1"></i>Auto-Detect';
+        });
+    });
+  }
+})();
+</script>
+
 {% if fields %}
 <script>
 (function () {

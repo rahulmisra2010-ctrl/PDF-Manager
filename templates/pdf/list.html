@@ -21,7 +21,7 @@
           <th>Pages</th>
           <th>Size</th>
           <th>Uploaded</th>
-          <th></th>
+          <th>Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -53,9 +53,45 @@
           </td>
           <td>{{ doc.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
           <td>
-            <a href="{{ url_for('pdf.detail', doc_id=doc.id) }}" class="btn btn-sm btn-outline-primary">
-              View
-            </a>
+            <div class="d-flex flex-wrap gap-1">
+              <a href="{{ url_for('pdf.detail', doc_id=doc.id) }}"
+                 class="btn btn-sm btn-outline-primary" title="View">
+                <i class="bi bi-eye"></i>
+              </a>
+              <button type="button"
+                      class="btn btn-sm btn-outline-secondary btn-extract-all"
+                      data-doc-id="{{ doc.id }}"
+                      title="Extract All: run all strategies in parallel">
+                <i class="bi bi-collection-fill"></i>
+              </button>
+              <a href="{{ url_for('ai_pdf.view', doc_id=doc.id) }}"
+                 class="btn btn-sm" style="border:1px solid #6f42c1;color:#6f42c1;"
+                 title="AI Extract">
+                <i class="bi bi-stars"></i>
+              </a>
+              <a href="{{ url_for('pdf.pdf_viewer', doc_id=doc.id) }}"
+                 class="btn btn-sm btn-outline-info" title="PDF Viewer">
+                <i class="bi bi-file-earmark-richtext"></i>
+              </a>
+              <a href="{{ url_for('pdf.extract_overlay', doc_id=doc.id) }}"
+                 class="btn btn-sm btn-outline-warning" title="Overlay View">
+                <i class="bi bi-layers"></i>
+              </a>
+              <a href="{{ url_for('pdf_editor.editor', doc_id=doc.id) }}"
+                 class="btn btn-sm btn-outline-warning" title="Live Editor">
+                <i class="bi bi-pencil-square"></i>
+              </a>
+              <a href="{{ url_for('pdf.rag_extract_view', doc_id=doc.id) }}"
+                 class="btn btn-sm btn-outline-primary" title="RAG Extract">
+                <i class="bi bi-robot"></i>
+              </a>
+              <button type="button"
+                      class="btn btn-sm btn-outline-success btn-auto-detect"
+                      data-doc-id="{{ doc.id }}"
+                      title="Auto-Detect: automatic field detection with confidence gates">
+                <i class="bi bi-magic"></i>
+              </button>
+            </div>
           </td>
         </tr>
         {% endfor %}
@@ -70,3 +106,74 @@
 </div>
 {% endif %}
 {% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+  'use strict';
+  var csrfToken = document.querySelector('meta[name="csrf-token"]')
+                  ? document.querySelector('meta[name="csrf-token"]').content
+                  : '';
+
+  function showToast(msg, type) {
+    type = type || 'info';
+    var el = document.createElement('div');
+    el.className = 'alert alert-' + type + ' position-fixed bottom-0 end-0 m-3 shadow';
+    el.style.zIndex = '9999';
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(function () { el.remove(); }, 4000);
+  }
+
+  function apiPost(url, body, btn, originalHTML) {
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+      body: body ? JSON.stringify(body) : undefined,
+    })
+    .then(function (r) { return r.json(); })
+    .catch(function (err) {
+      showToast('Request failed: ' + err, 'danger');
+      if (btn) { btn.disabled = false; btn.innerHTML = originalHTML; }
+    });
+  }
+
+  document.querySelectorAll('.btn-extract-all').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var docId = btn.dataset.docId;
+      var orig = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+      apiPost('/api/v1/extract/all/' + docId, null, btn, orig)
+        .then(function (data) {
+          if (!data) return;
+          if (data.fields !== undefined) {
+            showToast('Extracted ' + data.total_extracted + ' field(s) for doc #' + docId + ' (avg: ' + Math.round((data.average_confidence || 0) * 100) + '% confidence)', 'success');
+          } else {
+            showToast('Extract All: ' + (data.error || 'unknown error'), 'danger');
+          }
+          btn.disabled = false;
+          btn.innerHTML = orig;
+        });
+    });
+  });
+
+  document.querySelectorAll('.btn-auto-detect').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var docId = btn.dataset.docId;
+      var orig = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+      apiPost('/api/v1/auto-detect/' + docId, { threshold: 0.90 }, btn, orig)
+        .then(function (data) {
+          if (!data) return;
+          showToast('Auto-Detect doc #' + docId + ': ' + (data.total_accepted || 0) + ' accepted, ' + (data.total_flagged || 0) + ' flagged for review', 'success');
+          btn.disabled = false;
+          btn.innerHTML = orig;
+        });
+    });
+  });
+})();
+</script>
+{% endblock %}
+

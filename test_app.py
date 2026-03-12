@@ -1067,3 +1067,196 @@ class TestPDFFieldExtraction:
         assert resp.status_code == 200  # re-renders form
         assert b"required" in resp.data.lower() or b"sample name" in resp.data.lower()
 
+
+# ─────────────────────────────────────────────────────────────────────────
+# Extraction API tests (/api/v1/extract/all, /api/v1/validate-fields,
+#                       /api/v1/auto-detect)
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestExtractionAPI:
+    """Tests for the new extraction API endpoints in blueprints/extraction_api.py."""
+
+    def _create_doc_with_fields(self, app, tmp_pdf_path=None):
+        """Create a Document and some ExtractedFields in the test DB."""
+        from models import Document, ExtractedField
+        doc = Document(
+            filename="test.pdf",
+            file_path=tmp_pdf_path or "/nonexistent/test.pdf",
+            status="uploaded",
+            file_size=1024,
+        )
+        with app.app_context():
+            db.session.add(doc)
+            db.session.commit()
+            doc_id = doc.id
+
+            ef1 = ExtractedField(
+                document_id=doc_id,
+                field_name="Name",
+                value="Rahul Misra",
+                confidence=0.95,
+            )
+            ef2 = ExtractedField(
+                document_id=doc_id,
+                field_name="Zip Code",
+                value="713301",
+                confidence=0.92,
+            )
+            ef3 = ExtractedField(
+                document_id=doc_id,
+                field_name="Email",
+                value="not-an-email",
+                confidence=0.40,
+            )
+            db.session.add_all([ef1, ef2, ef3])
+            db.session.commit()
+        return doc_id
+
+    def test_extract_all_requires_login(self, client, app):
+        """GET /api/v1/extract/all/<id> returns 401/302 when not logged in."""
+        resp = client.post("/api/v1/extract/all/999")
+        assert resp.status_code in (302, 401)
+
+    def test_extract_all_doc_not_found(self, client, app):
+        """POST /api/v1/extract/all/<id> returns 404 for missing document."""
+        _login(client, app)
+        resp = client.post("/api/v1/extract/all/99999")
+        assert resp.status_code == 404
+        data = resp.get_json()
+        assert "error" in data
+
+    def test_extract_all_missing_file(self, client, app):
+        """POST /api/v1/extract/all/<id> returns 404 when file missing on disk."""
+        _login(client, app)
+        doc_id = self._create_doc_with_fields(app)
+        resp = client.post(f"/api/v1/extract/all/{doc_id}")
+        # File doesn't exist on disk → 404
+        assert resp.status_code == 404
+        data = resp.get_json()
+        assert "error" in data
+
+    def test_validate_fields_requires_login(self, client, app):
+        """POST /api/v1/validate-fields/<id> returns 302 when not logged in."""
+        resp = client.post("/api/v1/validate-fields/999")
+        assert resp.status_code in (302, 401)
+
+    def test_validate_fields_doc_not_found(self, client, app):
+        """POST /api/v1/validate-fields/<id> returns 404 for missing document."""
+        _login(client, app)
+        resp = client.post("/api/v1/validate-fields/99999")
+        assert resp.status_code == 404
+
+    def test_validate_fields_no_fields(self, client, app):
+        """POST /api/v1/validate-fields/<id> returns message when no fields extracted."""
+        _login(client, app)
+        from models import Document
+        with app.app_context():
+            doc = Document(
+                filename="empty.pdf",
+                file_path="/nonexistent/empty.pdf",
+                status="uploaded",
+                file_size=512,
+            )
+            db.session.add(doc)
+            db.session.commit()
+            doc_id = doc.id
+
+        resp = client.post(f"/api/v1/validate-fields/{doc_id}")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "message" in data
+        assert data["validations"] == []
+
+    def test_validate_fields_returns_validations(self, client, app):
+        """POST /api/v1/validate-fields/<id> validates extracted fields."""
+        _login(client, app)
+        doc_id = self._create_doc_with_fields(app)
+        resp = client.post(f"/api/v1/validate-fields/{doc_id}")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "validations" in data
+        assert data["total_fields"] == 3
+        # Name with 95% confidence → ok
+        name_val = next((v for v in data["validations"] if v["field_name"] == "Name"), None)
+        assert name_val is not None
+        assert name_val["status"] == "ok"
+        # Email with invalid format → warning
+        email_val = next((v for v in data["validations"] if v["field_name"] == "Email"), None)
+        assert email_val is not None
+        assert email_val["status"] in ("warning", "error")
+
+    def test_validate_fields_confidence_pct(self, client, app):
+        """Validate fields includes confidence_pct in the response."""
+        _login(client, app)
+        doc_id = self._create_doc_with_fields(app)
+        resp = client.post(f"/api/v1/validate-fields/{doc_id}")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        for v in data["validations"]:
+            assert "confidence_pct" in v
+            assert 0 <= v["confidence_pct"] <= 100
+
+    def test_auto_detect_requires_login(self, client, app):
+        """POST /api/v1/auto-detect/<id> returns 302 when not logged in."""
+        resp = client.post("/api/v1/auto-detect/999")
+        assert resp.status_code in (302, 401)
+
+    def test_auto_detect_doc_not_found(self, client, app):
+        """POST /api/v1/auto-detect/<id> returns 404 for missing document."""
+        _login(client, app)
+        resp = client.post("/api/v1/auto-detect/99999")
+        assert resp.status_code == 404
+
+    def test_auto_detect_missing_file(self, client, app):
+        """POST /api/v1/auto-detect/<id> returns 404 when file missing on disk."""
+        _login(client, app)
+        doc_id = self._create_doc_with_fields(app)
+        resp = client.post(f"/api/v1/auto-detect/{doc_id}", json={"threshold": 0.90})
+        assert resp.status_code == 404
+
+    def test_garbage_detection(self):
+        """_is_garbage helper correctly identifies garbage text."""
+        from blueprints.extraction_api import _is_garbage
+        assert _is_garbage("") is True
+        assert _is_garbage("   ") is True
+        assert _is_garbage("dddddddddd") is True  # repetitive chars
+        assert _is_garbage("xxxxxxxxxx") is True
+        assert _is_garbage("Rahul Misra") is False
+        assert _is_garbage("713301") is False
+        assert _is_garbage("WB") is False
+
+    def test_merge_strategies_highest_confidence_wins(self):
+        """_merge_strategies picks the result with highest confidence."""
+        from blueprints.extraction_api import _merge_strategies
+        results = _merge_strategies([
+            [{"field_name": "Name", "value": "A", "confidence": 0.5, "strategy": "OCR"}],
+            [{"field_name": "Name", "value": "B", "confidence": 0.9, "strategy": "AcroForm"}],
+        ])
+        assert len(results) == 1
+        assert results[0]["value"] == "B"
+
+    def test_merge_strategies_skips_garbage(self):
+        """_merge_strategies skips fields with garbage values."""
+        from blueprints.extraction_api import _merge_strategies
+        results = _merge_strategies([
+            [{"field_name": "Name", "value": "dddddddddd", "confidence": 0.95, "strategy": "OCR"}],
+        ])
+        assert results == []
+
+    def test_merge_strategies_deduplication(self):
+        """_merge_strategies merges duplicate field names."""
+        from blueprints.extraction_api import _merge_strategies
+        results = _merge_strategies([
+            [
+                {"field_name": "City", "value": "Asansol", "confidence": 0.8, "strategy": "Layout"},
+                {"field_name": "Zip Code", "value": "713301", "confidence": 0.9, "strategy": "Regex"},
+            ],
+            [
+                {"field_name": "City", "value": "Asansol", "confidence": 0.7, "strategy": "OCR"},
+            ],
+        ])
+        # City should appear only once (highest confidence from Layout)
+        city_results = [r for r in results if r["field_name"] == "City"]
+        assert len(city_results) == 1
+        assert city_results[0]["confidence"] == 0.8
+        assert city_results[0]["strategy"] == "Layout"
