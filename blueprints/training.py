@@ -8,6 +8,7 @@ GET  /api/v1/training/examples    — list all training examples as JSON
 GET  /training/examples           — HTML view of all training examples
 GET  /training/upload-sample      — form UI to create a sample training entry
 POST /training/upload-sample      — process the uploaded sample form
+POST /training/extract-preview    — extract fields from a file for preview (JSON)
 POST /training/examples/<id>/delete — delete a training example group (document)
 """
 
@@ -44,6 +45,40 @@ training_bp = Blueprint("training", __name__)
 
 # Allowed file extensions for the file-upload mode
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".docx", ".xlsx", ".xls"}
+
+# Well-known address-book / form field names used for inline-keyword matching.
+# Ordered longest-first so that "Street Address" is matched before "Address".
+_KNOWN_FIELD_NAMES: list[str] = [
+    "Street Address",
+    "Cell Phone",
+    "Home Phone",
+    "Work Phone",
+    "Email Address",
+    "First Name",
+    "Last Name",
+    "Full Name",
+    "Middle Name",
+    "Zip Code",
+    "Postal Code",
+    "Date of Birth",
+    "Name",
+    "Address",
+    "Street",
+    "City",
+    "State",
+    "Zip",
+    "Country",
+    "Phone",
+    "Mobile",
+    "Email",
+    "Company",
+    "Organization",
+    "Title",
+    "Fax",
+    "Website",
+    "Notes",
+    "Birthday",
+]
 
 
 def _extract_fields_from_file(file_storage: FileStorage) -> dict[str, str]:
@@ -89,21 +124,145 @@ def _parse_txt(text: str) -> dict[str, str]:
     return fields
 
 
-def _parse_pdf(data: bytes) -> dict[str, str]:
-    """Extract key-value pairs from PDF bytes using PyMuPDF."""
+def _extract_pdf_text(data: bytes) -> str:
+    """Extract full text from PDF bytes, trying pdfplumber then PyMuPDF."""
+    # Try pdfplumber first (better layout-aware extraction)
+    try:
+        import pdfplumber  # type: ignore[import]
+
+        with pdfplumber.open(io.BytesIO(data)) as pdf:
+            parts: list[str] = []
+            for page in pdf.pages:
+                page_text = page.extract_text() or ""
+                parts.append(page_text)
+        return "\n".join(parts)
+    except Exception:
+        pass
+
+    # Fallback: PyMuPDF
     try:
         import fitz  # PyMuPDF
 
         doc = fitz.open(stream=data, filetype="pdf")
-        text_parts: list[str] = []
-        for page in doc:
-            text_parts.append(page.get_text())
+        parts = [page.get_text() for page in doc]
         doc.close()
-        full_text = "\n".join(text_parts)
-        return _parse_txt(full_text)
+        return "\n".join(parts)
     except Exception as exc:
-        logger.warning("_parse_pdf: failed to parse PDF: %s", exc)
+        logger.warning("_extract_pdf_text: both extractors failed: %s", exc)
+        return ""
+
+
+def _parse_known_fields_inline(text: str) -> dict[str, str]:
+    """Match known field names that appear on the same line as their value.
+
+    Handles patterns like::
+
+        Name Rahul Misra
+        Cell Phone 7699888010
+        Zip Code 713301
+
+    The value is everything after the field name on the same line, stripped of
+    leading underscores/dashes used as placeholder fill-lines.
+    """
+    fields: dict[str, str] = {}
+    for field in _KNOWN_FIELD_NAMES:
+        if field in fields:
+            continue  # already captured via a longer match
+        pattern = re.compile(
+            r"^[ \t]*" + re.escape(field) + r"[\s_\-:]+([^\n]+)",
+            re.IGNORECASE | re.MULTILINE,
+        )
+        m = pattern.search(text)
+        if m:
+            raw = m.group(1).strip().lstrip("_-: \t")
+            # Skip if the "value" is obviously another field name
+            if raw and not any(raw.lower() == f.lower() for f in _KNOWN_FIELD_NAMES):
+                fields[field] = raw
+    return fields
+
+
+def _parse_field_then_value(text: str) -> dict[str, str]:
+    """Match known field names that appear alone on one line, value on the next.
+
+    Handles patterns like::
+
+        Name
+        Rahul Misra
+        City
+        Asansol
+    """
+    fields: dict[str, str] = {}
+    lines = [ln.strip() for ln in text.splitlines()]
+    for i, line in enumerate(lines):
+        if i + 1 >= len(lines):
+            break
+        for field in _KNOWN_FIELD_NAMES:
+            if line.lower() == field.lower() and field not in fields:
+                next_line = lines[i + 1].strip().lstrip("_-: \t")
+                if next_line and not any(
+                    next_line.lower() == f.lower() for f in _KNOWN_FIELD_NAMES
+                ):
+                    fields[field] = next_line
+                break
+    return fields
+
+
+def _parse_tab_separated(text: str) -> dict[str, str]:
+    """Parse tab-separated ``FieldName\\tValue`` pairs."""
+    fields: dict[str, str] = {}
+    for line in text.splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) == 2:
+            fname = parts[0].strip()
+            fval = parts[1].strip()
+            if fname and fval and len(fname) <= 60:
+                fields[fname] = fval
+    return fields
+
+
+def _parse_pdf(data: bytes) -> dict[str, str]:
+    """Extract key-value pairs from PDF bytes using multiple strategies.
+
+    Strategies tried in order (first non-empty result wins):
+
+    1. ``Field: Value`` or ``Field = Value`` lines (colon/equals separator)
+    2. Known field names followed by their value on the same line
+    3. Known field names on one line with the value on the next line
+    4. Tab-separated ``FieldName\\tValue`` pairs
+    """
+    full_text = _extract_pdf_text(data)
+    if not full_text.strip():
+        logger.warning("_parse_pdf: no text extracted from PDF")
         return {}
+
+    logger.debug("_parse_pdf: extracted %d chars from PDF", len(full_text))
+
+    # Strategy 1 — colon/equals separator
+    result = _parse_txt(full_text)
+    if result:
+        logger.debug("_parse_pdf: strategy 1 (colon) found %d fields", len(result))
+        return result
+
+    # Strategy 2 — known field names, value on same line
+    result = _parse_known_fields_inline(full_text)
+    if result:
+        logger.debug("_parse_pdf: strategy 2 (inline keywords) found %d fields", len(result))
+        return result
+
+    # Strategy 3 — known field names, value on next line
+    result = _parse_field_then_value(full_text)
+    if result:
+        logger.debug("_parse_pdf: strategy 3 (next-line) found %d fields", len(result))
+        return result
+
+    # Strategy 4 — tab-separated pairs
+    result = _parse_tab_separated(full_text)
+    if result:
+        logger.debug("_parse_pdf: strategy 4 (tab-sep) found %d fields", len(result))
+        return result
+
+    logger.warning("_parse_pdf: all strategies exhausted, no fields found")
+    return {}
 
 
 def _parse_docx(data: bytes) -> dict[str, str]:
@@ -397,6 +556,52 @@ def upload_sample():
         "training/upload_sample.html",
         document_types=DOCUMENT_TYPES,
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /training/extract-preview — extract fields from an uploaded file (JSON)
+# ---------------------------------------------------------------------------
+
+@training_bp.route("/training/extract-preview", methods=["POST"])
+@login_required
+def extract_preview():
+    """Extract field-value pairs from an uploaded file and return them as JSON.
+
+    This endpoint is called via AJAX to let the user preview and edit the
+    extracted fields *before* the training sample is saved.
+
+    Returns::
+
+        {"ok": true, "fields": {"Name": "Rahul Misra", ...}, "count": 6}
+
+    or::
+
+        {"ok": false, "error": "..."}
+    """
+    uploaded_file = request.files.get("sample_file")
+    if not uploaded_file or not uploaded_file.filename:
+        return jsonify({"ok": False, "error": "No file provided."}), 400
+
+    ext = os.path.splitext(uploaded_file.filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        return jsonify({
+            "ok": False,
+            "error": f"Unsupported file type '{ext}'. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
+        }), 400
+
+    fields = _extract_fields_from_file(uploaded_file)
+
+    if not fields:
+        return jsonify({
+            "ok": False,
+            "error": (
+                "No field-value pairs could be extracted from the uploaded file. "
+                "The file may be scanned/image-only, empty, or in an unsupported layout. "
+                "Please use Manual Entry instead."
+            ),
+        }), 422
+
+    return jsonify({"ok": True, "fields": fields, "count": len(fields)})
 
 
 # ---------------------------------------------------------------------------

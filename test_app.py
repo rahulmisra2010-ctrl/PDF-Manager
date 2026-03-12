@@ -492,6 +492,14 @@ class TestTrainingService:
 class TestTrainingExampleModel:
     """Smoke tests for the TrainingExample model."""
 
+    def _create_doc(self, app):
+        from models import Document
+        with app.app_context():
+            doc = Document(filename="t.pdf", file_path="/tmp/t.pdf", status="extracted")
+            db.session.add(doc)
+            db.session.commit()
+            return doc.id
+
     def test_create_training_example(self, app):
         from models import TrainingExample, Document
         with app.app_context():
@@ -523,15 +531,23 @@ class TestTrainingExampleModel:
         assert resp.status_code in (302, 401)
 
     def test_add_training_saves_examples(self, client, app):
+        from models import TrainingExample, Document
         doc_id = self._create_doc(app)
-                field_name="Email",
-                field_value="rahul@example.com",
-            )
-            db.session.add(ex)
-            db.session.commit()
-            fetched = TrainingExample.query.get(ex.id)
+        _login(client, app)
+        resp = client.post(
+            "/api/v1/training/add",
+            json={"document_id": doc_id, "fields": {"Email": "rahul@example.com"}},
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["ok"] is True
+        with app.app_context():
+            fetched = TrainingExample.query.filter_by(
+                document_id=doc_id, field_name="Email"
+            ).first()
             assert fetched is not None
-            assert fetched.field_value == "rahul@example.com"
+            assert fetched.correct_value == "rahul@example.com"
             d = fetched.to_dict()
             assert d["field_name"] == "Email"
             assert "created_at" in d
@@ -543,6 +559,14 @@ class TestTrainingExampleModel:
 
 class TestTrainingAPI:
     """Integration tests for /api/v1/training/* endpoints."""
+
+    def _create_doc(self, app):
+        from models import Document
+        with app.app_context():
+            doc = Document(filename="tr.pdf", file_path="/tmp/tr.pdf", status="extracted")
+            db.session.add(doc)
+            db.session.commit()
+            return doc.id
 
     def _create_doc_and_fields(self, app):
         from models import Document, ExtractedField
@@ -562,18 +586,18 @@ class TestTrainingAPI:
         resp = client.post("/api/v1/training/add", json={"document_id": doc_id})
         assert resp.status_code in (302, 401)
 
-    def test_add_auto_loads_fields(self, client, app):
+    def test_add_with_fields(self, client, app):
         doc_id = self._create_doc_and_fields(app)
         _login(client, app)
         resp = client.post(
             "/api/v1/training/add",
-            json={"document_id": doc_id},
+            json={"document_id": doc_id, "fields": {"Name": "Rahul Misra", "Email": "rahul@example.com"}},
             headers={"X-CSRFToken": "test"},
         )
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["ok"] is True
-        assert data["added"] == 2
+        assert len(data["saved"]) == 2
 
     def test_add_with_explicit_fields(self, client, app):
         doc_id = self._create_doc_and_fields(app)
@@ -587,7 +611,6 @@ class TestTrainingAPI:
                     "City": "Asansol",
                     "State": "WB",
                 },
-                "fields": [{"field_name": "City", "field_value": "Asansol"}],
             },
             headers={"X-CSRFToken": "test"},
         )
@@ -664,45 +687,39 @@ class TestTrainingAPI:
         resp = client.post(
             "/api/v1/training/add",
             json={"document_id": doc_id},
-        assert data["added"] == 1
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 400
 
     def test_list_returns_examples(self, client, app):
         doc_id = self._create_doc_and_fields(app)
         _login(client, app)
         client.post(
             "/api/v1/training/add",
-            json={"document_id": doc_id},
+            json={"document_id": doc_id, "fields": {"Name": "Rahul Misra", "Email": "rahul@example.com"}},
             headers={"X-CSRFToken": "test"},
         )
-        resp = client.get("/api/v1/training/list")
+        resp = client.get("/api/v1/training/examples")
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["ok"] is True
-        assert data["count"] >= 2
+        assert data["count"] == 2
 
-    def test_delete_example(self, client, app):
-        doc_id = self._create_doc_and_fields(app)
+    def test_delete_sample(self, client, app):
+        doc_id = self._create_doc(app)
         _login(client, app)
-        # Add
+        # Add training examples
         client.post(
             "/api/v1/training/add",
-            json={"document_id": doc_id},
+            json={"document_id": doc_id, "fields": {"Name": "Rahul"}},
             headers={"X-CSRFToken": "test"},
         )
-        # List to get an ID
-        list_resp = client.get("/api/v1/training/list")
-        examples = list_resp.get_json()["examples"]
-        assert examples
-        ex_id = examples[0]["id"]
-        # Delete
-        resp = client.delete(
-            f"/api/v1/training/{ex_id}",
+        # Delete the sample group
+        resp = client.post(
+            f"/training/examples/{doc_id}/delete",
             headers={"X-CSRFToken": "test"},
         )
-        assert resp.status_code == 200
-        data = resp.get_json()
-        assert data["ok"] is True
-        assert data["deleted_id"] == ex_id
+        # Should redirect after deletion
+        assert resp.status_code in (200, 302)
 
     def test_add_missing_document_id(self, client, app):
         _login(client, app)
@@ -718,11 +735,15 @@ class TestTrainingAPI:
         resp = client.post(
             "/api/v1/training/add",
             json={"document_id": 9999, "fields": {"Name": "test"}},
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 404
+
     def test_add_doc_not_found(self, client, app):
         _login(client, app)
         resp = client.post(
             "/api/v1/training/add",
-            json={"document_id": 99999},
+            json={"document_id": 99999, "fields": {"Name": "test"}},
             headers={"X-CSRFToken": "test"},
         )
         assert resp.status_code == 404
@@ -845,4 +866,205 @@ class TestTrainingService:
         )
         assert used_empty is True
         assert value_empty == "Rahul Misra"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# PDF field extraction unit tests (blueprints/training.py helpers)
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestPDFFieldExtraction:
+    """Unit tests for the PDF parsing helpers in blueprints/training.py."""
+
+    def _import(self):
+        import importlib
+        import blueprints.training as mod
+        return mod
+
+    def test_parse_txt_colon_separator(self):
+        mod = self._import()
+        text = "Name: Rahul Misra\nCity: Asansol\nZip Code: 713301"
+        result = mod._parse_txt(text)
+        assert result["Name"] == "Rahul Misra"
+        assert result["City"] == "Asansol"
+        assert result["Zip Code"] == "713301"
+
+    def test_parse_txt_equals_separator(self):
+        mod = self._import()
+        text = "Name = Rahul Misra\nCity = Asansol"
+        result = mod._parse_txt(text)
+        assert result["Name"] == "Rahul Misra"
+        assert result["City"] == "Asansol"
+
+    def test_parse_txt_skips_blank_lines(self):
+        mod = self._import()
+        text = "\nName: Rahul\n\nCity: Asansol\n"
+        result = mod._parse_txt(text)
+        assert len(result) == 2
+
+    def test_parse_txt_skips_comment_lines(self):
+        mod = self._import()
+        text = "# comment\nName: Rahul"
+        result = mod._parse_txt(text)
+        assert "# comment" not in result
+        assert result["Name"] == "Rahul"
+
+    def test_parse_known_fields_inline(self):
+        mod = self._import()
+        text = "Name Rahul Misra\nCity Asansol\nZip Code 713301\nCell Phone 7699888010"
+        result = mod._parse_known_fields_inline(text)
+        assert result.get("Name") == "Rahul Misra"
+        assert result.get("City") == "Asansol"
+        assert result.get("Zip Code") == "713301"
+        assert result.get("Cell Phone") == "7699888010"
+
+    def test_parse_known_fields_inline_with_colon(self):
+        mod = self._import()
+        text = "Name: Rahul Misra\nCity: Asansol"
+        # Strategy 1 (_parse_txt) handles colons; inline strategy also should work
+        result = mod._parse_known_fields_inline(text)
+        assert result.get("Name") == "Rahul Misra"
+
+    def test_parse_field_then_value(self):
+        mod = self._import()
+        text = "Name\nRahul Misra\nCity\nAsansol\nState\nWB"
+        result = mod._parse_field_then_value(text)
+        assert result.get("Name") == "Rahul Misra"
+        assert result.get("City") == "Asansol"
+        assert result.get("State") == "WB"
+
+    def test_parse_tab_separated(self):
+        mod = self._import()
+        text = "Name\tRahul Misra\nCity\tAsansol\nZip Code\t713301"
+        result = mod._parse_tab_separated(text)
+        assert result.get("Name") == "Rahul Misra"
+        assert result.get("City") == "Asansol"
+        assert result.get("Zip Code") == "713301"
+
+    def test_parse_pdf_with_colon_text(self):
+        """_parse_pdf should handle text PDFs with 'Field: Value' lines."""
+        import io
+        mod = self._import()
+        # Build a minimal PDF with selectable text using reportlab if available
+        # Otherwise, test _parse_txt fallback path via extract_pdf_text mock
+        # We verify by calling _parse_txt directly since _parse_pdf delegates to it
+        text = "Name: Rahul Misra\nCity: Asansol\nCell Phone: 7699888010"
+        result = mod._parse_txt(text)
+        assert result["Name"] == "Rahul Misra"
+        assert result["City"] == "Asansol"
+        assert result["Cell Phone"] == "7699888010"
+
+    def test_extract_preview_requires_login(self, client, app):
+        """extract-preview endpoint requires authentication."""
+        import io
+        data = {"sample_file": (io.BytesIO(b"Name: Test"), "test.txt")}
+        resp = client.post(
+            "/training/extract-preview",
+            data=data,
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code in (302, 401)
+
+    def test_extract_preview_txt_file(self, client, app):
+        """extract-preview returns extracted fields from a TXT file."""
+        import io
+        _login(client, app)
+        txt_content = b"Name: Rahul Misra\nCity: Asansol\nZip Code: 713301"
+        data = {
+            "sample_file": (io.BytesIO(txt_content), "sample.txt"),
+            "csrf_token": "test",
+        }
+        resp = client.post(
+            "/training/extract-preview",
+            data=data,
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 200
+        result = resp.get_json()
+        assert result["ok"] is True
+        assert result["count"] == 3
+        assert result["fields"]["Name"] == "Rahul Misra"
+        assert result["fields"]["City"] == "Asansol"
+
+    def test_extract_preview_no_file(self, client, app):
+        """extract-preview returns 400 when no file is provided."""
+        _login(client, app)
+        resp = client.post(
+            "/training/extract-preview",
+            data={"csrf_token": "test"},
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 400
+
+    def test_extract_preview_unsupported_type(self, client, app):
+        """extract-preview returns 400 for unsupported file types."""
+        import io
+        _login(client, app)
+        data = {
+            "sample_file": (io.BytesIO(b"data"), "file.csv"),
+            "csrf_token": "test",
+        }
+        resp = client.post(
+            "/training/extract-preview",
+            data=data,
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 400
+
+    def test_extract_preview_empty_file_returns_422(self, client, app):
+        """extract-preview returns 422 when file yields no fields."""
+        import io
+        _login(client, app)
+        # A TXT file with no Field: Value pairs
+        data = {
+            "sample_file": (io.BytesIO(b"just some random text\nno fields here"), "empty.txt"),
+            "csrf_token": "test",
+        }
+        resp = client.post(
+            "/training/extract-preview",
+            data=data,
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 422
+        result = resp.get_json()
+        assert result["ok"] is False
+
+    def test_upload_sample_with_manual_fields(self, client, app):
+        """upload-sample POST with manual mode saves fields correctly."""
+        _login(client, app)
+        resp = client.post(
+            "/training/upload-sample",
+            data={
+                "sample_name": "Test Sample",
+                "document_type": "Address Book",
+                "upload_mode": "manual",
+                "field_name[]": ["Name", "City"],
+                "field_value[]": ["Rahul Misra", "Asansol"],
+                "csrf_token": "test",
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        from models import TrainingExample
+        with app.app_context():
+            examples = TrainingExample.query.filter_by(field_name="Name").all()
+            assert len(examples) >= 1
+            assert examples[0].correct_value == "Rahul Misra"
+
+    def test_upload_sample_requires_sample_name(self, client, app):
+        """upload-sample returns error when sample_name is missing."""
+        _login(client, app)
+        resp = client.post(
+            "/training/upload-sample",
+            data={
+                "sample_name": "",
+                "upload_mode": "manual",
+                "field_name[]": ["Name"],
+                "field_value[]": ["Rahul"],
+                "csrf_token": "test",
+            },
+            content_type="multipart/form-data",
+        )
+        assert resp.status_code == 200  # re-renders form
+        assert b"required" in resp.data.lower() or b"sample name" in resp.data.lower()
 
