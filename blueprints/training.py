@@ -45,6 +45,10 @@ training_bp = Blueprint("training", __name__)
 # Allowed file extensions for the file-upload mode
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".docx", ".xlsx", ".xls"}
 
+# Shared constraints for PDF parsing helpers
+_LABEL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 /\-]{0,38}$")
+_MAX_VALUE_LEN = 200
+
 
 def _extract_fields_from_file(file_storage: FileStorage) -> dict[str, str]:
     """Extract field name → value pairs from an uploaded file.
@@ -90,20 +94,121 @@ def _parse_txt(text: str) -> dict[str, str]:
 
 
 def _parse_pdf(data: bytes) -> dict[str, str]:
-    """Extract key-value pairs from PDF bytes using PyMuPDF."""
+    """Extract key-value pairs from PDF bytes using PyMuPDF with multiple strategies.
+
+    Tries the following strategies in order, returning on the first success:
+
+    1. AcroForm interactive form fields (PDF form widgets).
+    2. Standard ``Field: Value`` / ``Field = Value`` line parsing.
+    3. Multi-space separator lines (``Field   Value`` with 2+ spaces).
+    4. Alternating label/value line pairs.
+    """
     try:
         import fitz  # PyMuPDF
 
         doc = fitz.open(stream=data, filetype="pdf")
+
+        # Strategy 1: AcroForm / interactive form fields
+        form_fields: dict[str, str] = {}
+        for page in doc:
+            for widget in page.widgets() or []:
+                name = (widget.field_name or "").strip()
+                value = str(widget.field_value or "").strip()
+                # Skip un-filled checkboxes/radio buttons
+                if name and value and value not in ("Off", "No", "False"):
+                    form_fields[name] = value
+        if form_fields:
+            doc.close()
+            return form_fields
+
+        # Extract full text for remaining strategies
         text_parts: list[str] = []
         for page in doc:
             text_parts.append(page.get_text())
         doc.close()
         full_text = "\n".join(text_parts)
-        return _parse_txt(full_text)
+
+        # Strategy 2: Standard "Field: Value" / "Field = Value" parsing
+        result = _parse_txt(full_text)
+        if result:
+            return result
+
+        # Strategy 3: Multi-space separator ("Field      Value")
+        result = _parse_multispace(full_text)
+        if result:
+            return result
+
+        # Strategy 4: Alternating label / value line pairs
+        result = _parse_alternating_lines(full_text)
+        if result:
+            return result
+
     except Exception as exc:
         logger.warning("_parse_pdf: failed to parse PDF: %s", exc)
-        return {}
+
+    return {}
+
+
+def _parse_multispace(text: str) -> dict[str, str]:
+    """Parse lines where field name and value are separated by 2+ spaces.
+
+    Handles formats like::
+
+        Name          Rahul Misra
+        City          Asansol
+
+    Only accepts field names that look like human-readable labels (letters,
+    spaces, slashes, hyphens; at most 40 characters).
+    """
+    fields: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.rstrip()
+        if not line.strip():
+            continue
+        # Require at least 2 consecutive spaces between label and value
+        m = re.match(r"^([A-Za-z][A-Za-z0-9 /\-]{0,38}?)\s{2,}(.+)$", line)
+        if m:
+            fname = m.group(1).strip()
+            fval = m.group(2).strip()
+            if _LABEL_RE.match(fname) and fname and fval and len(fval) <= _MAX_VALUE_LEN:
+                fields[fname] = fval
+    return fields
+
+
+def _parse_alternating_lines(text: str) -> dict[str, str]:
+    """Parse alternating label / value line pairs.
+
+    Handles formats where odd lines are field labels and even lines are
+    their values, e.g.::
+
+        Name
+        Rahul Misra
+        City
+        Asansol
+
+    A line is treated as a *label candidate* if it contains only letters,
+    spaces, slashes, hyphens, and is at most 40 characters long.  The
+    heuristic fires only when at least half of every other line looks like
+    a label (to avoid false positives on prose text).
+    """
+    fields: dict[str, str] = {}
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if len(lines) < 4:
+        return fields
+
+    even_lines = lines[::2]
+    label_count = sum(1 for ln in even_lines if _LABEL_RE.match(ln))
+
+    # Require at least half of the candidate label lines to look like labels
+    if label_count < max(2, len(even_lines) // 2):
+        return fields
+
+    for i in range(0, len(lines) - 1, 2):
+        fname = lines[i]
+        fval = lines[i + 1]
+        if _LABEL_RE.match(fname) and fval and len(fval) <= _MAX_VALUE_LEN:
+            fields[fname] = fval
+    return fields
 
 
 def _parse_docx(data: bytes) -> dict[str, str]:
@@ -325,13 +430,16 @@ def upload_sample():
             fields = _extract_fields_from_file(uploaded_file)
             if not fields:
                 flash(
-                    "No field-value pairs could be extracted from the uploaded file. "
-                    "Please check the file format or use manual entry.",
+                    "Could not auto-extract fields from the uploaded file. "
+                    "Switched to manual entry — please add your fields below.",
                     "warning",
                 )
                 return render_template(
                     "training/upload_sample.html",
                     document_types=DOCUMENT_TYPES,
+                    initial_mode="manual",
+                    prefill_sample_name=sample_name,
+                    prefill_document_type=document_type,
                 )
         else:
             # --- Manual entry mode ---

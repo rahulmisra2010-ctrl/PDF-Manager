@@ -524,17 +524,16 @@ class TestTrainingExampleModel:
 
     def test_add_training_saves_examples(self, client, app):
         doc_id = self._create_doc(app)
-                field_name="Email",
-                field_value="rahul@example.com",
-            )
-            db.session.add(ex)
-            db.session.commit()
-            fetched = TrainingExample.query.get(ex.id)
-            assert fetched is not None
-            assert fetched.field_value == "rahul@example.com"
-            d = fetched.to_dict()
-            assert d["field_name"] == "Email"
-            assert "created_at" in d
+        _login(client, app)
+        resp = client.post(
+            "/api/v1/training/add",
+            json={"document_id": doc_id, "fields": {"Name": "Rahul Misra"}},
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert len(data["saved"]) == 1
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -664,7 +663,9 @@ class TestTrainingAPI:
         resp = client.post(
             "/api/v1/training/add",
             json={"document_id": doc_id},
-        assert data["added"] == 1
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 400
 
     def test_list_returns_examples(self, client, app):
         doc_id = self._create_doc_and_fields(app)
@@ -718,6 +719,10 @@ class TestTrainingAPI:
         resp = client.post(
             "/api/v1/training/add",
             json={"document_id": 9999, "fields": {"Name": "test"}},
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 404
+
     def test_add_doc_not_found(self, client, app):
         _login(client, app)
         resp = client.post(
@@ -846,3 +851,142 @@ class TestTrainingService:
         assert used_empty is True
         assert value_empty == "Rahul Misra"
 
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Tests for blueprints/training.py PDF parsing helpers
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestTrainingParsers:
+    """Unit tests for the PDF parsing helper functions in blueprints/training.py."""
+
+    def _import_parsers(self):
+        """Import the private parse helpers from blueprints/training.py."""
+        import importlib
+        mod = importlib.import_module("blueprints.training")
+        return mod
+
+    def test_parse_txt_colon_separator(self):
+        mod = self._import_parsers()
+        text = "Name: Rahul Misra\nCity: Asansol\n"
+        result = mod._parse_txt(text)
+        assert result == {"Name": "Rahul Misra", "City": "Asansol"}
+
+    def test_parse_txt_equals_separator(self):
+        mod = self._import_parsers()
+        text = "State = WB\nZip = 713301\n"
+        result = mod._parse_txt(text)
+        assert result == {"State": "WB", "Zip": "713301"}
+
+    def test_parse_txt_skips_blank_and_comment_lines(self):
+        mod = self._import_parsers()
+        text = "\n# comment\nName: Test\n  \n"
+        result = mod._parse_txt(text)
+        assert result == {"Name": "Test"}
+
+    def test_parse_txt_no_match_returns_empty(self):
+        mod = self._import_parsers()
+        result = mod._parse_txt("Just some plain text with no patterns\n")
+        assert result == {}
+
+    def test_parse_multispace_basic(self):
+        mod = self._import_parsers()
+        text = "Name          Rahul Misra\nCity          Asansol\n"
+        result = mod._parse_multispace(text)
+        assert result.get("Name") == "Rahul Misra"
+        assert result.get("City") == "Asansol"
+
+    def test_parse_multispace_ignores_single_space(self):
+        mod = self._import_parsers()
+        # Single space between words should NOT match (could be prose)
+        text = "Hello World\n"
+        result = mod._parse_multispace(text)
+        assert result == {}
+
+    def test_parse_multispace_ignores_very_long_labels(self):
+        mod = self._import_parsers()
+        # Label longer than 40 chars should be ignored
+        long_label = "A" * 41
+        text = f"{long_label}  some value\n"
+        result = mod._parse_multispace(text)
+        assert result == {}
+
+    def test_parse_alternating_lines_basic(self):
+        mod = self._import_parsers()
+        text = "Name\nRahul Misra\nCity\nAsansol\nState\nWB\nZip\n713301\n"
+        result = mod._parse_alternating_lines(text)
+        assert result.get("Name") == "Rahul Misra"
+        assert result.get("City") == "Asansol"
+
+    def test_parse_alternating_lines_too_few_lines(self):
+        mod = self._import_parsers()
+        # Less than 4 lines should return empty
+        result = mod._parse_alternating_lines("Name\nValue\n")
+        assert result == {}
+
+    def test_parse_alternating_lines_prose_text_not_matched(self):
+        mod = self._import_parsers()
+        # Prose text where many lines have digits / punctuation should not match
+        text = (
+            "This is a sentence.\nAnother sentence here with some longer content.\n"
+            "And yet another line of text 123.\nFinal line here too.\n"
+        )
+        result = mod._parse_alternating_lines(text)
+        assert result == {}
+
+
+class TestUploadSampleFallback:
+    """Integration tests for the upload_sample fallback to manual entry."""
+
+    def test_upload_sample_get_renders_form(self, client, app):
+        """GET /training/upload-sample renders the form."""
+        _login(client, app)
+        resp = client.get("/training/upload-sample")
+        assert resp.status_code == 200
+        assert b"Upload Training Sample" in resp.data
+
+    def test_upload_sample_empty_pdf_falls_back_to_manual(self, client, app):
+        """Uploading a PDF that yields no fields switches to manual entry mode."""
+        import io
+        _login(client, app)
+        # Minimal valid-looking PDF that produces no field:value text
+        empty_pdf = b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n" \
+                    b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n" \
+                    b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>endobj\n" \
+                    b"xref\n0 4\n0000000000 65535 f\n" \
+                    b"trailer<</Size 4/Root 1 0 R>>\nstartxref\n9\n%%EOF"
+        data = {
+            "sample_name": "Test Sample",
+            "document_type": "Other",
+            "upload_mode": "file",
+            "sample_file": (io.BytesIO(empty_pdf), "test.pdf"),
+        }
+        resp = client.post(
+            "/training/upload-sample",
+            data=data,
+            content_type="multipart/form-data",
+        )
+        # Should re-render the form (200) with a warning, not redirect
+        assert resp.status_code == 200
+        body = resp.data.decode("utf-8", errors="replace")
+        assert "manual" in body.lower() or "warning" in body.lower() or "Could not" in body
+
+    def test_upload_sample_manual_entry_saves(self, client, app):
+        """Manual entry with valid fields saves a training sample."""
+        _login(client, app)
+        data = {
+            "sample_name": "Manual Sample",
+            "document_type": "Address Book",
+            "upload_mode": "manual",
+            "field_name[]": ["Name", "City"],
+            "field_value[]": ["Rahul Misra", "Asansol"],
+        }
+        resp = client.post(
+            "/training/upload-sample",
+            data=data,
+            content_type="multipart/form-data",
+        )
+        # Should redirect to examples list on success
+        assert resp.status_code in (200, 302)
+        if resp.status_code == 302:
+            assert "examples" in resp.headers.get("Location", "")

@@ -40,6 +40,7 @@
           id="sample_name"
           name="sample_name"
           placeholder="e.g. sample file 001"
+          value="{{ prefill_sample_name | default('') }}"
           required
         />
         <div class="form-text">A descriptive name to identify this training sample.</div>
@@ -51,7 +52,7 @@
         <select class="form-select" id="document_type" name="document_type">
           <option value="">— Select a type —</option>
           {% for dt in document_types %}
-            <option value="{{ dt }}">{{ dt }}</option>
+            <option value="{{ dt }}" {% if dt == prefill_document_type %}selected{% endif %}>{{ dt }}</option>
           {% endfor %}
         </select>
       </div>
@@ -64,14 +65,14 @@
         <div class="d-flex gap-3">
           <div class="form-check">
             <input class="form-check-input" type="radio" name="upload_mode" id="modeManual"
-                   value="manual" checked />
+                   value="manual" {% if initial_mode != 'file' %}checked{% endif %} />
             <label class="form-check-label" for="modeManual">
               <i class="bi bi-keyboard me-1"></i>Manual Field Entry
             </label>
           </div>
           <div class="form-check">
             <input class="form-check-input" type="radio" name="upload_mode" id="modeFile"
-                   value="file" />
+                   value="file" {% if initial_mode == 'file' %}checked{% endif %} />
             <label class="form-check-label" for="modeFile">
               <i class="bi bi-file-earmark-arrow-up me-1"></i>Upload File (auto-extract fields)
             </label>
@@ -80,7 +81,7 @@
       </div>
 
       <!-- ── FILE UPLOAD MODE ─────────────────────────────────────────── -->
-      <div id="fileUploadSection" class="mb-3" style="display:none;">
+      <div id="fileUploadSection" class="mb-3" {% if initial_mode != 'file' %}style="display:none;"{% endif %}>
         <label for="sample_file" class="form-label fw-semibold">
           Select File <span class="text-danger">*</span>
         </label>
@@ -104,7 +105,7 @@
       </div>
 
       <!-- ── MANUAL ENTRY MODE ───────────────────────────────────────── -->
-      <div id="manualSection" class="mb-3">
+      <div id="manualSection" class="mb-3" {% if initial_mode == 'file' %}style="display:none;"{% endif %}>
         <label class="form-label fw-semibold">Fields</label>
         <div id="fieldRows">
           <!-- Initial row -->
