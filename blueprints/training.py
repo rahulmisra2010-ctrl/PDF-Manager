@@ -13,13 +13,19 @@ POST /training/examples/<id>/delete — delete a training example group (documen
 
 from __future__ import annotations
 
+import io
+import logging
 import os
+import re
 
 from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
+from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
 from models import AuditLog, Document, ExtractedField, TrainingExample, db
+
+logger = logging.getLogger(__name__)
 
 # Document types available for the upload-sample form
 DOCUMENT_TYPES = [
@@ -35,6 +41,121 @@ DOCUMENT_TYPES = [
 ]
 
 training_bp = Blueprint("training", __name__)
+
+# Allowed file extensions for the file-upload mode
+ALLOWED_EXTENSIONS = {".pdf", ".txt", ".docx", ".xlsx", ".xls"}
+
+
+def _extract_fields_from_file(file_storage: FileStorage) -> dict[str, str]:
+    """Extract field name → value pairs from an uploaded file.
+
+    Supports PDF, TXT, DOCX, and XLSX/XLS files.
+    For generic files the parser looks for lines matching ``Field: Value``.
+    Returns an ordered dict (insertion-ordered in Python 3.7+).
+    """
+    filename = file_storage.filename or ""
+    ext = os.path.splitext(filename)[1].lower()
+    data = file_storage.read()
+
+    if ext == ".txt":
+        return _parse_txt(data.decode("utf-8", errors="replace"))
+
+    if ext == ".pdf":
+        return _parse_pdf(data)
+
+    if ext == ".docx":
+        return _parse_docx(data)
+
+    if ext in (".xlsx", ".xls"):
+        return _parse_excel(data, ext)
+
+    return {}
+
+
+def _parse_txt(text: str) -> dict[str, str]:
+    """Parse ``Field: Value`` pairs from plain text (one per line)."""
+    fields: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # Accept lines like "Name: Rahul Misra" or "Name = Rahul Misra"
+        m = re.match(r"^([^:=]+?)\s*[:=]\s*(.+)$", line)
+        if m:
+            fname = m.group(1).strip()
+            fval = m.group(2).strip()
+            if fname and fval:
+                fields[fname] = fval
+    return fields
+
+
+def _parse_pdf(data: bytes) -> dict[str, str]:
+    """Extract key-value pairs from PDF bytes using PyMuPDF."""
+    try:
+        import fitz  # PyMuPDF
+
+        doc = fitz.open(stream=data, filetype="pdf")
+        text_parts: list[str] = []
+        for page in doc:
+            text_parts.append(page.get_text())
+        doc.close()
+        full_text = "\n".join(text_parts)
+        return _parse_txt(full_text)
+    except Exception as exc:
+        logger.warning("_parse_pdf: failed to parse PDF: %s", exc)
+        return {}
+
+
+def _parse_docx(data: bytes) -> dict[str, str]:
+    """Extract key-value pairs from a .docx file."""
+    try:
+        import docx  # python-docx
+
+        doc = docx.Document(io.BytesIO(data))
+        lines = [p.text for p in doc.paragraphs]
+        # Also include table cells
+        for table in doc.tables:
+            for row in table.rows:
+                cells = [c.text.strip() for c in row.cells]
+                # Treat a two-column row as field:value
+                if len(cells) == 2 and cells[0] and cells[1]:
+                    lines.append(f"{cells[0]}: {cells[1]}")
+                else:
+                    lines.append("  ".join(cells))
+        return _parse_txt("\n".join(lines))
+    except Exception as exc:
+        logger.warning("_parse_docx: failed to parse DOCX: %s", exc)
+        return {}
+
+
+def _parse_excel(data: bytes, ext: str) -> dict[str, str]:
+    """Extract key-value pairs from an Excel file (.xlsx or .xls)."""
+    try:
+        import openpyxl
+
+        wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
+        ws = wb.active
+        fields: dict[str, str] = {}
+        for row in ws.iter_rows(values_only=True):
+            non_empty = [str(c).strip() for c in row if c is not None and str(c).strip()]
+            if len(non_empty) >= 2:
+                # First cell = field name, second cell = value
+                fname = non_empty[0]
+                fval = non_empty[1]
+                if fname and fval:
+                    fields[fname] = fval
+            elif len(non_empty) == 1:
+                # Single cell: try "Field: Value" parsing
+                m = re.match(r"^([^:=]+?)\s*[:=]\s*(.+)$", non_empty[0])
+                if m:
+                    fname = m.group(1).strip()
+                    fval = m.group(2).strip()
+                    if fname and fval:
+                        fields[fname] = fval
+        return fields
+    except Exception as exc:
+        logger.warning("_parse_excel: failed to parse Excel: %s", exc)
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -171,8 +292,7 @@ def upload_sample():
     if request.method == "POST":
         sample_name = request.form.get("sample_name", "").strip()
         document_type = request.form.get("document_type", "").strip()
-        field_names = request.form.getlist("field_name[]")
-        field_values = request.form.getlist("field_value[]")
+        upload_mode = request.form.get("upload_mode", "manual")
 
         if not sample_name:
             flash("Sample name is required.", "danger")
@@ -181,20 +301,54 @@ def upload_sample():
                 document_types=DOCUMENT_TYPES,
             )
 
-        # Build field dict, skip completely blank pairs
         fields: dict[str, str] = {}
-        for fname, fval in zip(field_names, field_values):
-            fname = fname.strip()
-            fval = fval.strip()
-            if fname and fval:
-                fields[fname] = fval
 
-        if not fields:
-            flash("Please provide at least one field name and value.", "danger")
-            return render_template(
-                "training/upload_sample.html",
-                document_types=DOCUMENT_TYPES,
-            )
+        if upload_mode == "file":
+            # --- File upload mode ---
+            uploaded_file = request.files.get("sample_file")
+            if not uploaded_file or not uploaded_file.filename:
+                flash("Please select a file to upload.", "danger")
+                return render_template(
+                    "training/upload_sample.html",
+                    document_types=DOCUMENT_TYPES,
+                )
+            ext = os.path.splitext(uploaded_file.filename)[1].lower()
+            if ext not in ALLOWED_EXTENSIONS:
+                flash(
+                    f"Unsupported file type '{ext}'. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
+                    "danger",
+                )
+                return render_template(
+                    "training/upload_sample.html",
+                    document_types=DOCUMENT_TYPES,
+                )
+            fields = _extract_fields_from_file(uploaded_file)
+            if not fields:
+                flash(
+                    "No field-value pairs could be extracted from the uploaded file. "
+                    "Please check the file format or use manual entry.",
+                    "warning",
+                )
+                return render_template(
+                    "training/upload_sample.html",
+                    document_types=DOCUMENT_TYPES,
+                )
+        else:
+            # --- Manual entry mode ---
+            field_names = request.form.getlist("field_name[]")
+            field_values = request.form.getlist("field_value[]")
+            for fname, fval in zip(field_names, field_values):
+                fname = fname.strip()
+                fval = fval.strip()
+                if fname and fval:
+                    fields[fname] = fval
+
+            if not fields:
+                flash("Please provide at least one field name and value.", "danger")
+                return render_template(
+                    "training/upload_sample.html",
+                    document_types=DOCUMENT_TYPES,
+                )
 
         # Create a placeholder Document record with status="training"
         safe_name = secure_filename(sample_name) or "sample"
@@ -229,7 +383,7 @@ def upload_sample():
             "upload_sample",
             "document",
             str(doc.id),
-            details=f"sample_name={sample_name!r}, document_type={document_type!r}, fields={list(fields.keys())}",
+            details=f"sample_name={sample_name!r}, document_type={document_type!r}, mode={upload_mode!r}, fields={list(fields.keys())}",
         )
         db.session.commit()
 
