@@ -30,6 +30,9 @@ CONFIDENCE_HIGH = 0.85
 CONFIDENCE_MED = 0.65
 CONFIDENCE_AUTO_ACCEPT = 0.90  # auto-detect minimum to auto-accept
 
+# Characters considered "printable" for the garbage text detection heuristic
+_PRINTABLE_CHARS = " .,/-@"
+
 
 # ---------------------------------------------------------------------------
 # Service helpers
@@ -64,6 +67,14 @@ def _get_training_service():
         return TrainingService()
     except Exception:
         return None
+
+
+def _load_training_examples() -> list[dict]:
+    """Load all training examples from the database as plain dicts."""
+    try:
+        return [ex.to_dict() for ex in TrainingExample.query.all()]
+    except Exception:
+        return []
 
 
 def _resolve_doc(doc_id: int):
@@ -229,7 +240,7 @@ def _is_garbage(value: str, min_len: int = 1) -> bool:
     if len(set(v.lower())) <= 2 and len(v) > 4:
         return True
     # Mostly non-printable or special characters
-    printable_ratio = sum(1 for c in v if c.isalnum() or c in " .,/-@") / len(v)
+    printable_ratio = sum(1 for c in v if c.isalnum() or c in _PRINTABLE_CHARS) / len(v)
     if printable_ratio < 0.5:
         return True
     return False
@@ -369,7 +380,7 @@ def extract_all(doc_id: int):
     training_svc = _get_training_service()
     if training_svc and merged:
         try:
-            training_examples = [ex.to_dict() for ex in TrainingExample.query.all()]
+            training_examples = _load_training_examples()
             if training_examples:
                 refined = training_svc.apply_training_to_results(merged, training_examples)
                 if refined:

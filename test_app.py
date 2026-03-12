@@ -1113,7 +1113,7 @@ class TestExtractionAPI:
         return doc_id
 
     def test_extract_all_requires_login(self, client, app):
-        """GET /api/v1/extract/all/<id> returns 401/302 when not logged in."""
+        """POST /api/v1/extract/all/<id> returns 401/302 when not logged in."""
         resp = client.post("/api/v1/extract/all/999")
         assert resp.status_code in (302, 401)
 
