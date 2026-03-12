@@ -25,7 +25,10 @@
 
 <div class="card shadow-sm">
   <div class="card-body">
-    <form method="POST" action="{{ url_for('training.upload_sample') }}" id="uploadSampleForm">
+    <form method="POST" action="{{ url_for('training.upload_sample') }}" id="uploadSampleForm"
+          enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+
       <!-- Sample Name -->
       <div class="mb-3">
         <label for="sample_name" class="form-label fw-semibold">
@@ -53,11 +56,58 @@
         </select>
       </div>
 
-      <!-- Field Rows -->
+      <hr />
+
+      <!-- Mode Toggle -->
       <div class="mb-3">
+        <label class="form-label fw-semibold">Entry Mode</label>
+        <div class="d-flex gap-3">
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="upload_mode" id="modeManual"
+                   value="manual" checked />
+            <label class="form-check-label" for="modeManual">
+              <i class="bi bi-keyboard me-1"></i>Manual Field Entry
+            </label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="upload_mode" id="modeFile"
+                   value="file" />
+            <label class="form-check-label" for="modeFile">
+              <i class="bi bi-file-earmark-arrow-up me-1"></i>Upload File (auto-extract fields)
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── FILE UPLOAD MODE ─────────────────────────────────────────── -->
+      <div id="fileUploadSection" class="mb-3" style="display:none;">
+        <label for="sample_file" class="form-label fw-semibold">
+          Select File <span class="text-danger">*</span>
+        </label>
+        <input
+          type="file"
+          class="form-control"
+          id="sample_file"
+          name="sample_file"
+          accept=".pdf,.txt,.docx,.xlsx,.xls"
+        />
+        <div class="form-text">
+          Accepted formats: PDF, TXT, Word (.docx), Excel (.xlsx, .xls).
+          Fields are auto-extracted from the file contents.
+        </div>
+        <!-- File info preview -->
+        <div id="fileInfo" class="mt-2 p-2 border rounded bg-light small" style="display:none;">
+          <i class="bi bi-file-earmark me-1 text-primary"></i>
+          <span id="fileName"></span>
+          <span class="text-muted ms-2" id="fileSize"></span>
+        </div>
+      </div>
+
+      <!-- ── MANUAL ENTRY MODE ───────────────────────────────────────── -->
+      <div id="manualSection" class="mb-3">
         <label class="form-label fw-semibold">Fields</label>
         <div id="fieldRows">
-          <!-- Initial rows -->
+          <!-- Initial row -->
           <div class="row g-2 mb-2 field-row">
             <div class="col-5">
               <input type="text" class="form-control" name="field_name[]" placeholder="Field Name (e.g. Name)" />
@@ -91,10 +141,45 @@
 
 <script>
 (function () {
+  var manualSection = document.getElementById('manualSection');
+  var fileUploadSection = document.getElementById('fileUploadSection');
+  var modeManual = document.getElementById('modeManual');
+  var modeFile = document.getElementById('modeFile');
+  var sampleFileInput = document.getElementById('sample_file');
+  var fileInfo = document.getElementById('fileInfo');
+  var fileNameSpan = document.getElementById('fileName');
+  var fileSizeSpan = document.getElementById('fileSize');
+
+  function switchMode() {
+    if (modeFile.checked) {
+      fileUploadSection.style.display = '';
+      manualSection.style.display = 'none';
+    } else {
+      fileUploadSection.style.display = 'none';
+      manualSection.style.display = '';
+    }
+  }
+
+  modeManual.addEventListener('change', switchMode);
+  modeFile.addEventListener('change', switchMode);
+
+  // Show file name and size when a file is selected
+  sampleFileInput.addEventListener('change', function () {
+    var file = sampleFileInput.files[0];
+    if (file) {
+      fileNameSpan.textContent = file.name;
+      var kb = (file.size / 1024).toFixed(1);
+      fileSizeSpan.textContent = '(' + kb + ' KB)';
+      fileInfo.style.display = '';
+    } else {
+      fileInfo.style.display = 'none';
+    }
+  });
+
   // Add a new field row
   document.getElementById('addRowBtn').addEventListener('click', function () {
-    const container = document.getElementById('fieldRows');
-    const row = document.createElement('div');
+    var container = document.getElementById('fieldRows');
+    var row = document.createElement('div');
     row.className = 'row g-2 mb-2 field-row';
     row.innerHTML =
       '<div class="col-5">' +
@@ -113,9 +198,9 @@
 
   // Remove a field row (delegated)
   document.getElementById('fieldRows').addEventListener('click', function (e) {
-    const btn = e.target.closest('.remove-row');
+    var btn = e.target.closest('.remove-row');
     if (!btn) return;
-    const rows = document.querySelectorAll('#fieldRows .field-row');
+    var rows = document.querySelectorAll('#fieldRows .field-row');
     if (rows.length <= 1) {
       // Keep at least one row; just clear it instead
       btn.closest('.field-row').querySelectorAll('input').forEach(function (inp) {

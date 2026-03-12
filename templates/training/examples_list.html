@@ -60,6 +60,7 @@
             action="{{ url_for('training.delete_sample', doc_id=doc_id) }}"
             onsubmit="return confirm('Delete this sample and all its training examples?');"
             class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
         <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete sample">
           <i class="bi bi-trash"></i>
         </button>
