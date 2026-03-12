@@ -195,9 +195,10 @@ class BatchProcessor:
         """
         return self._extract_all(files)
 
-    def get_job_status(self, job_id: str) -> dict[str, Any] | None:
+    @classmethod
+    def get_job_status(cls, job_id: str) -> dict[str, Any] | None:
         """Return the current state of a batch job, or ``None`` if not found."""
-        return BatchProcessor._jobs.get(job_id)
+        return cls._jobs.get(job_id)
 
     # ------------------------------------------------------------------
     # Internal

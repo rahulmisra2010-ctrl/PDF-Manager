@@ -53,6 +53,11 @@ def _allowed_file(filename: str) -> bool:
     return ext in _ALLOWED_EXTENSIONS
 
 
+def _current_flask_app():
+    """Return the concrete Flask app instance (safe to pass to background threads)."""
+    return current_app._get_current_object()  # type: ignore[attr-defined]
+
+
 # ---------------------------------------------------------------------------
 # UI route
 # ---------------------------------------------------------------------------
@@ -174,7 +179,7 @@ def batch_process():
         job_id = processor.start_job(
             files,
             save_to_db=True,
-            flask_app=current_app._get_current_object(),  # type: ignore[attr-defined]
+            flask_app=_current_flask_app(),
         )
 
         return jsonify(ok=True, job_id=job_id, total_files=len(files))
@@ -208,7 +213,7 @@ def job_status(job_id: str):
     """
     from backend.services.batch_processor import BatchProcessor
 
-    state = BatchProcessor.get_job_status(BatchProcessor, job_id)  # type: ignore[arg-type]
+    state = BatchProcessor.get_job_status(job_id)
 
     if state is None:
         # Fall back to database
@@ -261,7 +266,7 @@ def auto_sample():
 
         keys = _get_api_keys()
         gen = SampleDbGenerator(
-            flask_app=current_app._get_current_object(),  # type: ignore[attr-defined]
+            flask_app=_current_flask_app(),
             mindee_key=keys["mindee_key"],
             koncile_key=keys["koncile_key"],
             openai_key=keys["openai_key"],
@@ -351,7 +356,7 @@ def export_samples():
         from backend.services.sample_db_generator import SampleDbGenerator
 
         gen = SampleDbGenerator(
-            flask_app=current_app._get_current_object(),  # type: ignore[attr-defined]
+            flask_app=_current_flask_app(),
         )
 
         if fmt == "csv":

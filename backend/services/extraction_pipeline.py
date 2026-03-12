@@ -388,6 +388,7 @@ def extract_with_llm(raw_text: str, api_key: str) -> dict[str, Any]:
 
         # Truncate to avoid token limits
         truncated = raw_text[:4000]
+        model = os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo")
 
         prompt = (
             "Extract all key-value pairs from the following document text.\n"
@@ -397,7 +398,7 @@ def extract_with_llm(raw_text: str, api_key: str) -> dict[str, Any]:
         )
 
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
             max_tokens=1000,
@@ -578,6 +579,21 @@ def run_extraction_pipeline(
             results.append(r)
             if r.get("raw"):
                 raw_texts.append(r["raw"])
+
+    elif ext in (".txt",):
+        # Plain text files — read directly
+        try:
+            raw_text = file_data.decode("utf-8", errors="replace")
+            if raw_text.strip():
+                raw_texts.append(raw_text)
+                results.append({
+                    "fields": {},
+                    "confidence": {},
+                    "tool": "plaintext",
+                    "raw": raw_text,
+                })
+        except Exception as exc:
+            logger.warning("Plain text read failed: %s", exc)
 
     # --- OCR for images and scanned PDFs ---
     if use_ocr and ext in (".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp"):

@@ -338,6 +338,8 @@ let currentJobId  = null;
 let pollTimer     = null;
 let samplePage    = 0;
 const PAGE_SIZE   = 20;
+// Safe store for field data (avoids XSS via inline onclick)
+const _fieldStore = new Map();
 
 // ── DOM refs ──────────────────────────────────────────────────
 const dropZone      = document.getElementById('drop-zone');
@@ -513,10 +515,13 @@ function buildBatchFormData(fieldName) {
 function renderResults(items) {
   resultsContainer.innerHTML = '';
   resultsSection.scrollIntoView({ behavior:'smooth' });
-  items.forEach(item => {
+  items.forEach((item, idx) => {
     const fields = item.fields || {};
     const conf   = item.confidence || {};
     const keys   = Object.keys(fields);
+    // Store fields in a safe map to avoid XSS via inline onclick
+    const storeKey = `result-${idx}-${Date.now()}`;
+    _fieldStore.set(storeKey, { fields, title: item.filename || item.source_filename || 'File' });
     const col = document.createElement('div');
     col.className = 'col-md-6 col-xl-4';
     col.innerHTML = `
@@ -557,7 +562,7 @@ function renderResults(items) {
         </div>
         ${keys.length > 0 ? `
         <div class="card-footer p-2 text-end">
-          <button class="btn btn-outline-primary btn-sm" onclick="showFields(${JSON.stringify(fields).replace(/"/g,'&quot;')}, '${esc(item.filename||'File')}')">
+          <button class="btn btn-outline-primary btn-sm show-fields-btn" data-store-key="${esc(storeKey)}">
             <i class="bi bi-eye me-1"></i>All Fields (${keys.length})
           </button>
         </div>` : ''}
@@ -582,6 +587,20 @@ function showFields(fields, title) {
   new bootstrap.Modal(document.getElementById('fields-modal')).show();
 }
 
+// ── Event delegation for show-fields buttons ──────────────────
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.show-fields-btn');
+  if (!btn) return;
+  const key = btn.dataset.storeKey;
+  const entry = _fieldStore.get(key);
+  if (entry) showFields(entry.fields, entry.title);
+});
+
+// ── Poll timer cleanup on page unload ─────────────────────────
+window.addEventListener('beforeunload', () => {
+  if (pollTimer) clearInterval(pollTimer);
+});
+
 // ── Sample DB ─────────────────────────────────────────────────
 btnViewSamples.addEventListener('click', () => {
   samplesSection.style.display = 'block';
@@ -604,9 +623,12 @@ async function loadSamples() {
       samplesTbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">No samples found</td></tr>';
       return;
     }
-    samplesTbody.innerHTML = data.samples.map(s => {
+    samplesTbody.innerHTML = data.samples.map((s, idx) => {
       const fields = s.fields || {};
       const fc = Object.keys(fields).length;
+      // Store fields safely to avoid XSS in onclick attributes
+      const sKey = `sample-${s.id}-${idx}`;
+      _fieldStore.set(sKey, { fields, title: s.source_filename });
       return `<tr class="sample-row">
         <td>${s.id}</td>
         <td class="text-truncate" style="max-width:150px" title="${esc(s.source_filename)}">${esc(s.source_filename)}</td>
@@ -621,7 +643,7 @@ async function loadSamples() {
         <td>${fc}</td>
         <td><small>${s.created_at ? s.created_at.slice(0,16).replace('T',' ') : ''}</small></td>
         <td>
-          <button class="btn btn-outline-secondary btn-sm py-0" onclick='showFields(${JSON.stringify(fields).replace(/'/g,"&#39;")}, "${esc(s.source_filename)}")'>
+          <button class="btn btn-outline-secondary btn-sm py-0 show-fields-btn" data-store-key="${esc(sKey)}">
             <i class="bi bi-eye"></i>
           </button>
         </td>

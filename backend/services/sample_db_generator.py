@@ -153,7 +153,17 @@ class SampleDbGenerator:
 
         files: list[tuple[str, bytes]] = []
 
-        walk = os.walk(directory) if recursive else [(directory, [], os.listdir(directory))]
+        if not os.path.isdir(directory):
+            logger.warning("Directory does not exist or is not accessible: %r", directory)
+            return {"processed": 0, "saved": 0, "skipped": 0, "duplicates": 0, "errors": 0}
+
+        try:
+            dir_listing = os.listdir(directory)
+        except OSError as exc:
+            logger.error("Cannot read directory %r: %s", directory, exc)
+            return {"processed": 0, "saved": 0, "skipped": 0, "duplicates": 0, "errors": 0}
+
+        walk = os.walk(directory) if recursive else [(directory, [], dir_listing)]
 
         for root, _dirs, filenames in walk:
             for fname in filenames:
