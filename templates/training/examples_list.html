@@ -1,24 +1,38 @@
 {% extends "base.html" %}
-{% block title %}Training Examples — PDF Manager{% endblock %}
+{% block title %}Training Data — PDF Manager{% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h2 class="mb-1">
-      <i class="bi bi-mortarboard-fill text-primary me-2"></i>Training Examples
+      <i class="bi bi-mortarboard-fill text-primary me-2"></i>Training Data
     </h2>
     <span class="badge bg-primary">{{ total }} example(s)</span>
   </div>
-  <a href="{{ url_for('pdf.list_documents') }}" class="btn btn-outline-secondary btn-sm">
-    <i class="bi bi-arrow-left me-1"></i>Back to Documents
-  </a>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('training.upload_sample') }}" class="btn btn-success btn-sm">
+      <i class="bi bi-cloud-upload me-1"></i>Upload Sample
+    </a>
+    <a href="{{ url_for('pdf.list_documents') }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-arrow-left me-1"></i>Back to Documents
+    </a>
+  </div>
 </div>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for category, message in messages %}
+    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+      {{ message }}
+      <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+  {% endfor %}
+{% endwith %}
 
 {% if total == 0 %}
 <div class="alert alert-info">
   <i class="bi bi-info-circle me-2"></i>
-  No training examples yet.  Open a document, extract fields, correct any mistakes, then click
-  <strong>Mark as Training Example</strong> to add it here.
+  No training examples yet. Click <strong>Upload Sample</strong> to add a named sample, or open a document,
+  extract fields, correct any mistakes, then click <strong>Mark as Training Example</strong>.
 </div>
 {% else %}
 {% for doc_id, group in grouped.items() %}
@@ -27,13 +41,30 @@
     <span class="fw-semibold">
       <i class="bi bi-file-earmark-pdf text-danger me-2"></i>
       {% if group.document %}
-        <a href="{{ url_for('pdf.detail', doc_id=group.document.id) }}">{{ group.document.filename }}</a>
+        {% if group.document.status == 'training' %}
+          {{ group.document.filename }}
+        {% else %}
+          <a href="{{ url_for('pdf.detail', doc_id=group.document.id) }}">{{ group.document.filename }}</a>
+        {% endif %}
         <small class="text-muted ms-2">(doc #{{ group.document.id }})</small>
+        {% if group.document.status == 'training' %}
+          <span class="badge bg-success ms-1">sample</span>
+        {% endif %}
       {% else %}
         Document #{{ doc_id }}
       {% endif %}
     </span>
-    <span class="badge bg-secondary">{{ group.examples | length }} field(s)</span>
+    <div class="d-flex align-items-center gap-2">
+      <span class="badge bg-secondary">{{ group.examples | length }} field(s)</span>
+      <form method="POST"
+            action="{{ url_for('training.delete_sample', doc_id=doc_id) }}"
+            onsubmit="return confirm('Delete this sample and all its training examples?');"
+            class="d-inline">
+        <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete sample">
+          <i class="bi bi-trash"></i>
+        </button>
+      </form>
+    </div>
   </div>
   <div class="card-body p-0">
     <table class="table table-sm table-hover mb-0">
