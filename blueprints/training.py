@@ -169,8 +169,8 @@ def _parse_known_fields_inline(text: str) -> dict[str, str]:
         if field in fields:
             continue  # already captured via a longer match
         pattern = re.compile(
-            r"(?:^|\n)\s*" + re.escape(field) + r"[\s_\-:]+([^\n]+)",
-            re.IGNORECASE,
+            r"^[ \t]*" + re.escape(field) + r"[\s_\-:]+([^\n]+)",
+            re.IGNORECASE | re.MULTILINE,
         )
         m = pattern.search(text)
         if m:
@@ -193,7 +193,9 @@ def _parse_field_then_value(text: str) -> dict[str, str]:
     """
     fields: dict[str, str] = {}
     lines = [ln.strip() for ln in text.splitlines()]
-    for i, line in enumerate(lines[:-1]):
+    for i, line in enumerate(lines):
+        if i + 1 >= len(lines):
+            break
         for field in _KNOWN_FIELD_NAMES:
             if line.lower() == field.lower() and field not in fields:
                 next_line = lines[i + 1].strip().lstrip("_-: \t")

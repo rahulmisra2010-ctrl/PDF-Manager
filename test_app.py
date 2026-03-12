@@ -702,7 +702,7 @@ class TestTrainingAPI:
         resp = client.get("/api/v1/training/examples")
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["count"] >= 2
+        assert data["count"] == 2
 
     def test_delete_sample(self, client, app):
         doc_id = self._create_doc(app)
