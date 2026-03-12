@@ -7,6 +7,8 @@ Flask-Login~=0.6.3
 
 # PDF processing (PyMuPDF — no PyTorch required)
 PyMuPDF>=1.23.0
+# pdfplumber: layout-aware PDF text extraction (used as primary extractor in training)
+pdfplumber>=0.9.0
 
 # Export formats
 openpyxl~=3.1.0
