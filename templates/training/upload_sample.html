@@ -28,6 +28,8 @@
     <form method="POST" action="{{ url_for('training.upload_sample') }}" id="uploadSampleForm"
           enctype="multipart/form-data">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <!-- upload_mode is set to "manual" when we submit extracted/edited fields -->
+      <input type="hidden" name="upload_mode" id="uploadModeHidden" value="manual" />
 
       <!-- Sample Name -->
       <div class="mb-3">
@@ -63,14 +65,14 @@
         <label class="form-label fw-semibold">Entry Mode</label>
         <div class="d-flex gap-3">
           <div class="form-check">
-            <input class="form-check-input" type="radio" name="upload_mode" id="modeManual"
+            <input class="form-check-input" type="radio" name="_ui_mode" id="modeManual"
                    value="manual" checked />
             <label class="form-check-label" for="modeManual">
               <i class="bi bi-keyboard me-1"></i>Manual Field Entry
             </label>
           </div>
           <div class="form-check">
-            <input class="form-check-input" type="radio" name="upload_mode" id="modeFile"
+            <input class="form-check-input" type="radio" name="_ui_mode" id="modeFile"
                    value="file" />
             <label class="form-check-label" for="modeFile">
               <i class="bi bi-file-earmark-arrow-up me-1"></i>Upload File (auto-extract fields)
@@ -100,6 +102,38 @@
           <i class="bi bi-file-earmark me-1 text-primary"></i>
           <span id="fileName"></span>
           <span class="text-muted ms-2" id="fileSize"></span>
+        </div>
+
+        <!-- Extract button -->
+        <div class="mt-3">
+          <button type="button" class="btn btn-primary" id="extractBtn">
+            <i class="bi bi-search me-1"></i>Extract Fields
+          </button>
+          <span id="extractSpinner" class="ms-2 d-none">
+            <span class="spinner-border spinner-border-sm" role="status"></span>
+            Extracting…
+          </span>
+        </div>
+
+        <!-- Extraction error -->
+        <div id="extractError" class="alert alert-warning mt-3 d-none" role="alert"></div>
+      </div>
+
+      <!-- ── EXTRACTED FIELDS PREVIEW (shown after auto-extract) ──────── -->
+      <div id="previewSection" class="mb-3 d-none">
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <label class="form-label fw-semibold mb-0">
+            <i class="bi bi-check2-circle text-success me-1"></i>
+            Extracted Fields
+            <span class="badge bg-success ms-1" id="extractedCount">0</span>
+          </label>
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="addExtractedRowBtn">
+            <i class="bi bi-plus-circle me-1"></i>Add Field
+          </button>
+        </div>
+        <p class="text-muted small mb-2">Review and edit the detected fields before saving. You can add, edit, or remove any field.</p>
+        <div id="extractedFieldRows">
+          <!-- Populated via JS after extraction -->
         </div>
       </div>
 
@@ -131,7 +165,7 @@
       <hr />
       <div class="d-flex gap-2">
         <button type="submit" class="btn btn-success">
-          <i class="bi bi-cloud-upload me-1"></i>Upload Sample
+          <i class="bi bi-cloud-upload me-1"></i>Save Training Sample
         </button>
         <a href="{{ url_for('training.examples_list') }}" class="btn btn-outline-secondary">Cancel</a>
       </div>
@@ -143,27 +177,38 @@
 (function () {
   var manualSection = document.getElementById('manualSection');
   var fileUploadSection = document.getElementById('fileUploadSection');
+  var previewSection = document.getElementById('previewSection');
   var modeManual = document.getElementById('modeManual');
   var modeFile = document.getElementById('modeFile');
   var sampleFileInput = document.getElementById('sample_file');
   var fileInfo = document.getElementById('fileInfo');
   var fileNameSpan = document.getElementById('fileName');
   var fileSizeSpan = document.getElementById('fileSize');
+  var extractBtn = document.getElementById('extractBtn');
+  var extractSpinner = document.getElementById('extractSpinner');
+  var extractError = document.getElementById('extractError');
+  var extractedFieldRows = document.getElementById('extractedFieldRows');
+  var extractedCount = document.getElementById('extractedCount');
+  var uploadModeHidden = document.getElementById('uploadModeHidden');
 
   function switchMode() {
     if (modeFile.checked) {
       fileUploadSection.style.display = '';
       manualSection.style.display = 'none';
+      previewSection.classList.add('d-none');
+      uploadModeHidden.value = 'file';
     } else {
       fileUploadSection.style.display = 'none';
       manualSection.style.display = '';
+      previewSection.classList.add('d-none');
+      uploadModeHidden.value = 'manual';
     }
   }
 
   modeManual.addEventListener('change', switchMode);
   modeFile.addEventListener('change', switchMode);
 
-  // Show file name and size when a file is selected
+  // Show file name and size when a file is selected; reset any previous preview
   sampleFileInput.addEventListener('change', function () {
     var file = sampleFileInput.files[0];
     if (file) {
@@ -174,9 +219,119 @@
     } else {
       fileInfo.style.display = 'none';
     }
+    // Reset preview when a new file is selected
+    previewSection.classList.add('d-none');
+    extractedFieldRows.innerHTML = '';
+    extractError.classList.add('d-none');
+    uploadModeHidden.value = 'file';
   });
 
-  // Add a new field row
+  // ── Extract Fields via AJAX ────────────────────────────────────────────
+  extractBtn.addEventListener('click', function () {
+    var file = sampleFileInput.files[0];
+    if (!file) {
+      extractError.textContent = 'Please select a file first.';
+      extractError.classList.remove('d-none');
+      return;
+    }
+
+    extractError.classList.add('d-none');
+    extractBtn.disabled = true;
+    extractSpinner.classList.remove('d-none');
+    previewSection.classList.add('d-none');
+
+    var formData = new FormData();
+    formData.append('sample_file', file);
+    formData.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
+
+    fetch('{{ url_for("training.extract_preview") }}', {
+      method: 'POST',
+      body: formData,
+      credentials: 'same-origin',
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        extractBtn.disabled = false;
+        extractSpinner.classList.add('d-none');
+
+        if (!data.ok) {
+          extractError.textContent = data.error || 'Extraction failed.';
+          extractError.classList.remove('d-none');
+          return;
+        }
+
+        // Populate the preview table with extracted fields
+        extractedFieldRows.innerHTML = '';
+        var fields = data.fields || {};
+        var count = 0;
+        Object.keys(fields).forEach(function (fname) {
+          addExtractedRow(fname, fields[fname]);
+          count++;
+        });
+        extractedCount.textContent = count;
+
+        // Switch UI: show preview, hide the file picker section (but keep file input for CSRF)
+        previewSection.classList.remove('d-none');
+        // Now the form will submit in "manual" mode using the extracted rows
+        uploadModeHidden.value = 'manual';
+      })
+      .catch(function (err) {
+        extractBtn.disabled = false;
+        extractSpinner.classList.add('d-none');
+        extractError.textContent = 'Network error: ' + err.message;
+        extractError.classList.remove('d-none');
+      });
+  });
+
+  function makeRowHtml(fname, fval) {
+    var row = document.createElement('div');
+    row.className = 'row g-2 mb-2 field-row';
+    row.innerHTML =
+      '<div class="col-5">' +
+        '<input type="text" class="form-control" name="field_name[]"' +
+          ' value="' + escapeAttr(fname) + '" placeholder="Field Name" />' +
+      '</div>' +
+      '<div class="col-6">' +
+        '<input type="text" class="form-control" name="field_value[]"' +
+          ' value="' + escapeAttr(fval) + '" placeholder="Field Value" />' +
+      '</div>' +
+      '<div class="col-1 d-flex align-items-center">' +
+        '<button type="button" class="btn btn-sm btn-outline-danger remove-extracted-row" title="Remove row">' +
+          '<i class="bi bi-trash"></i>' +
+        '</button>' +
+      '</div>';
+    return row;
+  }
+
+  function addExtractedRow(fname, fval) {
+    extractedFieldRows.appendChild(makeRowHtml(fname || '', fval || ''));
+  }
+
+  function escapeAttr(str) {
+    return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // Add a blank extracted row
+  document.getElementById('addExtractedRowBtn').addEventListener('click', function () {
+    addExtractedRow('', '');
+  });
+
+  // Remove an extracted field row (delegated)
+  extractedFieldRows.addEventListener('click', function (e) {
+    var btn = e.target.closest('.remove-extracted-row');
+    if (!btn) return;
+    var rows = extractedFieldRows.querySelectorAll('.field-row');
+    if (rows.length <= 1) {
+      btn.closest('.field-row').querySelectorAll('input').forEach(function (inp) { inp.value = ''; });
+      return;
+    }
+    btn.closest('.field-row').remove();
+    extractedCount.textContent = extractedFieldRows.querySelectorAll('.field-row').length;
+  });
+
+  // ── Manual entry helpers ───────────────────────────────────────────────
+
+  // Add a new field row (manual mode)
   document.getElementById('addRowBtn').addEventListener('click', function () {
     var container = document.getElementById('fieldRows');
     var row = document.createElement('div');
