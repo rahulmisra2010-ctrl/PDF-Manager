@@ -89,21 +89,152 @@ def _parse_txt(text: str) -> dict[str, str]:
     return fields
 
 
-def _parse_pdf(data: bytes) -> dict[str, str]:
-    """Extract key-value pairs from PDF bytes using PyMuPDF."""
+# ---------------------------------------------------------------------------
+# Well-known field labels used for PDF text parsing heuristics.
+# These are recognised both in colon-separated and space-only contexts.
+# ---------------------------------------------------------------------------
+_KNOWN_LABELS: list[str] = [
+    "Name", "First Name", "Last Name", "Street Address",
+    "City", "State", "Zip Code", "Zip", "Postal Code", "Country",
+    "Home Phone", "Cell Phone", "Work Phone", "Phone", "Mobile",
+    "Email", "Email Address", "Company", "Organization", "Birthday",
+    "Notes", "Fax", "Website", "Invoice No", "Invoice Number",
+    "Date", "Amount", "Total", "Bill To", "Ship To",
+]
+# Short / ambiguous labels that should only be matched when followed by ":"
+_COLON_ONLY_LABELS: frozenset[str] = frozenset({"Address", "Phone", "Date", "Amount", "Total", "Notes"})
+
+
+def _parse_pdf_text(text: str) -> dict[str, str]:
+    """Parse field→value pairs from PDF-extracted text using multiple heuristics.
+
+    Three strategies are tried in order:
+
+    1. **Multi-field lines** — a single line contains several ``Label: Value``
+       pairs (e.g. ``City: Asansol State: WB Zip Code: 713301``).  Known
+       labels are used as anchors so that city/state values are not mistaken
+       for label names.
+
+    2. **Standard single-field lines** — ``Field: Value`` or ``Field = Value``
+       on one line.  Lines already handled by strategy 1 are skipped.
+
+    3. **No-separator labels** — a known label at the start of a line followed
+       by its value with no punctuation separator (e.g. ``Name Rahul Misra``).
+    """
+    fields: dict[str, str] = {}
+
+    # Build regex patterns
+    _known_set = set(_KNOWN_LABELS)
+    all_labels = _KNOWN_LABELS + [lbl for lbl in _COLON_ONLY_LABELS if lbl not in _known_set]
+    all_sorted = sorted(all_labels, key=len, reverse=True)
+    all_pattern = "|".join(re.escape(lbl) for lbl in all_sorted)
+    label_re = re.compile(rf"(?:^|(?<=\s))({all_pattern})\s*:", re.IGNORECASE)
+
+    lines = text.splitlines()
+
+    # Pre-identify multi-field lines (≥2 known labels with colons on one line)
+    multi_field_lines: set[int] = set()
+    for i, line in enumerate(lines):
+        if len(label_re.findall(line.strip())) >= 2:
+            multi_field_lines.add(i)
+
+    # ── Strategy 1: multi-field lines ──────────────────────────────────────
+    for i in multi_field_lines:
+        line = lines[i].strip()
+        matches = list(label_re.finditer(line))
+        for j, m in enumerate(matches):
+            fname = m.group(1).strip()
+            val_start = m.end()
+            val_end = matches[j + 1].start() if j + 1 < len(matches) else len(line)
+            fval = line[val_start:val_end].strip()
+            if fname and fval and fname not in fields:
+                fields[fname] = fval
+
+    # ── Strategy 2: single-field colon/equals lines ────────────────────────
+    for i, line in enumerate(lines):
+        if i in multi_field_lines:
+            continue
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = re.match(r"^([^:=]+?)\s*[:=]\s*(.+)$", line)
+        if m:
+            fname = m.group(1).strip()
+            fval = m.group(2).strip()
+            # Skip if the value contains another known-label:colon pair
+            # (indicates a multi-field line that strategy 1 should have handled)
+            value_contains_nested_label = bool(label_re.search(fval))
+            if fname and fval and fname not in fields and not value_contains_nested_label:
+                fields[fname] = fval
+
+    # ── Strategy 3: known labels without separator ─────────────────────────
+    no_sep_labels = [lbl for lbl in _KNOWN_LABELS if lbl not in _COLON_ONLY_LABELS]
+    no_sep_sorted = sorted(no_sep_labels, key=len, reverse=True)
+    no_sep_pattern = "|".join(re.escape(lbl) for lbl in no_sep_sorted)
+    no_sep_re = re.compile(rf"^({no_sep_pattern})\s+(.+)$", re.IGNORECASE)
+
+    for i, line in enumerate(lines):
+        if i in multi_field_lines:
+            continue
+        line = line.strip()
+        if not line:
+            continue
+        m = no_sep_re.match(line)
+        if m:
+            fname = m.group(1).strip()
+            fval = m.group(2).strip()
+            if fname and fval and fname not in fields:
+                fields[fname] = fval
+
+    return fields
+
+
+def _extract_text_from_pdf(data: bytes) -> str:
+    """Return the full text of a PDF, trying PyMuPDF then pdfplumber as fallback."""
+    # Primary: PyMuPDF (fitz)
     try:
-        import fitz  # PyMuPDF
+        import fitz  # PyMuPDF  # noqa: PLC0415
 
         doc = fitz.open(stream=data, filetype="pdf")
-        text_parts: list[str] = []
-        for page in doc:
-            text_parts.append(page.get_text())
+        parts = [page.get_text() for page in doc]
         doc.close()
-        full_text = "\n".join(text_parts)
-        return _parse_txt(full_text)
+        text = "\n".join(parts)
+        if text.strip():
+            return text
     except Exception as exc:
-        logger.warning("_parse_pdf: failed to parse PDF: %s", exc)
+        logger.warning("_extract_text_from_pdf (PyMuPDF): %s", exc)
+
+    # Fallback: pdfplumber
+    try:
+        import pdfplumber  # noqa: PLC0415
+
+        with pdfplumber.open(io.BytesIO(data)) as pdf:
+            parts = [page.extract_text() or "" for page in pdf.pages]
+        text = "\n".join(parts)
+        if text.strip():
+            return text
+    except Exception as exc:
+        logger.warning("_extract_text_from_pdf (pdfplumber): %s", exc)
+
+    return ""
+
+
+def _parse_pdf(data: bytes) -> dict[str, str]:
+    """Extract key-value pairs from PDF bytes.
+
+    Uses PyMuPDF (primary) or pdfplumber (fallback) to get the raw text, then
+    applies multi-strategy heuristic parsing to find field→value pairs.  The
+    parser handles:
+
+    * Standard ``Field: Value`` and ``Field = Value`` lines.
+    * Multiple pairs on one line (``City: Asansol State: WB Zip Code: 713301``).
+    * Known address-book labels without any separator (``Name Rahul Misra``).
+    """
+    full_text = _extract_text_from_pdf(data)
+    if not full_text.strip():
+        logger.warning("_parse_pdf: no text could be extracted from PDF")
         return {}
+    return _parse_pdf_text(full_text)
 
 
 def _parse_docx(data: bytes) -> dict[str, str]:
@@ -324,14 +455,27 @@ def upload_sample():
                 )
             fields = _extract_fields_from_file(uploaded_file)
             if not fields:
+                # Re-read the file to show extracted raw text as a manual-entry hint
+                uploaded_file.stream.seek(0)
+                raw_data = uploaded_file.stream.read()
+                raw_text = ""
+                ext2 = os.path.splitext(uploaded_file.filename)[1].lower()
+                if ext2 == ".pdf":
+                    raw_text = _extract_text_from_pdf(raw_data)
+                elif ext2 == ".txt":
+                    raw_text = raw_data.decode("utf-8", errors="replace")
                 flash(
-                    "No field-value pairs could be extracted from the uploaded file. "
-                    "Please check the file format or use manual entry.",
+                    "Could not automatically detect field-value pairs from the uploaded file. "
+                    "The extracted text is shown below — please map the fields manually.",
                     "warning",
                 )
                 return render_template(
                     "training/upload_sample.html",
                     document_types=DOCUMENT_TYPES,
+                    prefill_mode="manual",
+                    extracted_text=raw_text,
+                    form_sample_name=sample_name,
+                    form_document_type=document_type,
                 )
         else:
             # --- Manual entry mode ---
