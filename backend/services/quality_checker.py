@@ -125,7 +125,7 @@ class QualityChecker:
                 result["suggestion"] = hint
                 result["confidence"] = 0.3
 
-        # Penalise very short or very long values
+        # Penalize very short or very long values
         if len(value) < 2:
             result["confidence"] = min(result["confidence"], 0.4)
         elif len(value) > 500:

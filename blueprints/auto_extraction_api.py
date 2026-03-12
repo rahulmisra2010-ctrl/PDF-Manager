@@ -42,6 +42,9 @@ from werkzeug.utils import secure_filename
 
 logger = logging.getLogger(__name__)
 
+# Maximum seconds to hold an SSE connection open while waiting for a batch job
+_SSE_MAX_WAIT_SECONDS = int(os.getenv("SSE_MAX_WAIT_SECONDS", "300"))
+
 auto_extraction_bp = Blueprint("auto_extraction", __name__)
 
 ALLOWED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".tiff",
@@ -237,7 +240,7 @@ def live_progress(job_id: str):
         )
 
     def generate():
-        max_wait = 300  # seconds
+        max_wait = _SSE_MAX_WAIT_SECONDS
         start = time.monotonic()
         last_event_idx = 0
 

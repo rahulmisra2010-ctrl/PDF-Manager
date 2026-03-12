@@ -16,6 +16,9 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Maximum characters of raw document text to store per sample
+_MAX_RAW_TEXT_LENGTH = 5000
+
 
 class AutoSampleBuilder:
     """
@@ -84,7 +87,7 @@ class AutoSampleBuilder:
             "confidence_score": result.get("confidence", 0.0),
             "llm_validated": "llm" in result.get("tools_used", []),
             "ml_scored": True,
-            "raw_text": (result.get("raw_text") or "")[:5000],
+            "raw_text": (result.get("raw_text") or "")[:_MAX_RAW_TEXT_LENGTH],
         }
 
         if save_to_db:

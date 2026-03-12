@@ -239,7 +239,7 @@ class FieldClassifier:
     # ------------------------------------------------------------------
 
     def save(self, path: Optional[str] = None) -> str:
-        """Serialise model to disk using pickle. Returns the saved path."""
+        """Serialize model to disk using pickle. Returns the saved path."""
         import pickle
 
         save_dir = path or self._MODEL_DIR

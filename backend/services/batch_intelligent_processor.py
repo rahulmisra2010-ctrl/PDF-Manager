@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 _MAX_WORKERS = int(os.getenv("BATCH_MAX_WORKERS", "4"))
 # Max retries per file
 _MAX_RETRIES = int(os.getenv("BATCH_MAX_RETRIES", "2"))
+# Maximum raw text characters stored per sample
+_MAX_RAW_TEXT_LENGTH = 5000
 
 
 class BatchJob:
@@ -90,7 +92,8 @@ class BatchJob:
         }
 
 
-# In-memory job registry (cleared on restart; production should use Redis/DB)
+# In-memory job registry (cleared on restart).
+# TODO: In production, use Redis or DB-backed storage instead of in-memory registry.
 _JOB_REGISTRY: Dict[str, BatchJob] = {}
 
 
@@ -301,7 +304,7 @@ class BatchIntelligentProcessor:
                 confidence_score=result.get("confidence", 0.0),
                 llm_validated="llm" in result.get("tools_used", []),
                 ml_scored=True,
-                raw_text=(result.get("raw_text") or "")[:5000],
+                raw_text=(result.get("raw_text") or "")[:_MAX_RAW_TEXT_LENGTH],
             )
             db.session.add(sample)
             db.session.commit()

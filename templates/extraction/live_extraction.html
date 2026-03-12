@@ -417,7 +417,10 @@ function renderSingleResult(data) {
       <td class="small text-break">${escHtml(String(value))}</td>
       <td><span class="badge bg-light text-dark">${escHtml(fr.format_type || '—')}</span></td>
       <td>
-        <div class="confidence-bar"><div class="confidence-fill ${colorClass}" style="width:${conf*100}%"></div></div>
+        <div class="confidence-bar" role="progressbar" aria-label="Field confidence"
+             aria-valuenow="${Math.round(conf*100)}" aria-valuemin="0" aria-valuemax="100">
+          <div class="confidence-fill ${colorClass}" style="width:${conf*100}%"></div>
+        </div>
         <small class="text-muted">${formatConf(conf)}</small>
       </td>`;
     body.appendChild(tr);
@@ -489,7 +492,7 @@ btnBatch.addEventListener('click', async () => {
 
     sse.addEventListener('file_complete', e => {
       const d = JSON.parse(e.data).data || {};
-      log(`✅ ${d.filename} → ${d.doc_type} (${(d.confidence*100||0).toFixed(1)}%)`, 'log-ok');
+      log(`✅ ${d.filename} → ${d.doc_type} (${((d.confidence ?? 0) * 100).toFixed(1)}%)`, 'log-ok');
       appendBatchEvent(d, 'success');
       highlightTool((d.tool_used || '').split(',')[0] || 'pymupdf');
     });
@@ -569,8 +572,11 @@ async function loadSampleDb(page = 1) {
         <td class="text-center">${Object.keys(fields).length}</td>
         <td class="small text-muted">${escHtml((s.source_tool || '').split(',').join(', '))}</td>
         <td>
-          <div class="confidence-bar"><div class="confidence-fill ${confColor(s.confidence_score||0)}"
-               style="width:${((s.confidence_score||0)*100).toFixed(0)}%"></div></div>
+          <div class="confidence-bar" role="progressbar" aria-label="Sample confidence"
+               aria-valuenow="${((s.confidence_score||0)*100).toFixed(0)}" aria-valuemin="0" aria-valuemax="100">
+            <div class="confidence-fill ${confColor(s.confidence_score||0)}"
+                 style="width:${((s.confidence_score||0)*100).toFixed(0)}%"></div>
+          </div>
           <small>${formatConf(s.confidence_score)}</small>
         </td>
         <td class="small text-muted">${s.created_at ? s.created_at.substring(0,10) : '—'}</td>`;
