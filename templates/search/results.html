@@ -41,7 +41,7 @@
     <div class="table-responsive">
       <table class="table table-hover mb-0">
         <thead class="table-light">
-          <tr><th>Filename</th><th>Status</th><th>Uploaded</th><th></th></tr>
+          <tr><th>Filename</th><th>Status</th><th>Uploaded</th><th>Actions</th></tr>
         </thead>
         <tbody>
           {% for doc in documents %}
@@ -57,7 +57,46 @@
             <td><span class="badge bg-{{ status_cls }}">{{ doc.status }}</span></td>
             <td>{{ doc.created_at.strftime('%Y-%m-%d') }}</td>
             <td>
-              <a href="{{ url_for('pdf.detail', doc_id=doc.id) }}" class="btn btn-sm btn-outline-primary">View</a>
+              <div class="d-flex flex-wrap gap-1">
+                <a href="{{ url_for('pdf.detail', doc_id=doc.id) }}"
+                   class="btn btn-sm btn-outline-primary" title="View document detail">
+                  <i class="bi bi-eye me-1"></i>View
+                </a>
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary btn-extract-all"
+                        data-doc-id="{{ doc.id }}"
+                        title="Run all extraction strategies">
+                  <i class="bi bi-collection-fill me-1"></i>Extract All
+                </button>
+                <a href="{{ url_for('ai_pdf.view', doc_id=doc.id) }}"
+                   class="btn btn-sm btn-outline-purple"
+                   style="border-color:#6f42c1;color:#6f42c1;"
+                   title="AI-powered field extraction">
+                  <i class="bi bi-stars me-1"></i>AI Extract
+                </a>
+                <a href="{{ url_for('pdf.pdf_viewer', doc_id=doc.id) }}"
+                   class="btn btn-sm btn-outline-info" title="PDF Viewer">
+                  <i class="bi bi-file-earmark-richtext me-1"></i>Viewer
+                </a>
+                <a href="{{ url_for('pdf.extract_overlay', doc_id=doc.id) }}"
+                   class="btn btn-sm btn-outline-warning" title="Overlay view with field boxes">
+                  <i class="bi bi-layers me-1"></i>Overlay
+                </a>
+                <a href="{{ url_for('pdf_editor.editor', doc_id=doc.id) }}"
+                   class="btn btn-sm btn-outline-warning" title="Live Editor">
+                  <i class="bi bi-pencil-square me-1"></i>Live Editor
+                </a>
+                <a href="{{ url_for('pdf.rag_extract_view', doc_id=doc.id) }}"
+                   class="btn btn-sm btn-outline-primary" title="RAG Extract">
+                  <i class="bi bi-robot me-1"></i>RAG
+                </a>
+                <button type="button"
+                        class="btn btn-sm btn-outline-success btn-auto-detect"
+                        data-doc-id="{{ doc.id }}"
+                        title="Auto-detect fields with confidence gates">
+                  <i class="bi bi-magic me-1"></i>Auto-Detect
+                </button>
+              </div>
             </td>
           </tr>
           {% endfor %}
@@ -71,4 +110,78 @@
 {% else %}
 <div class="text-muted py-4 text-center">Enter a search term above to find documents.</div>
 {% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+  'use strict';
+  var csrfToken = document.querySelector('meta[name="csrf-token"]')
+                  ? document.querySelector('meta[name="csrf-token"]').content
+                  : '';
+
+  function showToast(msg, type) {
+    type = type || 'info';
+    var el = document.createElement('div');
+    el.className = 'alert alert-' + type + ' position-fixed bottom-0 end-0 m-3 shadow';
+    el.style.zIndex = '9999';
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(function () { el.remove(); }, 4000);
+  }
+
+  function apiPost(url, body, btn, originalHtml) {
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+      body: body ? JSON.stringify(body) : undefined,
+    })
+    .then(function (r) { return r.json(); })
+    .catch(function (err) {
+      showToast('Request failed: ' + err, 'danger');
+      if (btn) { btn.disabled = false; btn.innerHTML = originalHtml; }
+    });
+  }
+
+  /* Extract All buttons */
+  document.querySelectorAll('.btn-extract-all').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var docId = btn.dataset.docId;
+      var orig = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+      apiPost('/api/v1/extract/all/' + docId, null, btn, orig)
+        .then(function (data) {
+          if (!data) return;
+          if (data.fields) {
+            showToast('Extracted ' + data.total_extracted + ' field(s) for document #' + docId, 'success');
+            btn.disabled = false;
+            btn.innerHTML = orig;
+          } else {
+            showToast('Extract All failed: ' + (data.error || 'unknown'), 'danger');
+            btn.disabled = false;
+            btn.innerHTML = orig;
+          }
+        });
+    });
+  });
+
+  /* Auto-Detect buttons */
+  document.querySelectorAll('.btn-auto-detect').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var docId = btn.dataset.docId;
+      var orig = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+      apiPost('/api/v1/auto-detect/' + docId, { threshold: 0.90 }, btn, orig)
+        .then(function (data) {
+          if (!data) return;
+          showToast('Auto-Detect doc #' + docId + ': ' + (data.total_accepted || 0) + ' accepted, ' + (data.total_flagged || 0) + ' flagged', 'success');
+          btn.disabled = false;
+          btn.innerHTML = orig;
+        });
+    });
+  });
+})();
+</script>
 {% endblock %}
