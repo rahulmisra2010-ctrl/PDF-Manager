@@ -3,12 +3,16 @@ blueprints/training.py — Training examples API and UI blueprint.
 
 Routes
 ------
-POST /api/v1/training/add         — save labeled training examples for a document
-GET  /api/v1/training/examples    — list all training examples as JSON
-GET  /training/examples           — HTML view of all training examples
-GET  /training/upload-sample      — form UI to create a sample training entry
-POST /training/upload-sample      — process the uploaded sample form
-POST /training/examples/<id>/delete — delete a training example group (document)
+POST   /api/v1/training/add              — save labeled training examples for a document
+GET    /api/v1/training/examples         — list all training examples as JSON
+GET    /api/v1/training/list             — alias for /api/v1/training/examples
+DELETE /api/v1/training/<id>             — delete a single training example by ID
+GET    /training/examples                — HTML view of all training examples
+GET    /training/upload-sample           — form UI to create a sample training entry
+POST   /training/upload-sample           — process the uploaded sample form (file → review, manual → save)
+GET    /training/upload-sample/review    — review extracted fields before saving
+POST   /training/upload-sample/review    — confirm and save reviewed fields
+POST   /training/examples/<id>/delete   — delete a training example group (document)
 """
 
 from __future__ import annotations
@@ -18,7 +22,7 @@ import logging
 import os
 import re
 
-from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, session as flask_session, url_for
 from flask_login import current_user, login_required
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
@@ -90,17 +94,65 @@ def _parse_txt(text: str) -> dict[str, str]:
 
 
 def _parse_pdf(data: bytes) -> dict[str, str]:
-    """Extract key-value pairs from PDF bytes using PyMuPDF."""
+    """Extract key-value pairs from PDF bytes using PyMuPDF.
+
+    Tries three strategies in order, returning whichever yields more fields:
+    1. PDF form widget extraction (for fillable forms).
+    2. Address-book-aware parser (PDFService.map_address_book_fields).
+    3. Generic ``Field: Value`` line parsing (_parse_txt fallback).
+    """
     try:
         import fitz  # PyMuPDF
 
         doc = fitz.open(stream=data, filetype="pdf")
+
+        # --- Strategy 1: PDF form widgets (fillable form fields) ---
+        widget_fields: dict[str, str] = {}
+        for page in doc:
+            for widget in page.widgets() or []:
+                name = (widget.field_name or "").strip()
+                value = (widget.field_value or "")
+                if isinstance(value, str):
+                    value = value.strip()
+                else:
+                    value = str(value).strip()
+                if name and value:
+                    widget_fields[name] = value
+
+        # --- Extract full text for text-based strategies ---
         text_parts: list[str] = []
         for page in doc:
             text_parts.append(page.get_text())
         doc.close()
         full_text = "\n".join(text_parts)
-        return _parse_txt(full_text)
+
+        # --- Strategy 2: Address-book-aware parser ---
+        ab_fields: dict[str, str] = {}
+        try:
+            import sys
+            import os as _os
+            _here = _os.path.dirname(_os.path.abspath(__file__))
+            _backend = _os.path.join(_here, "..", "backend")
+            if _backend not in sys.path:
+                sys.path.insert(0, _os.path.abspath(_backend))
+            from services.pdf_service import PDFService  # type: ignore[import]
+
+            mapped = PDFService.map_address_book_fields(full_text)
+            ab_fields = {item["field_name"]: item["value"] for item in mapped}
+        except Exception as exc:
+            logger.debug("_parse_pdf: address-book parser unavailable: %s", exc)
+
+        # --- Strategy 3: Generic Key: Value fallback ---
+        txt_fields = _parse_txt(full_text)
+
+        # Merge: start with the richest source, fill gaps with others.
+        # widget_fields take priority (most reliable), then ab_fields, then txt_fields.
+        merged: dict[str, str] = {}
+        merged.update(txt_fields)
+        merged.update(ab_fields)
+        merged.update(widget_fields)
+        return merged
+
     except Exception as exc:
         logger.warning("_parse_pdf: failed to parse PDF: %s", exc)
         return {}
@@ -188,16 +240,32 @@ def add_training():
     """
     data = request.get_json(silent=True) or {}
     document_id = data.get("document_id")
-    fields = data.get("fields")
+    fields_param = data.get("fields")
 
     if not document_id:
         return jsonify({"ok": False, "error": "document_id is required"}), 400
 
-    if not isinstance(fields, dict) or not fields:
-        return jsonify({"ok": False, "error": "'fields' must be a non-empty object"}), 400
+    # Validate document exists before anything else
+    doc = Document.query.get_or_404(document_id)
 
-    # Validate document exists
-    Document.query.get_or_404(document_id)
+    # Resolve fields: use provided dict, auto-load from ExtractedField, or merge list
+    if isinstance(fields_param, dict) and fields_param:
+        fields: dict = fields_param
+    else:
+        # Auto-load from existing ExtractedField rows for this document
+        ef_rows = ExtractedField.query.filter_by(document_id=document_id).all()
+        fields = {ef.field_name: ef.value for ef in ef_rows}
+        # If fields_param is a list, merge those in as overrides
+        if isinstance(fields_param, list):
+            for item in fields_param:
+                if not isinstance(item, dict):
+                    continue
+                fname = str(item.get("field_name", "")).strip()
+                fval = str(item.get("field_value", "")).strip()
+                if fname and fval:
+                    fields[fname] = fval
+        if not fields:
+            return jsonify({"ok": False, "error": "'fields' must be a non-empty object"}), 400
 
     # Replace existing examples for this document
     TrainingExample.query.filter_by(document_id=document_id).delete()
@@ -227,7 +295,7 @@ def add_training():
     # Rebuild RAG embeddings if RAGService is available
     _rebuild_rag_embeddings(document_id)
 
-    return jsonify({"ok": True, "document_id": document_id, "saved": saved})
+    return jsonify({"ok": True, "document_id": document_id, "added": len(saved), "saved": saved})
 
 
 # ---------------------------------------------------------------------------
@@ -248,8 +316,43 @@ def list_examples_json():
 
 
 # ---------------------------------------------------------------------------
-# GET /training/examples
+# GET /api/v1/training/list
 # ---------------------------------------------------------------------------
+
+@training_bp.route("/api/v1/training/list", methods=["GET"])
+@login_required
+def list_training_json():
+    """Return all training examples as JSON (alias for /api/v1/training/examples)."""
+    examples = TrainingExample.query.order_by(TrainingExample.created_at.desc()).all()
+    return jsonify(
+        {
+            "ok": True,
+            "count": len(examples),
+            "examples": [ex.to_dict() for ex in examples],
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/v1/training/<id>
+# ---------------------------------------------------------------------------
+
+@training_bp.route("/api/v1/training/<int:example_id>", methods=["DELETE"])
+@login_required
+def delete_training_example(example_id: int):
+    """Delete a single TrainingExample by its ID."""
+    ex = TrainingExample.query.get_or_404(example_id)
+    _log(
+        current_user.id,
+        "delete_training_example",
+        "training_example",
+        str(example_id),
+        details=f"field_name={ex.field_name!r}",
+    )
+    db.session.delete(ex)
+    db.session.commit()
+    return jsonify({"ok": True, "deleted_id": example_id})
+
 
 @training_bp.route("/training/examples")
 @login_required
@@ -333,6 +436,16 @@ def upload_sample():
                     "training/upload_sample.html",
                     document_types=DOCUMENT_TYPES,
                 )
+
+            # For file uploads: redirect to review page so the user can
+            # validate and correct extracted fields before saving.
+            flask_session["training_review"] = {
+                "sample_name": sample_name,
+                "document_type": document_type,
+                "fields": fields,
+            }
+            return redirect(url_for("training.review_sample"))
+
         else:
             # --- Manual entry mode ---
             field_names = request.form.getlist("field_name[]")
@@ -350,52 +463,71 @@ def upload_sample():
                     document_types=DOCUMENT_TYPES,
                 )
 
-        # Create a placeholder Document record with status="training"
-        safe_name = secure_filename(sample_name) or "sample"
-        placeholder_path = os.path.join(
-            current_app.config.get("UPLOAD_FOLDER", "uploads"),
-            f"{safe_name}.training",
-        )
-        display_name = f"{sample_name} [{document_type}]" if document_type else sample_name
-        doc = Document(
-            filename=display_name,
-            file_path=placeholder_path,
-            status="training",
-            uploaded_by=current_user.id,
-        )
-        db.session.add(doc)
-        db.session.flush()  # get doc.id before committing
-
-        # Persist field-value pairs as TrainingExample rows
-        saved: list[dict] = []
-        for fname, fval in fields.items():
-            ex = TrainingExample(
-                document_id=doc.id,
-                field_name=fname,
-                correct_value=fval,
-                created_by=current_user.id,
-            )
-            db.session.add(ex)
-            saved.append({"field_name": fname, "correct_value": fval})
-
-        _log(
-            current_user.id,
-            "upload_sample",
-            "document",
-            str(doc.id),
-            details=f"sample_name={sample_name!r}, document_type={document_type!r}, mode={upload_mode!r}, fields={list(fields.keys())}",
-        )
-        db.session.commit()
-
-        flash(
-            f"Sample '{sample_name}' uploaded successfully with {len(saved)} field(s).",
-            "success",
-        )
-        return redirect(url_for("training.examples_list"))
+        # --- Save training sample (manual entry path) ---
+        return _save_training_sample(sample_name, document_type, upload_mode, fields)
 
     return render_template(
         "training/upload_sample.html",
         document_types=DOCUMENT_TYPES,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET  /training/upload-sample/review — show extracted fields for validation
+# POST /training/upload-sample/review — confirm and save after review
+# ---------------------------------------------------------------------------
+
+@training_bp.route("/training/upload-sample/review", methods=["GET", "POST"])
+@login_required
+def review_sample():
+    """Show extracted fields after file upload for user validation before saving."""
+    review_data = flask_session.get("training_review")
+    if not review_data:
+        flash("No pending sample to review. Please upload a file first.", "warning")
+        return redirect(url_for("training.upload_sample"))
+
+    if request.method == "POST":
+        sample_name = review_data.get("sample_name", "")
+        document_type = review_data.get("document_type", "")
+
+        # Collect edited fields from the review form
+        field_names = request.form.getlist("field_name[]")
+        field_values = request.form.getlist("field_value[]")
+        confirmed_fields: dict[str, str] = {}
+        for fname, fval in zip(field_names, field_values):
+            fname = fname.strip()
+            fval = fval.strip()
+            if fname and fval:
+                confirmed_fields[fname] = fval
+
+        # Also handle newly added fields from the review form
+        new_names = request.form.getlist("new_field_name[]")
+        new_values = request.form.getlist("new_field_value[]")
+        for fname, fval in zip(new_names, new_values):
+            fname = fname.strip()
+            fval = fval.strip()
+            if fname and fval:
+                confirmed_fields[fname] = fval
+
+        if not confirmed_fields:
+            flash("Please keep at least one field.", "danger")
+            return render_template(
+                "training/review_fields.html",
+                sample_name=sample_name,
+                document_type=document_type,
+                fields=review_data.get("fields", {}),
+            )
+
+        # Clear the session review data
+        flask_session.pop("training_review", None)
+
+        return _save_training_sample(sample_name, document_type, "file", confirmed_fields)
+
+    return render_template(
+        "training/review_fields.html",
+        sample_name=review_data.get("sample_name", ""),
+        document_type=review_data.get("document_type", ""),
+        fields=review_data.get("fields", {}),
     )
 
 
@@ -433,6 +565,59 @@ def delete_sample(doc_id: int):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _save_training_sample(
+    sample_name: str,
+    document_type: str,
+    upload_mode: str,
+    fields: dict[str, str],
+):
+    """Persist a training sample to the database and redirect to the examples list.
+
+    Creates a Document placeholder (status='training') and TrainingExample rows
+    for every field-value pair, then flashes a success message.
+    """
+    safe_name = secure_filename(sample_name) or "sample"
+    placeholder_path = os.path.join(
+        current_app.config.get("UPLOAD_FOLDER", "uploads"),
+        f"{safe_name}.training",
+    )
+    display_name = f"{sample_name} [{document_type}]" if document_type else sample_name
+    doc = Document(
+        filename=display_name,
+        file_path=placeholder_path,
+        status="training",
+        uploaded_by=current_user.id,
+    )
+    db.session.add(doc)
+    db.session.flush()  # get doc.id before committing
+
+    saved: list[dict] = []
+    for fname, fval in fields.items():
+        ex = TrainingExample(
+            document_id=doc.id,
+            field_name=fname,
+            correct_value=fval,
+            created_by=current_user.id,
+        )
+        db.session.add(ex)
+        saved.append({"field_name": fname, "correct_value": fval})
+
+    _log(
+        current_user.id,
+        "upload_sample",
+        "document",
+        str(doc.id),
+        details=f"sample_name={sample_name!r}, document_type={document_type!r}, mode={upload_mode!r}, fields={list(fields.keys())}",
+    )
+    db.session.commit()
+
+    flash(
+        f"Sample '{sample_name}' saved with {len(saved)} field(s).",
+        "success",
+    )
+    return redirect(url_for("training.examples_list"))
+
 
 def _rebuild_rag_embeddings(document_id: int) -> None:
     """Attempt to rebuild RAG embeddings for *document_id* after training data update."""

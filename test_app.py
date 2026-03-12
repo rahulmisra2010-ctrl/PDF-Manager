@@ -514,27 +514,7 @@ class TestTrainingExampleModel:
             assert d["correct_value"] == "Rahul Misra"
             assert "created_at" in d
 
-    def test_add_training_requires_login(self, client, app):
-        doc_id = self._create_doc(app)
-        resp = client.post(
-            "/api/v1/training/add",
-            json={"document_id": doc_id, "fields": {"Name": "Test"}},
-        )
-        assert resp.status_code in (302, 401)
 
-    def test_add_training_saves_examples(self, client, app):
-        doc_id = self._create_doc(app)
-                field_name="Email",
-                field_value="rahul@example.com",
-            )
-            db.session.add(ex)
-            db.session.commit()
-            fetched = TrainingExample.query.get(ex.id)
-            assert fetched is not None
-            assert fetched.field_value == "rahul@example.com"
-            d = fetched.to_dict()
-            assert d["field_name"] == "Email"
-            assert "created_at" in d
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -543,6 +523,14 @@ class TestTrainingExampleModel:
 
 class TestTrainingAPI:
     """Integration tests for /api/v1/training/* endpoints."""
+
+    def _create_doc(self, app):
+        from models import Document
+        with app.app_context():
+            doc = Document(filename="tr.pdf", file_path="/tmp/tr.pdf", status="extracted")
+            db.session.add(doc)
+            db.session.commit()
+            return doc.id
 
     def _create_doc_and_fields(self, app):
         from models import Document, ExtractedField
@@ -664,7 +652,12 @@ class TestTrainingAPI:
         resp = client.post(
             "/api/v1/training/add",
             json={"document_id": doc_id},
-        assert data["added"] == 1
+            headers={"X-CSRFToken": "test"},
+        )
+        # No extracted fields and no explicit fields → 400
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert data["ok"] is False
 
     def test_list_returns_examples(self, client, app):
         doc_id = self._create_doc_and_fields(app)
@@ -718,7 +711,12 @@ class TestTrainingAPI:
         resp = client.post(
             "/api/v1/training/add",
             json={"document_id": 9999, "fields": {"Name": "test"}},
-    def test_add_doc_not_found(self, client, app):
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 404
+
+    def test_add_doc_not_found_auto_load(self, client, app):
+        """When no fields provided and document doesn't exist, returns 404."""
         _login(client, app)
         resp = client.post(
             "/api/v1/training/add",
