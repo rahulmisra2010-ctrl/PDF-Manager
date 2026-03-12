@@ -6,14 +6,33 @@ Routes
 POST /api/v1/training/add         — save labeled training examples for a document
 GET  /api/v1/training/examples    — list all training examples as JSON
 GET  /training/examples           — HTML view of all training examples
+GET  /training/upload-sample      — form UI to create a sample training entry
+POST /training/upload-sample      — process the uploaded sample form
+POST /training/examples/<id>/delete — delete a training example group (document)
 """
 
 from __future__ import annotations
 
-from flask import Blueprint, current_app, jsonify, redirect, render_template, request, url_for
+import os
+
+from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
+from werkzeug.utils import secure_filename
 
 from models import AuditLog, Document, ExtractedField, TrainingExample, db
+
+# Document types available for the upload-sample form
+DOCUMENT_TYPES = [
+    "Address Book",
+    "Invoice",
+    "Receipt",
+    "Contract",
+    "Resume",
+    "Medical Record",
+    "Tax Form",
+    "Bank Statement",
+    "Other",
+]
 
 training_bp = Blueprint("training", __name__)
 
@@ -138,6 +157,123 @@ def examples_list():
         grouped=grouped,
         total=len(examples),
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /training/upload-sample   — render the upload form
+# POST /training/upload-sample  — process the form submission
+# ---------------------------------------------------------------------------
+
+@training_bp.route("/training/upload-sample", methods=["GET", "POST"])
+@login_required
+def upload_sample():
+    """Form-based UI for uploading a named training sample with field-value pairs."""
+    if request.method == "POST":
+        sample_name = request.form.get("sample_name", "").strip()
+        document_type = request.form.get("document_type", "").strip()
+        field_names = request.form.getlist("field_name[]")
+        field_values = request.form.getlist("field_value[]")
+
+        if not sample_name:
+            flash("Sample name is required.", "danger")
+            return render_template(
+                "training/upload_sample.html",
+                document_types=DOCUMENT_TYPES,
+            )
+
+        # Build field dict, skip completely blank pairs
+        fields: dict[str, str] = {}
+        for fname, fval in zip(field_names, field_values):
+            fname = fname.strip()
+            fval = fval.strip()
+            if fname and fval:
+                fields[fname] = fval
+
+        if not fields:
+            flash("Please provide at least one field name and value.", "danger")
+            return render_template(
+                "training/upload_sample.html",
+                document_types=DOCUMENT_TYPES,
+            )
+
+        # Create a placeholder Document record with status="training"
+        safe_name = secure_filename(sample_name) or "sample"
+        placeholder_path = os.path.join(
+            current_app.config.get("UPLOAD_FOLDER", "uploads"),
+            f"{safe_name}.training",
+        )
+        display_name = f"{sample_name} [{document_type}]" if document_type else sample_name
+        doc = Document(
+            filename=display_name,
+            file_path=placeholder_path,
+            status="training",
+            uploaded_by=current_user.id,
+        )
+        db.session.add(doc)
+        db.session.flush()  # get doc.id before committing
+
+        # Persist field-value pairs as TrainingExample rows
+        saved: list[dict] = []
+        for fname, fval in fields.items():
+            ex = TrainingExample(
+                document_id=doc.id,
+                field_name=fname,
+                correct_value=fval,
+                created_by=current_user.id,
+            )
+            db.session.add(ex)
+            saved.append({"field_name": fname, "correct_value": fval})
+
+        _log(
+            current_user.id,
+            "upload_sample",
+            "document",
+            str(doc.id),
+            details=f"sample_name={sample_name!r}, document_type={document_type!r}, fields={list(fields.keys())}",
+        )
+        db.session.commit()
+
+        flash(
+            f"Sample '{sample_name}' uploaded successfully with {len(saved)} field(s).",
+            "success",
+        )
+        return redirect(url_for("training.examples_list"))
+
+    return render_template(
+        "training/upload_sample.html",
+        document_types=DOCUMENT_TYPES,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /training/examples/<doc_id>/delete — remove a sample and its examples
+# ---------------------------------------------------------------------------
+
+@training_bp.route("/training/examples/<int:doc_id>/delete", methods=["POST"])
+@login_required
+def delete_sample(doc_id: int):
+    """Delete all training examples for a document (and the document if it is a training placeholder)."""
+    doc = Document.query.get_or_404(doc_id)
+
+    # Remove all training examples linked to this document
+    deleted_count = TrainingExample.query.filter_by(document_id=doc_id).delete()
+
+    _log(
+        current_user.id,
+        "delete_sample",
+        "document",
+        str(doc_id),
+        details=f"deleted {deleted_count} training example(s) for doc '{doc.filename}'",
+    )
+
+    # Remove the document record if it was a training placeholder
+    if doc.status == "training":
+        db.session.delete(doc)
+
+    db.session.commit()
+
+    flash(f"Sample deleted ({deleted_count} field(s) removed).", "success")
+    return redirect(url_for("training.examples_list"))
 
 
 # ---------------------------------------------------------------------------

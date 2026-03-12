@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Upload Training Sample — PDF Manager{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h2 class="mb-1">
+      <i class="bi bi-cloud-upload-fill text-success me-2"></i>Upload Training Sample
+    </h2>
+    <p class="text-muted mb-0">Provide a named sample with field-value pairs so the system can learn to fill blank or incorrect fields in future PDFs.</p>
+  </div>
+  <a href="{{ url_for('training.examples_list') }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-arrow-left me-1"></i>Back to Training Data
+  </a>
+</div>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% for category, message in messages %}
+    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+      {{ message }}
+      <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+  {% endfor %}
+{% endwith %}
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('training.upload_sample') }}" id="uploadSampleForm">
+      <!-- Sample Name -->
+      <div class="mb-3">
+        <label for="sample_name" class="form-label fw-semibold">
+          Sample Name <span class="text-danger">*</span>
+        </label>
+        <input
+          type="text"
+          class="form-control"
+          id="sample_name"
+          name="sample_name"
+          placeholder="e.g. sample file 001"
+          required
+        />
+        <div class="form-text">A descriptive name to identify this training sample.</div>
+      </div>
+
+      <!-- Document Type -->
+      <div class="mb-3">
+        <label for="document_type" class="form-label fw-semibold">Document Type</label>
+        <select class="form-select" id="document_type" name="document_type">
+          <option value="">— Select a type —</option>
+          {% for dt in document_types %}
+            <option value="{{ dt }}">{{ dt }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Field Rows -->
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Fields</label>
+        <div id="fieldRows">
+          <!-- Initial rows -->
+          <div class="row g-2 mb-2 field-row">
+            <div class="col-5">
+              <input type="text" class="form-control" name="field_name[]" placeholder="Field Name (e.g. Name)" />
+            </div>
+            <div class="col-6">
+              <input type="text" class="form-control" name="field_value[]" placeholder="Field Value (e.g. Rahul Misra)" />
+            </div>
+            <div class="col-1 d-flex align-items-center">
+              <button type="button" class="btn btn-sm btn-outline-danger remove-row" title="Remove row">
+                <i class="bi bi-trash"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <button type="button" class="btn btn-sm btn-outline-primary mt-2" id="addRowBtn">
+          <i class="bi bi-plus-circle me-1"></i>Add Field
+        </button>
+      </div>
+
+      <hr />
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-success">
+          <i class="bi bi-cloud-upload me-1"></i>Upload Sample
+        </button>
+        <a href="{{ url_for('training.examples_list') }}" class="btn btn-outline-secondary">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function () {
+  // Add a new field row
+  document.getElementById('addRowBtn').addEventListener('click', function () {
+    const container = document.getElementById('fieldRows');
+    const row = document.createElement('div');
+    row.className = 'row g-2 mb-2 field-row';
+    row.innerHTML =
+      '<div class="col-5">' +
+        '<input type="text" class="form-control" name="field_name[]" placeholder="Field Name (e.g. Name)" />' +
+      '</div>' +
+      '<div class="col-6">' +
+        '<input type="text" class="form-control" name="field_value[]" placeholder="Field Value (e.g. Rahul Misra)" />' +
+      '</div>' +
+      '<div class="col-1 d-flex align-items-center">' +
+        '<button type="button" class="btn btn-sm btn-outline-danger remove-row" title="Remove row">' +
+          '<i class="bi bi-trash"></i>' +
+        '</button>' +
+      '</div>';
+    container.appendChild(row);
+  });
+
+  // Remove a field row (delegated)
+  document.getElementById('fieldRows').addEventListener('click', function (e) {
+    const btn = e.target.closest('.remove-row');
+    if (!btn) return;
+    const rows = document.querySelectorAll('#fieldRows .field-row');
+    if (rows.length <= 1) {
+      // Keep at least one row; just clear it instead
+      btn.closest('.field-row').querySelectorAll('input').forEach(function (inp) {
+        inp.value = '';
+      });
+      return;
+    }
+    btn.closest('.field-row').remove();
+  });
+})();
+</script>
+{% endblock %}
