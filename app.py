@@ -127,6 +127,7 @@ def create_app(config: dict | None = None) -> Flask:
     from blueprints.address_book_live import address_book_live_bp
     from blueprints.rag import rag_bp
     from blueprints.training import training_bp
+    from blueprints.extraction_api import extraction_api_bp
 
     app.register_blueprint(auth_bp, url_prefix="/auth")
     app.register_blueprint(pdf_bp, url_prefix="/pdf")
@@ -136,6 +137,7 @@ def create_app(config: dict | None = None) -> Flask:
     app.register_blueprint(address_book_live_bp, url_prefix="/address-book-live")
     app.register_blueprint(rag_bp)  # url_prefix="/api/v1" is set in the blueprint
     app.register_blueprint(training_bp)  # url_prefix="/api/v1" is set in the blueprint
+    app.register_blueprint(extraction_api_bp)  # no prefix — routes set internally
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(search_bp, url_prefix="/search")
     app.register_blueprint(users_bp, url_prefix="/users")
@@ -143,7 +145,7 @@ def create_app(config: dict | None = None) -> Flask:
     # ------------------------------------------------------------------
     # Context processor — make training example count available in all templates
     # ------------------------------------------------------------------
-    from models import TrainingExample  # noqa: E402
+    from models import TrainingExample, ExtractionJob, ExtractedSample  # noqa: E402
 
     @app.context_processor
     def inject_training_count():  # noqa: WPS430
