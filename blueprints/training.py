@@ -134,14 +134,6 @@ def _parse_txt(text: str) -> dict[str, str]:
     return fields
 
 
-def _parse_pdf(data: bytes) -> dict[str, str]:
-    """Extract key-value pairs from PDF bytes using PyMuPDF.
-
-    Tries three strategies in order, returning whichever yields more fields:
-    1. PDF form widget extraction (for fillable forms).
-    2. Address-book-aware parser (PDFService.map_address_book_fields).
-    3. Generic ``Field: Value`` line parsing (_parse_txt fallback).
-    """
 def _extract_pdf_text(data: bytes) -> str:
     """Extract full text from PDF bytes, trying pdfplumber then PyMuPDF."""
     # Try pdfplumber first (better layout-aware extraction)
@@ -162,54 +154,6 @@ def _extract_pdf_text(data: bytes) -> str:
         import fitz  # PyMuPDF
 
         doc = fitz.open(stream=data, filetype="pdf")
-
-        # --- Strategy 1: PDF form widgets (fillable form fields) ---
-        widget_fields: dict[str, str] = {}
-        for page in doc:
-            for widget in page.widgets() or []:
-                name = (widget.field_name or "").strip()
-                value = (widget.field_value or "")
-                if isinstance(value, str):
-                    value = value.strip()
-                else:
-                    value = str(value).strip()
-                if name and value:
-                    widget_fields[name] = value
-
-        # --- Extract full text for text-based strategies ---
-        text_parts: list[str] = []
-        for page in doc:
-            text_parts.append(page.get_text())
-        doc.close()
-        full_text = "\n".join(text_parts)
-
-        # --- Strategy 2: Address-book-aware parser ---
-        ab_fields: dict[str, str] = {}
-        try:
-            import sys
-            import os as _os
-            _here = _os.path.dirname(_os.path.abspath(__file__))
-            _backend = _os.path.join(_here, "..", "backend")
-            if _backend not in sys.path:
-                sys.path.insert(0, _os.path.abspath(_backend))
-            from services.pdf_service import PDFService  # type: ignore[import]
-
-            mapped = PDFService.map_address_book_fields(full_text)
-            ab_fields = {item["field_name"]: item["value"] for item in mapped}
-        except Exception as exc:
-            logger.debug("_parse_pdf: address-book parser unavailable: %s", exc)
-
-        # --- Strategy 3: Generic Key: Value fallback ---
-        txt_fields = _parse_txt(full_text)
-
-        # Merge: start with the richest source, fill gaps with others.
-        # widget_fields take priority (most reliable), then ab_fields, then txt_fields.
-        merged: dict[str, str] = {}
-        merged.update(txt_fields)
-        merged.update(ab_fields)
-        merged.update(widget_fields)
-        return merged
-
         parts = [page.get_text() for page in doc]
         doc.close()
         return "\n".join(parts)
@@ -291,41 +235,137 @@ def _parse_pdf(data: bytes) -> dict[str, str]:
 
     Strategies tried in order (first non-empty result wins):
 
-    1. ``Field: Value`` or ``Field = Value`` lines (colon/equals separator)
-    2. Known field names followed by their value on the same line
-    3. Known field names on one line with the value on the next line
-    4. Tab-separated ``FieldName\\tValue`` pairs
+    1. PDF form widget fields (fillable form extraction via PyMuPDF)
+    2. Address-book-aware parser (PDFService.map_address_book_fields)
+    3. ``Field: Value`` or ``Field = Value`` lines (colon/equals separator)
+    4. Known field names followed by their value on the same line
+    5. Known field names on one line with the value on the next line
+    6. Tab-separated ``FieldName\\tValue`` pairs
+    7. Tesseract OCR text extraction (for scanned PDFs)
+    8. Mindee / Koncile AI extraction (when API keys are configured)
     """
+    import sys
+
+    # Strategy 1: PDF form widget fields (most reliable for fillable forms)
+    try:
+        import fitz  # PyMuPDF
+
+        doc = fitz.open(stream=data, filetype="pdf")
+        widget_fields: dict[str, str] = {}
+        for page in doc:
+            for widget in page.widgets() or []:
+                name = (widget.field_name or "").strip()
+                value = widget.field_value or ""
+                if isinstance(value, str):
+                    value = value.strip()
+                else:
+                    value = str(value).strip()
+                if name and value:
+                    widget_fields[name] = value
+        doc.close()
+        if widget_fields:
+            logger.debug("_parse_pdf: strategy 1 (widget fields) found %d fields", len(widget_fields))
+            return widget_fields
+    except Exception as exc:
+        logger.debug("_parse_pdf: widget extraction failed: %s", exc)
+
+    # Extract full text for text-based strategies
     full_text = _extract_pdf_text(data)
-    if not full_text.strip():
-        logger.warning("_parse_pdf: no text extracted from PDF")
-        return {}
+    full_text = full_text.strip() if full_text else ""
 
-    logger.debug("_parse_pdf: extracted %d chars from PDF", len(full_text))
+    # Strategy 2: Address-book-aware parser
+    if full_text:
+        try:
+            _here = os.path.dirname(os.path.abspath(__file__))
+            _backend = os.path.join(_here, "..", "backend")
+            if _backend not in sys.path:
+                sys.path.insert(0, os.path.abspath(_backend))
+            from services.pdf_service import PDFService  # type: ignore[import]
 
-    # Strategy 1 — colon/equals separator
-    result = _parse_txt(full_text)
-    if result:
-        logger.debug("_parse_pdf: strategy 1 (colon) found %d fields", len(result))
-        return result
+            mapped = PDFService.map_address_book_fields(full_text)
+            ab_fields = {item["field_name"]: item["value"] for item in mapped}
+            if ab_fields:
+                logger.debug("_parse_pdf: strategy 2 (address-book) found %d fields", len(ab_fields))
+                return ab_fields
+        except Exception as exc:
+            logger.debug("_parse_pdf: address-book parser unavailable: %s", exc)
 
-    # Strategy 2 — known field names, value on same line
-    result = _parse_known_fields_inline(full_text)
-    if result:
-        logger.debug("_parse_pdf: strategy 2 (inline keywords) found %d fields", len(result))
-        return result
+    if full_text:
+        # Strategy 3: colon/equals separator
+        result = _parse_txt(full_text)
+        if result:
+            logger.debug("_parse_pdf: strategy 3 (colon) found %d fields", len(result))
+            return result
 
-    # Strategy 3 — known field names, value on next line
-    result = _parse_field_then_value(full_text)
-    if result:
-        logger.debug("_parse_pdf: strategy 3 (next-line) found %d fields", len(result))
-        return result
+        # Strategy 4: known field names, value on same line
+        result = _parse_known_fields_inline(full_text)
+        if result:
+            logger.debug("_parse_pdf: strategy 4 (inline keywords) found %d fields", len(result))
+            return result
 
-    # Strategy 4 — tab-separated pairs
-    result = _parse_tab_separated(full_text)
-    if result:
-        logger.debug("_parse_pdf: strategy 4 (tab-sep) found %d fields", len(result))
-        return result
+        # Strategy 5: known field names, value on next line
+        result = _parse_field_then_value(full_text)
+        if result:
+            logger.debug("_parse_pdf: strategy 5 (next-line) found %d fields", len(result))
+            return result
+
+        # Strategy 6: tab-separated pairs
+        result = _parse_tab_separated(full_text)
+        if result:
+            logger.debug("_parse_pdf: strategy 6 (tab-sep) found %d fields", len(result))
+            return result
+
+    # Strategy 7: Tesseract OCR for scanned PDFs (no embedded text layer)
+    # Strategy 8: Mindee / Koncile advanced AI extraction (if API keys are configured)
+    try:
+        from backend.services.advanced_extraction_service import AdvancedExtractionService  # type: ignore[import]
+
+        ocr_text = AdvancedExtractionService.extract_with_ocr(data)
+        if ocr_text.strip():
+            logger.debug("_parse_pdf: OCR extracted %d chars", len(ocr_text))
+
+            result = _parse_txt(ocr_text)
+            if result:
+                logger.debug("_parse_pdf: OCR+colon found %d fields", len(result))
+                return result
+
+            result = _parse_known_fields_inline(ocr_text)
+            if result:
+                logger.debug("_parse_pdf: OCR+inline found %d fields", len(result))
+                return result
+
+            result = _parse_field_then_value(ocr_text)
+            if result:
+                logger.debug("_parse_pdf: OCR+next-line found %d fields", len(result))
+                return result
+
+            result = _parse_tab_separated(ocr_text)
+            if result:
+                logger.debug("_parse_pdf: OCR+tab-sep found %d fields", len(result))
+                return result
+
+            # LLM-based extraction on OCR text (if OpenAI API key is configured)
+            openai_key = os.environ.get("OPENAI_API_KEY")
+            if openai_key:
+                result = AdvancedExtractionService.extract_with_llm(ocr_text, openai_key)
+                if result:
+                    logger.debug("_parse_pdf: OCR+LLM found %d fields", len(result))
+                    return result
+
+        # Mindee / Koncile advanced AI extraction
+        mindee_key = os.environ.get("MINDEE_API_KEY")
+        koncile_key = os.environ.get("KONCILE_API_KEY")
+        if mindee_key or koncile_key:
+            result = AdvancedExtractionService.extract_multi_strategy(
+                data,
+                mindee_key=mindee_key,
+                koncile_key=koncile_key,
+            )
+            if result:
+                logger.debug("_parse_pdf: strategy 8 (advanced AI) found %d fields", len(result))
+                return result
+    except Exception as exc:
+        logger.debug("_parse_pdf: advanced extraction failed: %s", exc)
 
     logger.warning("_parse_pdf: all strategies exhausted, no fields found")
     return {}
