@@ -775,7 +775,7 @@ def delete_sample(doc_id: int):
     db.session.commit()
 
     flash(f"Sample deleted ({deleted_count} field(s) removed).", "success")
-    return redirect(url_for("training.examples"))
+    return redirect(url_for("training.examples_list"))
 
 
 # ---------------------------------------------------------------------------
@@ -832,7 +832,7 @@ def _save_training_sample(
         f"Sample '{sample_name}' saved with {len(saved)} field(s).",
         "success",
     )
-    return redirect(url_for("training.examples"))
+    return redirect(url_for("training.examples_list"))
 
 
 def _rebuild_rag_embeddings(document_id: int) -> None:
