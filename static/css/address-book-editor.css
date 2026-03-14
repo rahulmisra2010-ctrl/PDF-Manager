@@ -78,6 +78,7 @@
 .abe-btn-secondary { background: #6c757d; color: #fff; }
 .abe-btn-save      { background: #0a3d62; color: #fff; }
 .abe-btn-export    { background: #6f42c1; color: #fff; }
+.abe-btn-apply-all { background: #fd7e14; color: #fff; }
 
 /* --------------------------------------------------------------------------
    Two-panel workspace: form | PDF preview

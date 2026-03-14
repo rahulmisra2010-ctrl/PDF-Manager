@@ -1282,3 +1282,253 @@ class TestExamplesListPage:
         resp = client.get("/training/examples")
         assert resp.status_code == 200
         assert b"Rahul Misra" in resp.data
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Apply All endpoint tests (AddressBook_v1 autofill logic)
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestApplyAll:
+    """Integration tests for POST /address-book/<doc_id>/apply-all."""
+
+    def _create_doc(self, app, fields=None):
+        """Create a Document with optional ExtractedField rows; return doc.id."""
+        from models import Document, ExtractedField
+        with app.app_context():
+            doc = Document(
+                filename="ab_test.pdf",
+                file_path="/tmp/ab_test.pdf",
+                status="extracted",
+            )
+            db.session.add(doc)
+            db.session.flush()
+            for name, val, conf in (fields or []):
+                db.session.add(ExtractedField(
+                    document_id=doc.id,
+                    field_name=name,
+                    value=val,
+                    confidence=conf,
+                ))
+            db.session.commit()
+            return doc.id
+
+    def test_apply_all_requires_login(self, client, app):
+        doc_id = self._create_doc(app)
+        resp = client.post(f"/address-book/{doc_id}/apply-all")
+        # Must redirect to login when not authenticated
+        assert resp.status_code in (302, 401)
+
+    def test_apply_all_doc_not_found(self, client, app):
+        _login(client, app)
+        resp = client.post(
+            "/address-book/9999/apply-all",
+            data={"csrf_token": "test"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 404
+
+    def test_apply_all_blank_document_fills_defaults(self, client, app):
+        """Blank document (0 valid fields) → all fields with defaults are populated."""
+        doc_id = self._create_doc(app)  # No fields at all → 9/9 invalid
+        _login(client, app)
+        resp = client.post(
+            f"/address-book/{doc_id}/apply-all",
+            data={"csrf_token": "test"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        # Verify defaults were written to DB
+        from models import ExtractedField
+        with app.app_context():
+            field_map = {
+                f.field_name: f.value
+                for f in ExtractedField.query.filter_by(document_id=doc_id).all()
+            }
+        assert field_map.get("Name") == "Rahul Misra"
+        assert field_map.get("Street Address") == "Sumoth pally, Durgamandir"
+        assert field_map.get("City") == "Asansol"
+        assert field_map.get("State") == "WB"
+        assert field_map.get("Zip Code") == "713301"
+        assert field_map.get("Cell Phone") == "7699888010"
+        # No defaults for Home Phone, Work Phone, Email → remain blank
+        assert field_map.get("Home Phone") == ""
+        assert field_map.get("Work Phone") == ""
+        assert field_map.get("Email") == ""
+
+    def test_apply_all_blank_document_creates_all_nine_fields(self, client, app):
+        """Apply All creates all 9 template fields in the DB for blank documents."""
+        doc_id = self._create_doc(app)  # No fields at all
+        _login(client, app)
+        client.post(
+            f"/address-book/{doc_id}/apply-all",
+            data={"csrf_token": "test"},
+            follow_redirects=False,
+        )
+        from models import ExtractedField
+        from blueprints.address_book import ADDRESS_BOOK_FIELDS
+        with app.app_context():
+            names = {
+                f.field_name
+                for f in ExtractedField.query.filter_by(document_id=doc_id).all()
+            }
+        assert set(ADDRESS_BOOK_FIELDS) == names
+
+    def test_apply_all_partial_document_only_fixes_fixed_fields(self, client, app):
+        """Non-blank-ish doc (< 7/9 invalid) → only Name/State/Cell Phone overridden."""
+        # 5 valid fields, 4 invalid → NOT blank-ish (threshold is 7)
+        good_fields = [
+            ("Street Address", "123 Main St",   1.0),
+            ("City",           "Springfield",   1.0),
+            ("Zip Code",       "123456",        1.0),
+            ("Home Phone",     "9876543210",    1.0),
+            ("Email",          "test@test.com", 1.0),
+        ]
+        # 4 invalid: Name (blank), State (blank), Cell Phone (blank), Work Phone (blank)
+        bad_fields = [
+            ("Name",       "", 0.0),
+            ("State",      "", 0.0),
+            ("Cell Phone", "", 0.0),
+            ("Work Phone", "", 0.0),
+        ]
+        doc_id = self._create_doc(app, good_fields + bad_fields)
+        _login(client, app)
+        client.post(
+            f"/address-book/{doc_id}/apply-all",
+            data={"csrf_token": "test"},
+            follow_redirects=False,
+        )
+        from models import ExtractedField
+        with app.app_context():
+            field_map = {
+                f.field_name: f.value
+                for f in ExtractedField.query.filter_by(document_id=doc_id).all()
+            }
+        # Fixed fields filled with defaults
+        assert field_map.get("Name") == "Rahul Misra"
+        assert field_map.get("State") == "WB"
+        assert field_map.get("Cell Phone") == "7699888010"
+        # Variable fields NOT overwritten with sample1 defaults
+        assert field_map.get("Street Address") == "123 Main St"
+        assert field_map.get("City") == "Springfield"
+        assert field_map.get("Zip Code") == "123456"
+        # Work Phone has no default → left blank
+        assert field_map.get("Work Phone") == ""
+
+    def test_apply_all_valid_fields_not_overwritten(self, client, app):
+        """Fields with good values and high confidence must not be changed."""
+        fields = [
+            ("Name",           "John Doe",         0.95),
+            ("Street Address", "456 Oak Ave",       0.90),
+            ("City",           "Gotham",            0.92),
+            ("State",          "NY",                0.99),
+            ("Zip Code",       "10001",             0.88),
+            ("Home Phone",     "1234567890",        0.85),
+            ("Cell Phone",     "0987654321",        0.91),
+            ("Work Phone",     "1122334455",        0.87),
+            ("Email",          "john@example.com",  0.96),
+        ]
+        doc_id = self._create_doc(app, fields)
+        _login(client, app)
+        client.post(
+            f"/address-book/{doc_id}/apply-all",
+            data={"csrf_token": "test"},
+            follow_redirects=False,
+        )
+        from models import ExtractedField
+        with app.app_context():
+            field_map = {
+                f.field_name: f.value
+                for f in ExtractedField.query.filter_by(document_id=doc_id).all()
+            }
+        # All values unchanged
+        assert field_map["Name"] == "John Doe"
+        assert field_map["State"] == "NY"
+        assert field_map["Cell Phone"] == "0987654321"
+        assert field_map["City"] == "Gotham"
+
+    def test_apply_all_redirects_to_editor(self, client, app):
+        """Apply All must redirect back to the address-book editor page."""
+        doc_id = self._create_doc(app)
+        _login(client, app)
+        resp = client.post(
+            f"/address-book/{doc_id}/apply-all",
+            data={"csrf_token": "test"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        assert f"/address-book/{doc_id}" in resp.headers["Location"]
+
+    def test_apply_all_sets_doc_status_edited(self, client, app):
+        """Apply All must set document status to 'edited'."""
+        doc_id = self._create_doc(app)
+        _login(client, app)
+        client.post(
+            f"/address-book/{doc_id}/apply-all",
+            data={"csrf_token": "test"},
+            follow_redirects=False,
+        )
+        from models import Document
+        with app.app_context():
+            doc = Document.query.get(doc_id)
+            assert doc.status == "edited"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# _is_field_invalid unit tests (AddressBook_v1 validation helpers)
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestIsFieldInvalid:
+    """Unit tests for the _is_field_invalid helper in blueprints/address_book.py."""
+
+    def _fn(self):
+        from blueprints.address_book import _is_field_invalid
+        return _is_field_invalid
+
+    def test_blank_value_is_invalid(self):
+        fn = self._fn()
+        assert fn("Name", "", 1.0) is True
+        assert fn("Name", "   ", 1.0) is True
+
+    def test_low_confidence_is_invalid(self):
+        fn = self._fn()
+        assert fn("Name", "Rahul Misra", 0.79) is True
+
+    def test_threshold_edge_exactly_080(self):
+        fn = self._fn()
+        # Exactly 0.80 is NOT invalid (threshold is < 0.80)
+        assert fn("Name", "Rahul Misra", 0.80) is False
+
+    def test_valid_name(self):
+        fn = self._fn()
+        assert fn("Name", "Rahul Misra", 0.90) is False
+
+    def test_invalid_zip_code(self):
+        fn = self._fn()
+        assert fn("Zip Code", "12AB", 1.0) is True
+        assert fn("Zip Code", "1234", 1.0) is True   # only 4 digits
+
+    def test_valid_zip_code_5_digits(self):
+        fn = self._fn()
+        assert fn("Zip Code", "12345", 1.0) is False
+
+    def test_valid_zip_code_6_digits(self):
+        fn = self._fn()
+        assert fn("Zip Code", "713301", 1.0) is False
+
+    def test_invalid_phone(self):
+        fn = self._fn()
+        assert fn("Cell Phone", "12345", 1.0) is True       # too short
+        assert fn("Cell Phone", "123456789012", 1.0) is True  # too long
+
+    def test_valid_phone_10_digits(self):
+        fn = self._fn()
+        assert fn("Cell Phone", "7699888010", 1.0) is False
+
+    def test_invalid_email(self):
+        fn = self._fn()
+        assert fn("Email", "notanemail", 1.0) is True
+        assert fn("Email", "missing@tld", 1.0) is True
+
+    def test_valid_email(self):
+        fn = self._fn()
+        assert fn("Email", "rahul@example.com", 1.0) is False

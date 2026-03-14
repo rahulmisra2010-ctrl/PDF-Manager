@@ -22,7 +22,7 @@
 ───────────────────────────────────────────────────────────────────────── #}
 {% set FIELD_DEFAULTS = {
   'Name':           'Rahul Misra',
-  'Street Address': 'Sumoth pally. Durgamandir',
+  'Street Address': 'Sumoth pally, Durgamandir',
   'City':           'Asansol',
   'State':          'WB',
   'Zip Code':       '713301',
@@ -54,6 +54,17 @@
       <button type="submit" class="abe-btn abe-btn-primary"
               title="Run OCR and extract address book fields">
         <i class="bi bi-cpu-fill me-1"></i>Extract Fields
+      </button>
+    </form>
+
+    {# Apply All — AddressBook_v1 autofill/correction #}
+    <form method="POST"
+          action="{{ url_for('address_book.apply_all', doc_id=doc.id) }}"
+          class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="abe-btn abe-btn-apply-all"
+              title="Apply AddressBook_v1 autofill: fill blank/low-confidence fields with sample1 defaults">
+        <i class="bi bi-magic me-1"></i>Apply All
       </button>
     </form>
 

@@ -9,6 +9,7 @@ GET  /address-book/<doc_id>                — address book editor interface
 POST /address-book/<doc_id>/update-field   — AJAX: update a single field value
 POST /address-book/<doc_id>/save           — save all field changes
 POST /address-book/<doc_id>/extract        — re-run OCR field extraction
+POST /address-book/<doc_id>/apply-all      — apply AddressBook_v1 autofill logic
 POST /address-book/<doc_id>/approve        — approve document (Verifier+)
 POST /address-book/<doc_id>/reject         — reject document (Verifier+)
 GET  /address-book/<doc_id>/export         — download updated PDF
@@ -18,6 +19,7 @@ import csv
 import io
 import json
 import os
+import re
 from functools import wraps
 
 from flask import (
@@ -58,6 +60,81 @@ ADDRESS_BOOK_FIELDS = [
     "Work Phone",
     "Email",
 ]
+
+# ---------------------------------------------------------------------------
+# AddressBook_v1 template constants
+# ---------------------------------------------------------------------------
+
+# Keywords used to detect AddressBook_v1 documents (page-1 text/OCR)
+ADDRESSBOOK_V1_KEYWORDS = [
+    "address book",
+    "street address",
+    "cell phone",
+    "zip code",
+    "email",
+]
+
+# OCR confidence threshold below which a field is considered invalid
+OCR_CONFIDENCE_THRESHOLD = 0.80
+
+# If >= BLANK_THRESHOLD of the 9 template fields are invalid, treat doc as blank-ish
+BLANK_THRESHOLD = 7
+
+# Defaults from sample1 (used for autofill)
+ADDRESSBOOK_V1_DEFAULTS = {
+    "Name":           "Rahul Misra",
+    "Street Address": "Sumoth pally, Durgamandir",
+    "City":           "Asansol",
+    "State":          "WB",
+    "Zip Code":       "713301",
+    "Cell Phone":     "7699888010",
+    # Home Phone, Work Phone, Email: no defaults (leave as-is)
+}
+
+# Fixed fields: apply default when invalid even if document is not blank-ish
+ADDRESSBOOK_V1_FIXED_FIELDS = {"Name", "State", "Cell Phone"}
+
+
+# ---------------------------------------------------------------------------
+# AddressBook_v1 field validation helpers
+# ---------------------------------------------------------------------------
+
+def _normalize_phone(value: str) -> str:
+    """Strip all non-digit characters from a phone number string."""
+    return re.sub(r"\D", "", value or "")
+
+
+def _is_field_invalid(field_name: str, value: str, confidence: float) -> bool:
+    """Return True if the field value is blank, low-confidence, or fails validation.
+
+    A field is considered invalid when any of the following is true:
+    * The value is blank (empty or whitespace-only).
+    * ``confidence`` is below ``OCR_CONFIDENCE_THRESHOLD`` (0.80).
+    * The value fails the field-specific regex/format check.
+    """
+    stripped = (value or "").strip()
+
+    # Blank
+    if not stripped:
+        return True
+
+    # Low OCR confidence
+    if confidence < OCR_CONFIDENCE_THRESHOLD:
+        return True
+
+    # Field-specific format validation
+    if field_name == "Zip Code":
+        if not re.match(r"^\d{5,6}$", stripped):
+            return True
+    elif field_name in ("Home Phone", "Cell Phone", "Work Phone"):
+        digits = _normalize_phone(stripped)
+        if not re.match(r"^\d{10}$", digits):
+            return True
+    elif field_name == "Email":
+        if not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", stripped):
+            return True
+
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +342,117 @@ def extract(doc_id: int):
         )
         flash(f"Extraction failed: {exc}", "danger")
 
+    return redirect(url_for("address_book.editor", doc_id=doc_id))
+
+
+@address_book_bp.route("/<int:doc_id>/apply-all", methods=["POST"])
+@login_required
+def apply_all(doc_id: int):
+    """Apply AddressBook_v1 autofill/correction logic to all template fields.
+
+    Algorithm
+    ---------
+    1. Ensure every AddressBook_v1 template field exists in the database
+       (creates an empty placeholder when missing so the UI can render it).
+    2. For each field, determine whether it is *invalid* — blank, OCR
+       confidence < 0.80, or fails the field-specific regex/format check.
+    3. Count invalid fields; if >= 7/9 the document is *blank-ish*.
+    4. Apply sample1 defaults:
+       * Blank-ish  → autofill any field with a known default.
+       * Not blank-ish → autofill only the fixed fields (Name, State,
+         Cell Phone) when invalid; leave variable fields (Street Address,
+         City, Zip Code, Home Phone, Work Phone, Email) untouched.
+    5. Save changes and redirect back to the editor.
+    """
+    doc = Document.query.get_or_404(doc_id)
+
+    # Step 1: Ensure all 9 template fields exist in the DB so the UI can
+    # render edit rows for every field regardless of prior extraction.
+    existing = ExtractedField.query.filter_by(document_id=doc_id).all()
+    field_map = {f.field_name: f for f in existing}
+
+    for name in ADDRESS_BOOK_FIELDS:
+        if name not in field_map:
+            placeholder = ExtractedField(
+                document_id=doc_id,
+                field_name=name,
+                value="",
+                confidence=0.0,
+            )
+            db.session.add(placeholder)
+            field_map[name] = placeholder
+
+    # Flush so newly inserted rows get their primary-key IDs before we
+    # reference them in FieldEditHistory records.
+    db.session.flush()
+
+    # Step 2: Evaluate each field's validity.
+    invalid_count = sum(
+        1
+        for name in ADDRESS_BOOK_FIELDS
+        if _is_field_invalid(name, field_map[name].value or "", field_map[name].confidence)
+    )
+
+    # Step 3: Determine blank-ish threshold.
+    is_blank_ish = invalid_count >= BLANK_THRESHOLD
+
+    # Step 4: Apply defaults.
+    changed_count = 0
+    for name in ADDRESS_BOOK_FIELDS:
+        field = field_map[name]
+
+        # Skip valid fields — do not overwrite good data.
+        if not _is_field_invalid(name, field.value or "", field.confidence):
+            continue
+
+        # Decide which default to apply, if any.
+        if is_blank_ish:
+            # Blank-ish document: autofill any field that has a sample1 default.
+            default = ADDRESSBOOK_V1_DEFAULTS.get(name)
+        elif name in ADDRESSBOOK_V1_FIXED_FIELDS:
+            # Partially-filled document: only override fixed fields.
+            default = ADDRESSBOOK_V1_DEFAULTS.get(name)
+        else:
+            # Variable field in a non-blank-ish document — leave as-is.
+            default = None
+
+        if not default:
+            continue  # no default available or not applicable
+
+        old_value = field.value or ""
+        if old_value == default:
+            continue  # already set — no change needed
+
+        history = FieldEditHistory(
+            field_id=field.id,
+            old_value=old_value,
+            new_value=default,
+            edited_by=current_user.id,
+        )
+        db.session.add(history)
+
+        if not field.is_edited:
+            field.original_value = old_value
+        field.value = default
+        field.is_edited = True
+        field.version += 1
+        changed_count += 1
+
+    doc.status = "edited"
+    _log(
+        current_user.id,
+        "apply_all",
+        "document",
+        str(doc_id),
+        f"blank_ish={is_blank_ish} invalid={invalid_count}/9 changed={changed_count}",
+    )
+    db.session.commit()
+
+    doc_type = "blank-ish" if is_blank_ish else "partially-filled"
+    flash(
+        f"Apply All ({doc_type} document): {changed_count} field(s) updated.",
+        "success",
+    )
     return redirect(url_for("address_book.editor", doc_id=doc_id))
 
 
