@@ -7,6 +7,7 @@ POST   /api/v1/training/add              — save labeled training examples for 
 GET    /api/v1/training/examples         — list all training examples as JSON
 GET    /api/v1/training/list             — alias for /api/v1/training/examples
 DELETE /api/v1/training/<id>             — delete a single training example by ID
+POST   /api/v1/training/save-roi         — save multiple ROI-annotated examples at once
 GET    /training/examples                — HTML view of all training examples
 GET    /training/upload-sample           — form UI to create a sample training entry
 POST   /training/upload-sample           — process the uploaded sample form (file → review, manual → save)
@@ -525,6 +526,139 @@ def delete_training_example(example_id: int):
     db.session.delete(ex)
     db.session.commit()
     return jsonify({"ok": True, "deleted_id": example_id})
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/training/save-roi
+# ---------------------------------------------------------------------------
+
+@training_bp.route("/api/v1/training/save-roi", methods=["POST"])
+@login_required
+def save_roi_training():
+    """Save multiple ROI-annotated training examples for a document in one request.
+
+    Accepts JSON body::
+
+        {
+          "document_id": 123,
+          "page_number": 1,
+          "examples": [
+            {
+              "field_name": "Name",
+              "correct_value": "Rahul Misra",
+              "x0": 0.1, "y0": 0.2, "x1": 0.5, "y1": 0.25,
+              "engine": "pytesseract"
+            },
+            {
+              "field_name": "Cell Phone",
+              "correct_value": "7699888010",
+              "x0": 0.6, "y0": 0.4, "x1": 0.9, "y1": 0.45
+            }
+          ]
+        }
+
+    For each example, any existing ``TrainingExample`` row for the same
+    ``(document_id, page_number, field_name)`` is replaced (upsert semantics).
+    All bounding-box coordinates must be in the range [0, 1].
+
+    Returns::
+
+        {"ok": true, "document_id": 123, "saved": 2}
+    """
+    data = request.get_json(silent=True) or {}
+    document_id = data.get("document_id")
+    page_number = int(data.get("page_number") or 1)
+    examples_param = data.get("examples")
+
+    if not document_id:
+        return jsonify({"ok": False, "error": "document_id is required"}), 400
+    if not isinstance(examples_param, list) or not examples_param:
+        return jsonify({"ok": False, "error": "'examples' must be a non-empty list"}), 400
+
+    # Validate document exists
+    Document.query.get_or_404(document_id)
+
+    saved_count = 0
+    errors: list[str] = []
+
+    for idx, item in enumerate(examples_param):
+        if not isinstance(item, dict):
+            errors.append(f"examples[{idx}]: must be an object")
+            continue
+
+        field_name = str(item.get("field_name", "")).strip()
+        correct_value = str(item.get("correct_value", "")).strip()
+
+        if not field_name:
+            errors.append(f"examples[{idx}]: 'field_name' is required")
+            continue
+        if not correct_value:
+            errors.append(f"examples[{idx}]: 'correct_value' is required")
+            continue
+
+        # Validate and coerce bounding-box values
+        roi: dict[str, float | None] = {}
+        for coord in ("x0", "y0", "x1", "y1"):
+            raw = item.get(coord)
+            if raw is None:
+                roi[coord] = None
+            else:
+                try:
+                    val = float(raw)
+                except (TypeError, ValueError):
+                    errors.append(f"examples[{idx}]: '{coord}' must be a number")
+                    roi[coord] = None
+                    continue
+                if not (0.0 <= val <= 1.0):
+                    errors.append(f"examples[{idx}]: '{coord}' must be between 0 and 1")
+                    roi[coord] = None
+                else:
+                    roi[coord] = val
+
+        engine = str(item.get("engine", "")).strip() or None
+        anchor_text = str(item.get("anchor_text", "")).strip() or None
+
+        # Delete existing row for same document + page + field to avoid duplicates
+        TrainingExample.query.filter_by(
+            document_id=document_id,
+            page_number=page_number,
+            field_name=field_name,
+        ).delete()
+
+        ex = TrainingExample(
+            document_id=document_id,
+            field_name=field_name,
+            correct_value=correct_value,
+            page_number=page_number,
+            x0=roi.get("x0"),
+            y0=roi.get("y0"),
+            x1=roi.get("x1"),
+            y1=roi.get("y1"),
+            engine=engine,
+            anchor_text=anchor_text,
+        )
+        db.session.add(ex)
+        saved_count += 1
+
+    if errors and saved_count == 0:
+        return jsonify({"ok": False, "errors": errors}), 400
+
+    _log(
+        current_user.id,
+        "save_roi_training",
+        "document",
+        str(document_id),
+        details=f"page={page_number} saved={saved_count}",
+    )
+    db.session.commit()
+
+    # Rebuild RAG embeddings if RAGService is available
+    _rebuild_rag_embeddings(document_id)
+
+    response: dict = {"ok": True, "document_id": document_id, "saved": saved_count}
+    if errors:
+        response["warnings"] = errors
+    return jsonify(response)
 
 
 @training_bp.route("/training/examples")

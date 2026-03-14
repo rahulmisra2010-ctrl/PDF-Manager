@@ -412,6 +412,15 @@ class TrainingExample(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
 
+    # ROI metadata — populated by the per-document "all fields at once" trainer
+    page_number = db.Column(db.Integer, nullable=True, default=1)
+    x0 = db.Column(db.Float, nullable=True)
+    y0 = db.Column(db.Float, nullable=True)
+    x1 = db.Column(db.Float, nullable=True)
+    y1 = db.Column(db.Float, nullable=True)
+    engine = db.Column(db.String(64), nullable=True)
+    anchor_text = db.Column(db.Text, nullable=True)
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -421,6 +430,13 @@ class TrainingExample(db.Model):
             "field_value": self.field_value,
             "created_at": self.created_at.isoformat(),
             "created_by": self.created_by,
+            "page_number": self.page_number,
+            "x0": self.x0,
+            "y0": self.y0,
+            "x1": self.x1,
+            "y1": self.y1,
+            "engine": self.engine,
+            "anchor_text": self.anchor_text,
         }
 
     def __repr__(self) -> str:
