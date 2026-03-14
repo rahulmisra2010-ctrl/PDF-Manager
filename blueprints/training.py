@@ -8,6 +8,7 @@ GET    /api/v1/training/examples         — list all training examples as JSON
 GET    /api/v1/training/list             — alias for /api/v1/training/examples
 DELETE /api/v1/training/<id>             — delete a single training example by ID
 POST   /api/v1/training/save-roi         — save multiple ROI-annotated examples at once
+POST   /api/v1/training/apply/<doc_id>   — overwrite all document fields with training data
 GET    /training/examples                — HTML view of all training examples
 GET    /training/upload-sample           — form UI to create a sample training entry
 POST   /training/upload-sample           — process the uploaded sample form (file → review, manual → save)
@@ -505,6 +506,103 @@ def list_training_json():
             "examples": [ex.to_dict() for ex in examples],
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/training/apply/<doc_id>
+# ---------------------------------------------------------------------------
+
+@training_bp.route("/api/v1/training/apply/<int:doc_id>", methods=["POST"])
+@login_required
+def apply_training_to_document(doc_id: int):
+    """Apply training data to a document by overwriting all its extracted fields.
+
+    For each field in the document's ``extracted_fields`` table, this endpoint
+    looks up the most common ``correct_value`` across all TrainingExample rows
+    that share the same ``field_name``.  If a training value is found, the
+    field's value is **overwritten** (not just filled in when blank).
+
+    Returns::
+
+        {
+          "ok": true,
+          "doc_id": 1,
+          "updated": 5,
+          "skipped": 2,
+          "fields": [
+            {"field_name": "Name", "new_value": "Rahul Misra", "updated": true},
+            ...
+          ]
+        }
+
+    HTTP 404 is returned when the document does not exist.
+    HTTP 400 is returned when there are no training examples in the database.
+    """
+    doc = Document.query.get_or_404(doc_id)
+
+    # Load all training examples from the database
+    all_examples = TrainingExample.query.all()
+    if not all_examples:
+        return jsonify({"ok": False, "error": "No training examples found in the database."}), 400
+
+    # Build a mapping: field_name → list of non-blank correct_value strings
+    from collections import Counter
+
+    training_by_field: dict[str, list[str]] = {}
+    for ex in all_examples:
+        fname = (ex.field_name or "").strip()
+        fval = (ex.correct_value or "").strip()
+        if fname and fval:
+            training_by_field.setdefault(fname, []).append(fval)
+
+    if not training_by_field:
+        return jsonify({"ok": False, "error": "No non-blank training values found."}), 400
+
+    # Apply the most common training value to each extracted field
+    fields = ExtractedField.query.filter_by(document_id=doc_id).all()
+
+    result_fields: list[dict] = []
+    updated_count = 0
+    skipped_count = 0
+
+    for field in fields:
+        fname = (field.field_name or "").strip()
+        candidates = training_by_field.get(fname)
+        if not candidates:
+            skipped_count += 1
+            result_fields.append({"field_name": fname, "new_value": field.value, "updated": False})
+            continue
+
+        # Pick the most common value among all training examples for this field
+        most_common_val = Counter(candidates).most_common(1)[0][0]
+
+        # Preserve original value before overwriting
+        if not field.is_edited:
+            field.original_value = field.value
+        field.value = most_common_val
+        field.confidence = 0.90
+        field.is_edited = True
+
+        updated_count += 1
+        result_fields.append({"field_name": fname, "new_value": most_common_val, "updated": True})
+
+    doc.status = "edited"
+    _log(
+        current_user.id,
+        "apply_training",
+        "document",
+        str(doc_id),
+        details=f"updated={updated_count} skipped={skipped_count}",
+    )
+    db.session.commit()
+
+    return jsonify({
+        "ok": True,
+        "doc_id": doc_id,
+        "updated": updated_count,
+        "skipped": skipped_count,
+        "fields": result_fields,
+    })
 
 
 # ---------------------------------------------------------------------------
