@@ -180,9 +180,68 @@ def create_app(config: dict | None = None) -> Flask:
             if db_dir:
                 os.makedirs(db_dir, exist_ok=True)
         db.create_all()
+        _run_schema_migrations(app)
         _create_default_admin(app)
 
     return app
+
+
+def _run_schema_migrations(app: Flask) -> None:
+    """Apply lightweight, idempotent ALTER TABLE migrations for SQLite.
+
+    ``db.create_all()`` only creates *new* tables; it does **not** add columns
+    to existing tables.  This function detects missing columns in the
+    ``training_examples`` table (and any others that need runtime additions) and
+    adds them with ``ALTER TABLE … ADD COLUMN`` so existing databases remain
+    functional without requiring Alembic.
+
+    Safe to call on every startup — it checks before altering.
+    Only runs for SQLite databases (the project does not use Alembic).
+    """
+    db_url: str = app.config.get("SQLALCHEMY_DATABASE_URI", "")
+    if not db_url.startswith("sqlite"):
+        return  # only handle SQLite inline migrations
+
+    # Columns to ensure exist in training_examples.
+    # Each entry: (column_name, DDL_type_with_default)
+    _TRAINING_COLUMNS: list[tuple[str, str]] = [
+        ("correct_value", "TEXT NOT NULL DEFAULT ''"),
+        ("page_number",   "INTEGER DEFAULT 1"),
+        ("x0",            "REAL"),
+        ("y0",            "REAL"),
+        ("x1",            "REAL"),
+        ("y1",            "REAL"),
+        ("engine",        "VARCHAR(64)"),
+        ("anchor_text",   "TEXT"),
+    ]
+
+    try:
+        connection = db.engine.raw_connection()
+        try:
+            cursor = connection.cursor()
+            # Fetch existing columns for training_examples
+            cursor.execute("PRAGMA table_info(training_examples)")
+            rows = cursor.fetchall()
+            if not rows:
+                # Table doesn't exist yet — db.create_all() will handle it
+                return
+            existing = {row[1] for row in rows}  # row[1] is column name
+            for col_name, col_def in _TRAINING_COLUMNS:
+                if col_name not in existing:
+                    import warnings
+                    warnings.warn(
+                        f"Schema migration: adding column '{col_name}' to training_examples.",
+                        stacklevel=2,
+                    )
+                    cursor.execute(
+                        f"ALTER TABLE training_examples ADD COLUMN {col_name} {col_def}"
+                    )
+            connection.commit()
+        finally:
+            connection.close()
+    except Exception as exc:  # pragma: no cover
+        import warnings
+        warnings.warn(f"Schema migration failed (non-fatal): {exc}", stacklevel=2)
 
 
 def _create_default_admin(app: Flask) -> None:

@@ -1067,3 +1067,218 @@ class TestPDFFieldExtraction:
         assert resp.status_code == 200  # re-renders form
         assert b"required" in resp.data.lower() or b"sample name" in resp.data.lower()
 
+
+# ─────────────────────────────────────────────────────────────────────────
+# Schema migration tests
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestSchemaMigration:
+    """Tests that _run_schema_migrations() safely adds missing columns."""
+
+    def test_migration_adds_correct_value_if_missing(self):
+        """Simulate a legacy DB missing correct_value; migration should add it."""
+        import sqlite3, tempfile, os
+        from app import create_app, _run_schema_migrations
+        from models import db as _db
+
+        # Build a minimal SQLite file that has training_examples WITHOUT correct_value
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "legacy.db")
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                "CREATE TABLE training_examples "
+                "(id INTEGER PRIMARY KEY, document_id INTEGER NOT NULL, "
+                "field_name TEXT NOT NULL)"
+            )
+            conn.commit()
+            conn.close()
+
+            test_app = create_app({
+                "TESTING": True,
+                "SQLALCHEMY_DATABASE_URI": f"sqlite:///{db_path}",
+                "WTF_CSRF_ENABLED": False,
+            })
+            # Migration runs during create_app; verify column now exists
+            conn2 = sqlite3.connect(db_path)
+            cols = {row[1] for row in conn2.execute("PRAGMA table_info(training_examples)")}
+            conn2.close()
+
+            assert "correct_value" in cols, "correct_value column was not added by migration"
+            assert "page_number" in cols, "page_number column was not added by migration"
+            assert "x0" in cols, "x0 column was not added by migration"
+            assert "y1" in cols, "y1 column was not added by migration"
+            assert "engine" in cols, "engine column was not added by migration"
+            assert "anchor_text" in cols, "anchor_text column was not added by migration"
+
+    def test_migration_is_idempotent(self):
+        """Running migration on a fully up-to-date DB should not raise."""
+        import sqlite3, tempfile, os
+        from app import create_app
+
+        # create_app with :memory: already runs migration — just ensure no crash
+        test_app = create_app({
+            "TESTING": True,
+            "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
+            "WTF_CSRF_ENABLED": False,
+        })
+        # Run migration again manually — must not raise
+        with test_app.app_context():
+            from app import _run_schema_migrations
+            _run_schema_migrations(test_app)  # should be a no-op
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# ROI save-roi API tests
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestSaveRoiEndpoint:
+    """Tests for POST /api/v1/training/save-roi."""
+
+    def _create_doc(self, app):
+        from models import Document
+        with app.app_context():
+            doc = Document(filename="roi.pdf", file_path="/tmp/roi.pdf", status="extracted")
+            app.extensions["sqlalchemy"].db.session.add(doc)
+            app.extensions["sqlalchemy"].db.session.commit()
+            return doc.id
+
+    def _create_doc_v2(self, app):
+        from models import Document, db as _db
+        with app.app_context():
+            doc = Document(filename="roi2.pdf", file_path="/tmp/roi2.pdf", status="extracted")
+            _db.session.add(doc)
+            _db.session.commit()
+            return doc.id
+
+    def test_save_roi_requires_login(self, client, app):
+        resp = client.post(
+            "/api/v1/training/save-roi",
+            json={"document_id": 1, "examples": []},
+        )
+        assert resp.status_code in (302, 401)
+
+    def test_save_roi_saves_multiple_fields(self, client, app):
+        from models import TrainingExample, db as _db
+        doc_id = self._create_doc_v2(app)
+        _login(client, app)
+        payload = {
+            "document_id": doc_id,
+            "page_number": 1,
+            "examples": [
+                {"field_name": "Name", "correct_value": "Rahul Misra",
+                 "x0": 0.1, "y0": 0.2, "x1": 0.5, "y1": 0.25, "engine": "pytesseract"},
+                {"field_name": "Cell Phone", "correct_value": "7699888010",
+                 "x0": 0.6, "y0": 0.4, "x1": 0.9, "y1": 0.45},
+            ],
+        }
+        resp = client.post(
+            "/api/v1/training/save-roi",
+            json=payload,
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert data["saved"] == 2
+        assert data["document_id"] == doc_id
+        with app.app_context():
+            rows = TrainingExample.query.filter_by(document_id=doc_id).all()
+            assert len(rows) == 2
+            name_row = next(r for r in rows if r.field_name == "Name")
+            assert name_row.correct_value == "Rahul Misra"
+            assert name_row.page_number == 1
+            assert abs(name_row.x0 - 0.1) < 1e-6
+            assert name_row.engine == "pytesseract"
+
+    def test_save_roi_upserts_on_duplicate(self, client, app):
+        """Saving the same field twice should replace the first entry."""
+        from models import TrainingExample, db as _db
+        doc_id = self._create_doc_v2(app)
+        _login(client, app)
+        payload = {
+            "document_id": doc_id,
+            "page_number": 1,
+            "examples": [{"field_name": "Name", "correct_value": "First Value"}],
+        }
+        client.post("/api/v1/training/save-roi", json=payload,
+                    headers={"X-CSRFToken": "test"})
+        payload["examples"][0]["correct_value"] = "Updated Value"
+        client.post("/api/v1/training/save-roi", json=payload,
+                    headers={"X-CSRFToken": "test"})
+        with app.app_context():
+            rows = TrainingExample.query.filter_by(
+                document_id=doc_id, field_name="Name", page_number=1
+            ).all()
+            assert len(rows) == 1
+            assert rows[0].correct_value == "Updated Value"
+
+    def test_save_roi_rejects_out_of_range_coords(self, client, app):
+        doc_id = self._create_doc_v2(app)
+        _login(client, app)
+        payload = {
+            "document_id": doc_id,
+            "examples": [
+                {"field_name": "Name", "correct_value": "Val",
+                 "x0": -0.1, "y0": 0.2, "x1": 1.5, "y1": 0.25},
+            ],
+        }
+        resp = client.post(
+            "/api/v1/training/save-roi",
+            json=payload,
+            headers={"X-CSRFToken": "test"},
+        )
+        # Bad coords → warnings but the row is still saved with None coords
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert "warnings" in data
+
+    def test_save_roi_missing_document_id(self, client, app):
+        _login(client, app)
+        resp = client.post(
+            "/api/v1/training/save-roi",
+            json={"examples": [{"field_name": "X", "correct_value": "Y"}]},
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 400
+
+    def test_save_roi_empty_examples(self, client, app):
+        doc_id = self._create_doc_v2(app)
+        _login(client, app)
+        resp = client.post(
+            "/api/v1/training/save-roi",
+            json={"document_id": doc_id, "examples": []},
+            headers={"X-CSRFToken": "test"},
+        )
+        assert resp.status_code == 400
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# examples_list page smoke test
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestExamplesListPage:
+    """Ensure GET /training/examples renders without crashing."""
+
+    def test_examples_list_renders(self, client, app):
+        _login(client, app)
+        resp = client.get("/training/examples")
+        assert resp.status_code == 200
+        assert b"Training Data" in resp.data
+
+    def test_examples_list_with_data(self, client, app):
+        from models import Document, TrainingExample, db as _db
+        with app.app_context():
+            doc = Document(filename="ex.pdf", file_path="/tmp/ex.pdf", status="training")
+            _db.session.add(doc)
+            _db.session.flush()
+            ex = TrainingExample(
+                document_id=doc.id,
+                field_name="Name",
+                correct_value="Rahul Misra",
+            )
+            _db.session.add(ex)
+            _db.session.commit()
+        _login(client, app)
+        resp = client.get("/training/examples")
+        assert resp.status_code == 200
+        assert b"Rahul Misra" in resp.data
