@@ -58,6 +58,11 @@
   <button class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#trainModal">
     <i class="bi bi-mortarboard me-1"></i>Mark as Training Example
   </button>
+  <button class="btn btn-warning btn-sm" id="btn-apply-training"
+          data-bs-toggle="modal" data-bs-target="#applyTrainingModal"
+          title="Overwrite all extracted fields with values from training data">
+    <i class="bi bi-lightning-charge me-1"></i>Apply Training Data
+  </button>
   {% endif %}
 
   {% if current_user.role in ('Admin', 'Verifier') %}
@@ -222,6 +227,39 @@
 </div>
 {% endif %}
 
+<!-- Apply Training Data modal -->
+{% if fields %}
+<div class="modal fade" id="applyTrainingModal" tabindex="-1" aria-labelledby="applyTrainingModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="applyTrainingModalLabel">
+          <i class="bi bi-lightning-charge me-2"></i>Apply Training Data
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-warning mb-3">
+          <i class="bi bi-exclamation-triangle me-1"></i>
+          <strong>This will overwrite all extracted fields</strong> with values from the
+          training data.  Any manual edits you have made will be replaced.
+        </div>
+        <p>Training values represent the most common correct answers seen across all
+           labeled training examples.  Fields that have no matching training entry will
+           remain unchanged.</p>
+        <div id="applyTrainingStatus"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-warning" id="confirmApplyTrainingBtn">
+          <i class="bi bi-lightning-charge me-1"></i>Apply &amp; Overwrite All Fields
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% endblock %}
 
 {% block extra_scripts %}
@@ -283,6 +321,50 @@
         '<div class="alert alert-danger mb-0">Request failed: ' + err + "</div>";
       btn.disabled = false;
       btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Confirm &amp; Save';
+    });
+  });
+
+  // Apply Training Data confirmation handler
+  document.getElementById("confirmApplyTrainingBtn").addEventListener("click", function () {
+    const btn = this;
+    const statusEl = document.getElementById("applyTrainingStatus");
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Applying…';
+    statusEl.innerHTML = "";
+
+    fetch("/api/v1/training/apply/" + docId, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": csrfToken,
+      },
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data.ok) {
+        statusEl.innerHTML =
+          '<div class="alert alert-success mb-0">' +
+          '<i class="bi bi-check-circle me-1"></i>' +
+          'Applied training data: ' + data.updated + ' field(s) updated, ' +
+          data.skipped + ' skipped (no training value found). Reloading…</div>';
+        btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Done!';
+        // Reload the page so the updated field values are visible
+        setTimeout(function () { window.location.reload(); }, 1200);
+      } else {
+        statusEl.innerHTML =
+          '<div class="alert alert-danger mb-0">' +
+          '<i class="bi bi-exclamation-triangle me-1"></i>' +
+          (data.error || "Unknown error") + "</div>";
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-lightning-charge me-1"></i>Apply &amp; Overwrite All Fields';
+      }
+    })
+    .catch(function (err) {
+      statusEl.innerHTML =
+        '<div class="alert alert-danger mb-0">Request failed: ' + err + "</div>";
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-lightning-charge me-1"></i>Apply &amp; Overwrite All Fields';
     });
   });
 })();

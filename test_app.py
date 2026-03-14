@@ -1635,3 +1635,171 @@ class TestMapAddressBookFieldsBlankTemplate:
         # No values extracted and threshold not reached → empty result
         assert result == []
 
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# TestApplyTrainingToDocument — POST /api/v1/training/apply/<doc_id>
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestApplyTrainingToDocument:
+    """Integration tests for POST /api/v1/training/apply/<doc_id>."""
+
+    def _create_doc(self, app, fields=None):
+        """Create a Document with optional ExtractedField rows; return doc.id."""
+        from models import Document, ExtractedField
+        with app.app_context():
+            doc = Document(
+                filename="train_apply_test.pdf",
+                file_path="/tmp/train_apply_test.pdf",
+                status="extracted",
+            )
+            db.session.add(doc)
+            db.session.flush()
+            for name, val, conf in (fields or []):
+                db.session.add(ExtractedField(
+                    document_id=doc.id,
+                    field_name=name,
+                    value=val,
+                    confidence=conf,
+                ))
+            db.session.commit()
+            return doc.id
+
+    def _add_training(self, app, doc_id, field_name, correct_value):
+        """Insert a TrainingExample row."""
+        from models import TrainingExample
+        with app.app_context():
+            ex = TrainingExample(
+                document_id=doc_id,
+                field_name=field_name,
+                correct_value=correct_value,
+            )
+            db.session.add(ex)
+            db.session.commit()
+
+    # ------------------------------------------------------------------
+
+    def test_requires_login(self, client, app):
+        doc_id = self._create_doc(app)
+        resp = client.post(f"/api/v1/training/apply/{doc_id}")
+        assert resp.status_code in (302, 401)
+
+    def test_doc_not_found(self, client, app):
+        _login(client, app)
+        resp = client.post("/api/v1/training/apply/9999")
+        assert resp.status_code == 404
+
+    def test_no_training_data_returns_400(self, client, app):
+        doc_id = self._create_doc(app, [("Name", "Old Name", 1.0)])
+        _login(client, app)
+        resp = client.post(f"/api/v1/training/apply/{doc_id}")
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert data["ok"] is False
+        assert "training" in data["error"].lower()
+
+    def test_overwrites_all_matching_fields(self, client, app):
+        """All fields with matching training data must be overwritten."""
+        doc_id = self._create_doc(app, [
+            ("Name",  "Old Name",  0.5),
+            ("City",  "Old City",  0.5),
+            ("Email", "old@x.com", 0.5),
+        ])
+        self._add_training(app, doc_id, "Name",  "Rahul Misra")
+        self._add_training(app, doc_id, "City",  "Asansol")
+        _login(client, app)
+        resp = client.post(f"/api/v1/training/apply/{doc_id}")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert data["updated"] == 2
+        assert data["skipped"] == 1  # Email has no training data
+
+        from models import ExtractedField
+        with app.app_context():
+            field_map = {
+                f.field_name: f.value
+                for f in ExtractedField.query.filter_by(document_id=doc_id).all()
+            }
+        assert field_map["Name"] == "Rahul Misra"
+        assert field_map["City"] == "Asansol"
+        assert field_map["Email"] == "old@x.com"  # unchanged
+
+    def test_updates_confidence_to_training_level(self, client, app):
+        """Fields updated from training data must have confidence 0.90."""
+        doc_id = self._create_doc(app, [("Name", "Old", 0.3)])
+        self._add_training(app, doc_id, "Name", "Rahul Misra")
+        _login(client, app)
+        client.post(f"/api/v1/training/apply/{doc_id}")
+
+        from models import ExtractedField
+        with app.app_context():
+            field = ExtractedField.query.filter_by(
+                document_id=doc_id, field_name="Name"
+            ).first()
+        assert field.confidence == 0.90
+
+    def test_preserves_original_value(self, client, app):
+        """original_value must be saved before overwriting."""
+        doc_id = self._create_doc(app, [("Name", "Old Name", 0.5)])
+        self._add_training(app, doc_id, "Name", "New Name")
+        _login(client, app)
+        client.post(f"/api/v1/training/apply/{doc_id}")
+
+        from models import ExtractedField
+        with app.app_context():
+            field = ExtractedField.query.filter_by(
+                document_id=doc_id, field_name="Name"
+            ).first()
+        assert field.original_value == "Old Name"
+        assert field.value == "New Name"
+        assert field.is_edited is True
+
+    def test_most_common_value_wins(self, client, app):
+        """When multiple training examples exist, the most common value is applied."""
+        from models import TrainingExample
+        doc_id = self._create_doc(app, [("City", "Wrong City", 0.2)])
+        # Add three training examples: two say "Asansol", one says "Kolkata"
+        with app.app_context():
+            for val in ["Asansol", "Asansol", "Kolkata"]:
+                db.session.add(TrainingExample(
+                    document_id=doc_id, field_name="City", correct_value=val
+                ))
+            db.session.commit()
+        _login(client, app)
+        client.post(f"/api/v1/training/apply/{doc_id}")
+
+        from models import ExtractedField
+        with app.app_context():
+            field = ExtractedField.query.filter_by(
+                document_id=doc_id, field_name="City"
+            ).first()
+        assert field.value == "Asansol"
+
+    def test_sets_document_status_edited(self, client, app):
+        """Applying training data must set the document status to 'edited'."""
+        doc_id = self._create_doc(app, [("Name", "Old", 0.5)])
+        self._add_training(app, doc_id, "Name", "Rahul Misra")
+        _login(client, app)
+        client.post(f"/api/v1/training/apply/{doc_id}")
+
+        from models import Document
+        with app.app_context():
+            doc = Document.query.get(doc_id)
+        assert doc.status == "edited"
+
+    def test_response_fields_list(self, client, app):
+        """Response must include a 'fields' list with per-field results."""
+        doc_id = self._create_doc(app, [
+            ("Name", "Old", 0.5),
+            ("City", "Old City", 0.5),
+        ])
+        self._add_training(app, doc_id, "Name", "Rahul Misra")
+        _login(client, app)
+        resp = client.post(f"/api/v1/training/apply/{doc_id}")
+        data = resp.get_json()
+        assert data["ok"] is True
+        fields_map = {f["field_name"]: f for f in data["fields"]}
+        assert fields_map["Name"]["updated"] is True
+        assert fields_map["Name"]["new_value"] == "Rahul Misra"
+        assert fields_map["City"]["updated"] is False
