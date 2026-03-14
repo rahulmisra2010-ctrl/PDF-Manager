@@ -326,7 +326,7 @@ def extract(doc_id: int):
                 document_id=doc_id,
                 field_name=item["field_name"],
                 value=item["value"],
-                confidence=1.0,
+                confidence=item.get("confidence", 1.0),
             )
             db.session.add(field)
 

@@ -66,6 +66,22 @@ _PACKED_SPLIT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Regexes used to detect address-book field labels in the raw text.
+# When ≥ 4 of these match, the document is treated as an address-book
+# template and all 9 fields are guaranteed to appear in the result (with
+# an empty value for any field whose slot is blank in the source PDF).
+_TEMPLATE_LABEL_PATTERNS: list[re.Pattern] = [
+    re.compile(r'\bName\s*[:\s]', re.IGNORECASE),
+    re.compile(r'\bStreet\s+Address\s*[:\s]', re.IGNORECASE),
+    re.compile(r'\bCity\s*:', re.IGNORECASE),
+    re.compile(r'\bState\s*:', re.IGNORECASE),
+    re.compile(r'\bZip\s+Code\s*:', re.IGNORECASE),
+    re.compile(r'\bHome\s+Phone\s*:', re.IGNORECASE),
+    re.compile(r'\bCell\s+Phone\s*:', re.IGNORECASE),
+    re.compile(r'\bWork\s+Phone\s*:', re.IGNORECASE),
+    re.compile(r'\bEmail\s*:', re.IGNORECASE),
+]
+
 
 def _expand_packed_lines(lines: list[str]) -> list[str]:
     """Split lines that contain multiple packed field labels into separate lines."""
@@ -426,6 +442,25 @@ class PDFService:
                     result.append({"field_name": "Email", "value": email_val})
 
             i += 1
+
+        # ------------------------------------------------------------------
+        # Template-completeness pass
+        # ------------------------------------------------------------------
+        # When the raw text contains ≥ 4 address-book field labels the
+        # document is an address-book template (possibly blank).  In that
+        # case every ADDRESS_BOOK_FIELD must appear in the output so the
+        # editor can render an editable row for every slot — even those
+        # that are empty in the source PDF.  Missing fields get an empty
+        # value and a confidence of 0.0 so downstream validation logic
+        # (e.g. _is_field_invalid) correctly flags them for user input.
+        label_hits = sum(
+            1 for pat in _TEMPLATE_LABEL_PATTERNS if pat.search(text)
+        )
+        if label_hits >= 4:
+            present = {item["field_name"] for item in result}
+            for fn in ADDRESS_BOOK_FIELDS:
+                if fn not in present:
+                    result.append({"field_name": fn, "value": "", "confidence": 0.0})
 
         return result
 

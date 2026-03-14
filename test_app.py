@@ -1532,3 +1532,106 @@ class TestIsFieldInvalid:
     def test_valid_email(self):
         fn = self._fn()
         assert fn("Email", "rahul@example.com", 1.0) is False
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# PDFService.map_address_book_fields — blank template tests
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestMapAddressBookFieldsBlankTemplate:
+    """Unit tests for blank-template detection in PDFService.map_address_book_fields."""
+
+    def _svc(self):
+        repo_root = os.path.dirname(os.path.abspath(__file__))
+        backend_dir = os.path.join(repo_root, "backend")
+        if backend_dir not in sys.path:
+            sys.path.insert(0, backend_dir)
+        from services.pdf_service import PDFService
+        return PDFService()
+
+    def _field_names(self, result):
+        return {item["field_name"] for item in result}
+
+    def test_blank_template_returns_all_nine_fields(self):
+        """OCR text with only labels → all 9 ADDRESS_BOOK_FIELDS returned."""
+        svc = self._svc()
+        text = (
+            "Name:\n"
+            "Street Address:\n"
+            "City: State: Zip Code:\n"
+            "Home Phone: Cell Phone: Work Phone:\n"
+            "Email:\n"
+        )
+        result = svc.map_address_book_fields(text)
+        from services.pdf_service import ADDRESS_BOOK_FIELDS
+        assert self._field_names(result) == set(ADDRESS_BOOK_FIELDS)
+
+    def test_blank_template_fields_have_empty_values(self):
+        """All fields returned for a blank template must have empty string values."""
+        svc = self._svc()
+        text = (
+            "Name: Street Address: City: State: Zip Code:\n"
+            "Home Phone: Cell Phone: Work Phone: Email:\n"
+        )
+        result = svc.map_address_book_fields(text)
+        for item in result:
+            assert item["value"] == "", (
+                f"Expected empty value for {item['field_name']}, got {item['value']!r}"
+            )
+
+    def test_blank_template_placeholder_fields_have_zero_confidence(self):
+        """Placeholder fields added for blank templates must have confidence=0.0."""
+        svc = self._svc()
+        text = "City: State: Zip Code: Home Phone: Cell Phone: Work Phone: Email:\n"
+        result = svc.map_address_book_fields(text)
+        for item in result:
+            assert item.get("confidence", 0.0) == 0.0, (
+                f"Expected confidence 0.0 for blank field {item['field_name']}"
+            )
+
+    def test_partial_template_fills_missing_fields(self):
+        """When only some fields have values, missing fields get empty placeholders."""
+        svc = self._svc()
+        text = (
+            "Name Rahul Misra\n"
+            "City: Asansol State: WB Zip Code:\n"
+            "Home Phone: Cell Phone: 7699888010 Work Phone: Email:\n"
+        )
+        result = svc.map_address_book_fields(text)
+        field_map = {item["field_name"]: item for item in result}
+        from services.pdf_service import ADDRESS_BOOK_FIELDS
+        # All 9 fields must be present
+        assert set(field_map.keys()) == set(ADDRESS_BOOK_FIELDS)
+        # Extracted fields retain their values
+        assert field_map["Name"]["value"] == "Rahul Misra"
+        assert field_map["City"]["value"] == "Asansol"
+        assert field_map["State"]["value"] == "WB"
+        assert field_map["Cell Phone"]["value"] == "7699888010"
+        # Blank fields have empty value
+        assert field_map["Zip Code"]["value"] == ""
+        assert field_map["Home Phone"]["value"] == ""
+        assert field_map["Email"]["value"] == ""
+
+    def test_non_addressbook_pdf_not_affected(self):
+        """Text with < 4 address-book labels → no placeholder fields added."""
+        svc = self._svc()
+        text = "Invoice #1234\nTotal: $100.00\nDate: 2024-01-01\n"
+        result = svc.map_address_book_fields(text)
+        assert result == [], f"Expected empty result for non-addressbook text, got {result}"
+
+    def test_four_labels_triggers_template_detection(self):
+        """Exactly 4 address-book labels are enough to trigger template detection."""
+        svc = self._svc()
+        text = "City: State: Zip Code: Email:\n"
+        result = svc.map_address_book_fields(text)
+        from services.pdf_service import ADDRESS_BOOK_FIELDS
+        assert self._field_names(result) == set(ADDRESS_BOOK_FIELDS)
+
+    def test_three_labels_does_not_trigger_template_detection(self):
+        """Only 3 address-book labels → template detection NOT triggered."""
+        svc = self._svc()
+        text = "City: State: Zip Code:\n"
+        result = svc.map_address_book_fields(text)
+        # No values extracted and threshold not reached → empty result
+        assert result == []
+
