@@ -595,6 +595,20 @@ class PDFService:
                         insert_y = label_rect.y1 - self._BASELINE_NUDGE_PX
                         page_width = pg.rect.width
                         if insert_x < page_width - self._MIN_RIGHT_MARGIN_PX:
+                            # White out the area to the right of the label
+                            # so any pre-existing value in the original PDF
+                            # is removed before the new value is stamped in.
+                            whiteout_rect = fitz.Rect(
+                                label_rect.x1,
+                                label_rect.y0,
+                                page_width - self._MIN_RIGHT_MARGIN_PX,
+                                label_rect.y1,
+                            )
+                            pg.draw_rect(
+                                whiteout_rect,
+                                color=(1, 1, 1),
+                                fill=(1, 1, 1),
+                            )
                             pg.insert_text(
                                 fitz.Point(insert_x, insert_y),
                                 value,
