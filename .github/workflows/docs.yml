@@ -1,0 +1,33 @@
+name: Documentation
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install MkDocs and dependencies
+        run: |
+          pip install mkdocs mkdocs-material mkdocstrings[python]
+
+      - name: Build documentation
+        run: mkdocs build --config-file docs/mkdocs.yml
+
+      - name: Deploy to GitHub Pages
+        run: mkdocs gh-deploy --config-file docs/mkdocs.yml --force
