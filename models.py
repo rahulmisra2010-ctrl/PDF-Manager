@@ -14,6 +14,8 @@ Models
 * FieldCorrection  — per-field corrections applied by Train Me
 * TrainingExample  — labeled training examples for RAG confidence boosting
 * TrainingExample  — labeled field values used by TrainingService
+* ExtractionJob    — batch extraction job tracking
+* ExtractedSample  — sample database entries from batch extraction
 """
 
 from __future__ import annotations
@@ -443,4 +445,116 @@ class TrainingExample(db.Model):
         return (
             f"<TrainingExample doc={self.document_id}"
             f" field={self.field_name!r} value={self.correct_value!r}>"
+        )
+
+
+# ---------------------------------------------------------------------------
+# ExtractionJob
+# ---------------------------------------------------------------------------
+
+class ExtractionJob(db.Model):
+    """Tracks a batch extraction job over multiple files."""
+
+    __tablename__ = "extraction_jobs"
+
+    STATUSES = ("pending", "running", "completed", "failed", "partial")
+
+    id = db.Column(db.Integer, primary_key=True)
+    # Unique external job identifier (UUID)
+    job_id = db.Column(db.String(64), unique=True, nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="pending")
+    total_files = db.Column(db.Integer, nullable=False, default=0)
+    processed_files = db.Column(db.Integer, nullable=False, default=0)
+    failed_files = db.Column(db.Integer, nullable=False, default=0)
+    # JSON list of file names being processed
+    file_list = db.Column(db.Text, nullable=True)
+    # Extraction tools used (JSON list)
+    tools_used = db.Column(db.Text, nullable=True)
+    # Summary / error messages (JSON)
+    result_summary = db.Column(db.Text, nullable=True)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    started_at = db.Column(db.DateTime, nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+
+    samples = db.relationship(
+        "ExtractedSample",
+        backref="job",
+        lazy="dynamic",
+        cascade="all, delete-orphan",
+    )
+
+    def to_dict(self) -> dict:
+        import json
+
+        return {
+            "id": self.id,
+            "job_id": self.job_id,
+            "status": self.status,
+            "total_files": self.total_files,
+            "processed_files": self.processed_files,
+            "failed_files": self.failed_files,
+            "file_list": json.loads(self.file_list) if self.file_list else [],
+            "tools_used": json.loads(self.tools_used) if self.tools_used else [],
+            "result_summary": json.loads(self.result_summary) if self.result_summary else {},
+            "created_by": self.created_by,
+            "created_at": self.created_at.isoformat(),
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+        }
+
+    def __repr__(self) -> str:
+        return f"<ExtractionJob {self.job_id!r} status={self.status!r}>"
+
+
+# ---------------------------------------------------------------------------
+# ExtractedSample
+# ---------------------------------------------------------------------------
+
+class ExtractedSample(db.Model):
+    """A structured sample extracted from a file, stored in the sample database."""
+
+    __tablename__ = "extracted_samples"
+
+    id = db.Column(db.Integer, primary_key=True)
+    job_id = db.Column(
+        db.Integer, db.ForeignKey("extraction_jobs.id"), nullable=True
+    )
+    # Original filename
+    source_filename = db.Column(db.String(255), nullable=False)
+    # Detected document type (invoice, receipt, form, unknown, …)
+    document_type = db.Column(db.String(100), nullable=True, default="unknown")
+    # JSON dict of extracted field_name → value pairs
+    fields = db.Column(db.Text, nullable=False, default="{}")
+    # JSON dict of field_name → confidence (0.0–1.0)
+    confidence_scores = db.Column(db.Text, nullable=True)
+    # Which tool produced the best result
+    extraction_tool = db.Column(db.String(100), nullable=True)
+    # Overall extraction quality score
+    quality_score = db.Column(db.Float, nullable=True)
+    # Duplicate flag — True if this sample is likely a duplicate
+    is_duplicate = db.Column(db.Boolean, nullable=False, default=False)
+    raw_text = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    def to_dict(self) -> dict:
+        import json
+
+        return {
+            "id": self.id,
+            "job_id": self.job_id,
+            "source_filename": self.source_filename,
+            "document_type": self.document_type,
+            "fields": json.loads(self.fields) if self.fields else {},
+            "confidence_scores": json.loads(self.confidence_scores) if self.confidence_scores else {},
+            "extraction_tool": self.extraction_tool,
+            "quality_score": self.quality_score,
+            "is_duplicate": self.is_duplicate,
+            "created_at": self.created_at.isoformat(),
+        }
+
+    def __repr__(self) -> str:
+        return (
+            f"<ExtractedSample src={self.source_filename!r}"
+            f" type={self.document_type!r} tool={self.extraction_tool!r}>"
         )

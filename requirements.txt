@@ -17,3 +17,24 @@ python-docx~=1.1.0
 # Utilities
 python-dotenv~=1.0.1
 Werkzeug~=3.0.0
+
+# ---------------------------------------------------------------------------
+# Multi-tool extraction pipeline (all optional — tools are used when installed)
+# ---------------------------------------------------------------------------
+# Mindee IDP — structured document extraction (invoice, receipt, …)
+mindee>=4.0.0
+
+# Tesseract OCR wrapper
+pytesseract>=0.3.10
+
+# Image handling (required by pytesseract and pdf2image)
+Pillow>=10.0.0
+
+# PDF → image conversion for Tesseract OCR on scanned PDFs
+pdf2image>=1.16.0
+
+# OpenAI GPT for LLM-based semantic field extraction
+openai>=1.0.0
+
+# HTTP client (used by Koncile.ai REST API integration)
+requests>=2.31.0

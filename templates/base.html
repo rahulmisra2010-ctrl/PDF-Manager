@@ -74,6 +74,12 @@
             {% endif %}
           </a>
         </li>
+        <li class="nav-item">
+          <a class="nav-link {% if request.blueprint == 'extraction_api' %}active{% endif %}"
+             href="{{ url_for('extraction_api.batch_processor_ui') }}">
+            <i class="bi bi-layers me-2"></i>Batch Extractor
+          </a>
+        </li>
         {% if current_user.role == 'Admin' %}
         <li class="nav-item">
           <a class="nav-link {% if request.blueprint == 'users' %}active{% endif %}"

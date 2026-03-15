@@ -1,0 +1,763 @@
+{% extends "base.html" %}
+{% block title %}Batch Extraction — PDF Manager{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* ── Drop Zone ── */
+  #drop-zone {
+    border: 2px dashed #6c757d;
+    border-radius: 12px;
+    padding: 3rem 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+  }
+  #drop-zone.dragover {
+    border-color: #0d6efd;
+    background: #e9f0ff;
+  }
+  #drop-zone .drop-icon { font-size: 3rem; color: #adb5bd; }
+
+  /* ── File chips ── */
+  .file-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    padding: .25rem .65rem;
+    border-radius: 20px;
+    font-size: .8rem;
+    background: #e9ecef;
+  }
+  .file-chip .remove-chip { cursor: pointer; color: #dc3545; font-weight: 700; }
+
+  /* ── Progress bar ── */
+  #job-progress-wrap { display: none; }
+
+  /* ── Result cards ── */
+  .result-card { transition: box-shadow .2s; }
+  .result-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,.12); }
+  .confidence-pill {
+    display: inline-block;
+    width: 42px;
+    text-align: center;
+    border-radius: 10px;
+    font-size: .72rem;
+    padding: 1px 4px;
+  }
+  .conf-high  { background: #d1e7dd; color: #0f5132; }
+  .conf-med   { background: #fff3cd; color: #664d03; }
+  .conf-low   { background: #f8d7da; color: #842029; }
+
+  /* ── Sample DB table ── */
+  #samples-section { display: none; }
+  .sample-row td { vertical-align: middle; font-size: .85rem; }
+
+  /* ── Config panel ── */
+  #config-panel { display: none; }
+
+  /* ── Spinner ── */
+  .spinner-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.35);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 9999;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-layers-fill text-primary me-2"></i>Batch Extraction &amp; Sample Database</h4>
+    <small class="text-muted">Upload files → extract with all tools → build sample database</small>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-secondary btn-sm" id="btn-toggle-config">
+      <i class="bi bi-gear me-1"></i>Configure
+    </button>
+    <button class="btn btn-outline-primary btn-sm" id="btn-view-samples">
+      <i class="bi bi-database me-1"></i>Sample DB
+    </button>
+    <div class="dropdown">
+      <button class="btn btn-outline-success btn-sm dropdown-toggle" data-bs-toggle="dropdown">
+        <i class="bi bi-download me-1"></i>Export
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><a class="dropdown-item" href="/api/v1/extraction/samples/export?format=json" target="_blank">
+          <i class="bi bi-filetype-json me-2"></i>Export JSON</a></li>
+        <li><a class="dropdown-item" href="/api/v1/extraction/samples/export?format=csv" target="_blank">
+          <i class="bi bi-filetype-csv me-2"></i>Export CSV</a></li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ── Configuration Panel ── -->
+<div id="config-panel" class="card mb-4 border-warning">
+  <div class="card-header bg-warning bg-opacity-10 fw-semibold">
+    <i class="bi bi-gear me-1"></i> Extraction Tool Configuration
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label fw-semibold">Tool Priority</label>
+        <div class="list-group" id="tool-order">
+          <div class="list-group-item d-flex align-items-center gap-2 py-1">
+            <i class="bi bi-grip-vertical text-muted"></i>
+            <span class="badge bg-primary">1</span> Mindee IDP
+            <span class="ms-auto badge bg-success">Cloud</span>
+          </div>
+          <div class="list-group-item d-flex align-items-center gap-2 py-1">
+            <i class="bi bi-grip-vertical text-muted"></i>
+            <span class="badge bg-primary">2</span> Koncile.ai
+            <span class="ms-auto badge bg-success">Cloud</span>
+          </div>
+          <div class="list-group-item d-flex align-items-center gap-2 py-1">
+            <i class="bi bi-grip-vertical text-muted"></i>
+            <span class="badge bg-primary">3</span> PyMuPDF
+            <span class="ms-auto badge bg-secondary">Local</span>
+          </div>
+          <div class="list-group-item d-flex align-items-center gap-2 py-1">
+            <i class="bi bi-grip-vertical text-muted"></i>
+            <span class="badge bg-primary">4</span> pdfplumber
+            <span class="ms-auto badge bg-secondary">Local</span>
+          </div>
+          <div class="list-group-item d-flex align-items-center gap-2 py-1">
+            <i class="bi bi-grip-vertical text-muted"></i>
+            <span class="badge bg-primary">5</span> Tesseract OCR
+            <span class="ms-auto badge bg-secondary">Local</span>
+          </div>
+          <div class="list-group-item d-flex align-items-center gap-2 py-1">
+            <i class="bi bi-grip-vertical text-muted"></i>
+            <span class="badge bg-primary">6</span> python-docx
+            <span class="ms-auto badge bg-secondary">Local</span>
+          </div>
+          <div class="list-group-item d-flex align-items-center gap-2 py-1">
+            <i class="bi bi-grip-vertical text-muted"></i>
+            <span class="badge bg-primary">7</span> openpyxl
+            <span class="ms-auto badge bg-secondary">Local</span>
+          </div>
+          <div class="list-group-item d-flex align-items-center gap-2 py-1">
+            <i class="bi bi-grip-vertical text-muted"></i>
+            <span class="badge bg-primary">8</span> LLM (GPT)
+            <span class="ms-auto badge bg-success">Cloud</span>
+          </div>
+          <div class="list-group-item d-flex align-items-center gap-2 py-1">
+            <i class="bi bi-grip-vertical text-muted"></i>
+            <span class="badge bg-primary">9</span> Regex Patterns
+            <span class="ms-auto badge bg-secondary">Local</span>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label fw-semibold">Processing Settings</label>
+        <div class="mb-2">
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" id="cfg-use-ocr" checked>
+            <label class="form-check-label" for="cfg-use-ocr">Enable Tesseract OCR</label>
+          </div>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small text-muted">Min Quality Score</label>
+          <input type="range" class="form-range" id="cfg-min-quality" min="0" max="1" step="0.05" value="0.1">
+          <small class="text-muted">Current: <span id="cfg-quality-val">0.10</span></small>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small text-muted">Parallel Workers</label>
+          <select class="form-select form-select-sm" id="cfg-workers">
+            <option value="1">1 (safe)</option>
+            <option value="2">2</option>
+            <option value="4" selected>4 (default)</option>
+            <option value="8">8 (fast)</option>
+          </select>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label fw-semibold">Supported File Types</label>
+        <ul class="list-unstyled small text-muted">
+          <li><i class="bi bi-check-circle-fill text-success me-1"></i>PDF (text &amp; scanned)</li>
+          <li><i class="bi bi-check-circle-fill text-success me-1"></i>PNG, JPG, BMP, TIFF (OCR)</li>
+          <li><i class="bi bi-check-circle-fill text-success me-1"></i>DOCX (Word documents)</li>
+          <li><i class="bi bi-check-circle-fill text-success me-1"></i>XLSX, XLS (Excel)</li>
+          <li><i class="bi bi-check-circle-fill text-success me-1"></i>TXT (Plain text)</li>
+        </ul>
+        <hr>
+        <label class="form-label fw-semibold">API Status</label>
+        <div id="api-status-list">
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="badge bg-secondary" id="badge-mindee">—</span>
+            <small>Mindee</small>
+          </div>
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="badge bg-secondary" id="badge-koncile">—</span>
+            <small>Koncile</small>
+          </div>
+          <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="badge bg-secondary" id="badge-openai">—</span>
+            <small>OpenAI / LLM</small>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Upload Zone ── -->
+<div class="card mb-4">
+  <div class="card-body">
+    <div id="drop-zone" onclick="document.getElementById('file-input').click()">
+      <div class="drop-icon mb-2"><i class="bi bi-cloud-upload"></i></div>
+      <h5 class="mb-1">Drag &amp; drop files here</h5>
+      <p class="text-muted mb-3">or click to browse — PDF, PNG, JPG, DOCX, XLSX supported</p>
+      <input type="file" id="file-input" multiple accept=".pdf,.png,.jpg,.jpeg,.bmp,.tiff,.webp,.docx,.xlsx,.xls,.txt" class="d-none">
+      <button type="button" class="btn btn-outline-primary btn-sm">
+        <i class="bi bi-folder2-open me-1"></i>Browse Files
+      </button>
+    </div>
+
+    <!-- File chips -->
+    <div id="file-chips" class="mt-3 d-flex flex-wrap gap-2"></div>
+
+    <!-- Actions -->
+    <div class="mt-3 d-flex gap-2 align-items-center" id="action-row" style="display:none!important">
+      <button class="btn btn-primary" id="btn-extract-single" disabled>
+        <i class="bi bi-lightning-charge me-1"></i>Extract Single
+      </button>
+      <button class="btn btn-success" id="btn-batch-process" disabled>
+        <i class="bi bi-layers me-1"></i>Batch Process
+      </button>
+      <button class="btn btn-warning" id="btn-auto-sample" disabled>
+        <i class="bi bi-database-add me-1"></i>Auto-Sample DB
+      </button>
+      <button class="btn btn-outline-danger btn-sm ms-auto" id="btn-clear">
+        <i class="bi bi-x-circle me-1"></i>Clear
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Progress ── -->
+<div id="job-progress-wrap" class="card mb-4 border-primary">
+  <div class="card-body">
+    <div class="d-flex justify-content-between mb-1">
+      <span class="fw-semibold" id="progress-label">Processing…</span>
+      <span class="text-muted small" id="progress-count">0 / 0</span>
+    </div>
+    <div class="progress" style="height: 12px;">
+      <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+           style="width: 0%"></div>
+    </div>
+    <small class="text-muted mt-1 d-block" id="progress-status">Starting…</small>
+  </div>
+</div>
+
+<!-- ── Results ── -->
+<div id="results-section">
+  <h5 class="mb-3"><i class="bi bi-card-list me-2 text-success"></i>Extraction Results</h5>
+  <div id="results-container" class="row g-3"></div>
+</div>
+
+<!-- ── Sample Database Viewer ── -->
+<div id="samples-section" class="mt-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h5 class="mb-0"><i class="bi bi-database me-2 text-info"></i>Sample Database</h5>
+    <div class="d-flex gap-2">
+      <select class="form-select form-select-sm" id="filter-doc-type" style="width: auto">
+        <option value="">All document types</option>
+        <option value="invoice">Invoice</option>
+        <option value="receipt">Receipt</option>
+        <option value="form">Form</option>
+        <option value="report">Report</option>
+        <option value="contract">Contract</option>
+        <option value="resume">Resume</option>
+        <option value="letter">Letter</option>
+        <option value="unknown">Unknown</option>
+      </select>
+      <button class="btn btn-outline-secondary btn-sm" id="btn-refresh-samples">
+        <i class="bi bi-arrow-clockwise"></i>
+      </button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>Filename</th>
+              <th>Doc Type</th>
+              <th>Tool</th>
+              <th>Quality</th>
+              <th>Fields</th>
+              <th>Date</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="samples-tbody">
+            <tr><td colspan="8" class="text-center text-muted py-4">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card-footer text-muted small d-flex justify-content-between">
+      <span id="samples-count">0 samples</span>
+      <nav>
+        <ul class="pagination pagination-sm mb-0" id="samples-pagination"></ul>
+      </nav>
+    </div>
+  </div>
+</div>
+
+<!-- ── Field detail modal ── -->
+<div class="modal fade" id="fields-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-card-text me-2"></i>Extracted Fields</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="modal-fields-body"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+/* ================================================================
+   Batch Extraction UI — JavaScript
+   ================================================================ */
+
+const CSRF = document.querySelector('meta[name="csrf-token"]')?.content ?? '';
+
+// ── State ──────────────────────────────────────────────────────
+let selectedFiles = [];   // File objects
+let currentJobId  = null;
+let pollTimer     = null;
+let samplePage    = 0;
+const PAGE_SIZE   = 20;
+// Safe store for field data (avoids XSS via inline onclick)
+const _fieldStore = new Map();
+
+// ── DOM refs ──────────────────────────────────────────────────
+const dropZone      = document.getElementById('drop-zone');
+const fileInput     = document.getElementById('file-input');
+const fileChips     = document.getElementById('file-chips');
+const actionRow     = document.getElementById('action-row');
+const btnExtract    = document.getElementById('btn-extract-single');
+const btnBatch      = document.getElementById('btn-batch-process');
+const btnSample     = document.getElementById('btn-auto-sample');
+const btnClear      = document.getElementById('btn-clear');
+const progressWrap  = document.getElementById('job-progress-wrap');
+const progressBar   = document.getElementById('progress-bar');
+const progressLabel = document.getElementById('progress-label');
+const progressCount = document.getElementById('progress-count');
+const progressStatus= document.getElementById('progress-status');
+const resultsSection= document.getElementById('results-section');
+const resultsContainer = document.getElementById('results-container');
+const samplesSection= document.getElementById('samples-section');
+const samplesTbody  = document.getElementById('samples-tbody');
+const samplesCount  = document.getElementById('samples-count');
+const filterDocType = document.getElementById('filter-doc-type');
+const btnRefresh    = document.getElementById('btn-refresh-samples');
+const btnViewSamples= document.getElementById('btn-view-samples');
+const btnToggleCfg  = document.getElementById('btn-toggle-config');
+const configPanel   = document.getElementById('config-panel');
+const cfgMinQuality = document.getElementById('cfg-min-quality');
+const cfgQualityVal = document.getElementById('cfg-quality-val');
+
+// ── Config panel toggle ────────────────────────────────────────
+btnToggleCfg.addEventListener('click', () => {
+  configPanel.style.display = configPanel.style.display === 'none' ? 'block' : 'none';
+});
+
+cfgMinQuality.addEventListener('input', () => {
+  cfgQualityVal.textContent = parseFloat(cfgMinQuality.value).toFixed(2);
+});
+
+// ── Drag & drop ────────────────────────────────────────────────
+['dragenter','dragover'].forEach(evt => dropZone.addEventListener(evt, e => {
+  e.preventDefault(); dropZone.classList.add('dragover');
+}));
+['dragleave','drop'].forEach(evt => dropZone.addEventListener(evt, e => {
+  e.preventDefault(); dropZone.classList.remove('dragover');
+}));
+dropZone.addEventListener('drop', e => addFiles(e.dataTransfer.files));
+fileInput.addEventListener('change', () => addFiles(fileInput.files));
+
+function addFiles(fileList) {
+  for (const f of fileList) {
+    if (!selectedFiles.find(x => x.name === f.name && x.size === f.size)) {
+      selectedFiles.push(f);
+    }
+  }
+  fileInput.value = '';
+  renderChips();
+  updateButtons();
+}
+
+function renderChips() {
+  fileChips.innerHTML = '';
+  selectedFiles.forEach((f, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'file-chip';
+    chip.innerHTML = `
+      <i class="bi ${fileIcon(f.name)}"></i>
+      ${esc(f.name)} <small class="text-muted">(${humanSize(f.size)})</small>
+      <span class="remove-chip" data-idx="${i}">&times;</span>`;
+    chip.querySelector('.remove-chip').addEventListener('click', () => {
+      selectedFiles.splice(i, 1); renderChips(); updateButtons();
+    });
+    fileChips.appendChild(chip);
+  });
+}
+
+function fileIcon(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  const map = { pdf: 'bi-file-earmark-pdf-fill text-danger',
+                docx:'bi-file-earmark-word-fill text-primary',
+                xlsx:'bi-file-earmark-excel-fill text-success',
+                xls: 'bi-file-earmark-excel-fill text-success',
+                png: 'bi-file-earmark-image text-warning',
+                jpg: 'bi-file-earmark-image text-warning',
+                jpeg:'bi-file-earmark-image text-warning' };
+  return map[ext] || 'bi-file-earmark';
+}
+
+function updateButtons() {
+  const n = selectedFiles.length;
+  actionRow.style.display = n > 0 ? 'flex' : 'none';
+  btnExtract.disabled = n !== 1;
+  btnBatch.disabled   = n < 1;
+  btnSample.disabled  = n < 1;
+}
+
+btnClear.addEventListener('click', () => {
+  selectedFiles = []; renderChips(); updateButtons();
+  resultsContainer.innerHTML = '';
+});
+
+// ── Extract single ─────────────────────────────────────────────
+btnExtract.addEventListener('click', async () => {
+  if (selectedFiles.length !== 1) return;
+  const fd = new FormData();
+  fd.append('file', selectedFiles[0]);
+  showSpinner();
+  try {
+    const res = await apiFetch('/api/v1/extraction/extract-file', { method:'POST', body:fd });
+    hideSpinner();
+    if (res.ok) renderResults([res]);
+    else showAlert('danger', res.error || 'Extraction failed');
+  } catch(e) { hideSpinner(); showAlert('danger', e.message); }
+});
+
+// ── Batch process ──────────────────────────────────────────────
+btnBatch.addEventListener('click', async () => {
+  const fd = buildBatchFormData('files[]');
+  showProgress('Submitting batch job…', 0, selectedFiles.length);
+  try {
+    const res = await apiFetch('/api/v1/extraction/batch-process', { method:'POST', body:fd });
+    if (!res.ok) { hideProgress(); showAlert('danger', res.error || 'Batch failed'); return; }
+    currentJobId = res.job_id;
+    pollProgress(res.total_files);
+  } catch(e) { hideProgress(); showAlert('danger', e.message); }
+});
+
+function pollProgress(total) {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const status = await apiFetch(`/api/v1/extraction/status/${currentJobId}`);
+      if (!status.ok) return;
+      const pct = total > 0 ? Math.round(status.processed_files / total * 100) : 0;
+      updateProgress(
+        `Job ${currentJobId.slice(0,8)}…`,
+        status.processed_files, total, pct,
+        status.status
+      );
+      if (['completed','partial','failed'].includes(status.status)) {
+        clearInterval(pollTimer);
+        if (status.results && status.results.length) renderResults(status.results);
+        else showAlert('info', `Job ${status.status}. Refresh Sample DB to see results.`);
+      }
+    } catch(e) { /* ignore transient */ }
+  }, 1500);
+}
+
+// ── Auto-sample ────────────────────────────────────────────────
+btnSample.addEventListener('click', async () => {
+  const fd = buildBatchFormData('files[]');
+  showSpinner();
+  try {
+    const res = await apiFetch('/api/v1/extraction/auto-sample', { method:'POST', body:fd });
+    hideSpinner();
+    if (res.ok) {
+      const s = res.stats;
+      showAlert('success',
+        `✅ Auto-sample complete — processed: ${s.processed}, saved: ${s.saved}, ` +
+        `duplicates: ${s.duplicates}, errors: ${s.errors}`);
+      loadSamples();
+    } else {
+      showAlert('danger', res.error || 'Auto-sample failed');
+    }
+  } catch(e) { hideSpinner(); showAlert('danger', e.message); }
+});
+
+function buildBatchFormData(fieldName) {
+  const fd = new FormData();
+  selectedFiles.forEach(f => fd.append(fieldName, f));
+  return fd;
+}
+
+// ── Render extraction results ──────────────────────────────────
+function renderResults(items) {
+  resultsContainer.innerHTML = '';
+  resultsSection.scrollIntoView({ behavior:'smooth' });
+  items.forEach((item, idx) => {
+    const fields = item.fields || {};
+    const conf   = item.confidence || {};
+    const keys   = Object.keys(fields);
+    // Store fields in a safe map to avoid XSS via inline onclick
+    const storeKey = `result-${idx}-${Date.now()}`;
+    _fieldStore.set(storeKey, { fields, title: item.filename || item.source_filename || 'File' });
+    const col = document.createElement('div');
+    col.className = 'col-md-6 col-xl-4';
+    col.innerHTML = `
+      <div class="card result-card h-100">
+        <div class="card-header d-flex align-items-center gap-2 py-2">
+          <i class="bi ${fileIcon(item.filename || item.source_filename || '')} me-1"></i>
+          <span class="fw-semibold text-truncate small" title="${esc(item.filename||'')}">
+            ${esc(item.filename || item.source_filename || 'File')}
+          </span>
+          <span class="ms-auto badge ${docTypeBadge(item.document_type)}">${esc(item.document_type||'unknown')}</span>
+        </div>
+        <div class="card-body p-2">
+          <div class="d-flex gap-2 mb-2">
+            <span class="badge bg-secondary">${esc(item.tool||'—')}</span>
+            <span class="badge ${qualityBadge(item.quality_score)}">
+              Q: ${((item.quality_score||0)*100).toFixed(0)}%
+            </span>
+            ${item.success === false ? '<span class="badge bg-danger">Failed</span>' : ''}
+          </div>
+          ${keys.length === 0
+            ? `<p class="text-muted small mb-0">${item.error ? esc(item.error) : 'No fields extracted'}</p>`
+            : `<div class="field-preview">
+                ${keys.slice(0,5).map(k => `
+                  <div class="d-flex justify-content-between align-items-start py-1 border-bottom">
+                    <small class="text-muted text-truncate me-2" style="max-width:45%">${esc(k)}</small>
+                    <div class="d-flex align-items-center gap-1">
+                      <small class="fw-semibold text-end text-truncate" style="max-width:120px" title="${esc(fields[k]||'')}">
+                        ${esc(fields[k]||'')}
+                      </small>
+                      <span class="confidence-pill ${confClass(conf[k])}">${confPct(conf[k])}</span>
+                    </div>
+                  </div>`).join('')}
+                ${keys.length > 5
+                  ? `<small class="text-muted d-block mt-1">…and ${keys.length-5} more fields</small>`
+                  : ''}
+               </div>`
+          }
+        </div>
+        ${keys.length > 0 ? `
+        <div class="card-footer p-2 text-end">
+          <button class="btn btn-outline-primary btn-sm show-fields-btn" data-store-key="${esc(storeKey)}">
+            <i class="bi bi-eye me-1"></i>All Fields (${keys.length})
+          </button>
+        </div>` : ''}
+      </div>`;
+    resultsContainer.appendChild(col);
+  });
+}
+
+// ── Field detail modal ─────────────────────────────────────────
+function showFields(fields, title) {
+  const body = document.getElementById('modal-fields-body');
+  document.querySelector('#fields-modal .modal-title').innerHTML =
+    `<i class="bi bi-card-text me-2"></i>${esc(title)}`;
+  body.innerHTML = `
+    <table class="table table-sm table-striped">
+      <thead><tr><th>Field</th><th>Value</th></tr></thead>
+      <tbody>
+        ${Object.entries(fields).map(([k,v]) => `
+          <tr><td class="fw-semibold">${esc(k)}</td><td>${esc(String(v))}</td></tr>`).join('')}
+      </tbody>
+    </table>`;
+  new bootstrap.Modal(document.getElementById('fields-modal')).show();
+}
+
+// ── Event delegation for show-fields buttons ──────────────────
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.show-fields-btn');
+  if (!btn) return;
+  const key = btn.dataset.storeKey;
+  const entry = _fieldStore.get(key);
+  if (entry) showFields(entry.fields, entry.title);
+});
+
+// ── Poll timer cleanup on page unload ─────────────────────────
+window.addEventListener('beforeunload', () => {
+  if (pollTimer) clearInterval(pollTimer);
+});
+
+// ── Sample DB ─────────────────────────────────────────────────
+btnViewSamples.addEventListener('click', () => {
+  samplesSection.style.display = 'block';
+  samplesSection.scrollIntoView({ behavior:'smooth' });
+  loadSamples();
+});
+
+btnRefresh.addEventListener('click', () => { samplePage = 0; loadSamples(); });
+filterDocType.addEventListener('change', () => { samplePage = 0; loadSamples(); });
+
+async function loadSamples() {
+  samplesTbody.innerHTML = '<tr><td colspan="8" class="text-center py-3"><div class="spinner-border spinner-border-sm"></div></td></tr>';
+  const dt  = filterDocType.value;
+  const url = `/api/v1/extraction/samples?limit=${PAGE_SIZE}&offset=${samplePage * PAGE_SIZE}${dt ? '&document_type='+encodeURIComponent(dt) : ''}`;
+  try {
+    const data = await apiFetch(url);
+    if (!data.ok) { samplesTbody.innerHTML = `<tr><td colspan="8" class="text-danger text-center">Error loading samples</td></tr>`; return; }
+    samplesCount.textContent = `${data.total} samples`;
+    if (!data.samples.length) {
+      samplesTbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">No samples found</td></tr>';
+      return;
+    }
+    samplesTbody.innerHTML = data.samples.map((s, idx) => {
+      const fields = s.fields || {};
+      const fc = Object.keys(fields).length;
+      // Store fields safely to avoid XSS in onclick attributes
+      const sKey = `sample-${s.id}-${idx}`;
+      _fieldStore.set(sKey, { fields, title: s.source_filename });
+      return `<tr class="sample-row">
+        <td>${s.id}</td>
+        <td class="text-truncate" style="max-width:150px" title="${esc(s.source_filename)}">${esc(s.source_filename)}</td>
+        <td><span class="badge ${docTypeBadge(s.document_type)}">${esc(s.document_type||'—')}</span></td>
+        <td><small>${esc(s.extraction_tool||'—')}</small></td>
+        <td>
+          <div class="progress" style="height:8px;width:60px">
+            <div class="progress-bar ${qualityBg(s.quality_score)}" style="width:${((s.quality_score||0)*100).toFixed(0)}%"></div>
+          </div>
+          <small>${((s.quality_score||0)*100).toFixed(0)}%</small>
+        </td>
+        <td>${fc}</td>
+        <td><small>${s.created_at ? s.created_at.slice(0,16).replace('T',' ') : ''}</small></td>
+        <td>
+          <button class="btn btn-outline-secondary btn-sm py-0 show-fields-btn" data-store-key="${esc(sKey)}">
+            <i class="bi bi-eye"></i>
+          </button>
+        </td>
+      </tr>`;
+    }).join('');
+    renderPagination(data.total);
+  } catch(e) {
+    samplesTbody.innerHTML = `<tr><td colspan="8" class="text-danger text-center">${esc(e.message)}</td></tr>`;
+  }
+}
+
+function renderPagination(total) {
+  const pages = Math.ceil(total / PAGE_SIZE);
+  const ul = document.getElementById('samples-pagination');
+  ul.innerHTML = '';
+  for (let i = 0; i < pages; i++) {
+    const li = document.createElement('li');
+    li.className = `page-item ${i === samplePage ? 'active' : ''}`;
+    li.innerHTML = `<a class="page-link" href="#">${i+1}</a>`;
+    li.querySelector('a').addEventListener('click', e => {
+      e.preventDefault(); samplePage = i; loadSamples();
+    });
+    ul.appendChild(li);
+  }
+}
+
+// ── Progress helpers ──────────────────────────────────────────
+function showProgress(label, done, total, pct=0, status='running') {
+  progressWrap.style.display = 'block';
+  progressLabel.textContent  = label;
+  progressCount.textContent  = `${done} / ${total}`;
+  progressBar.style.width    = `${pct}%`;
+  progressStatus.textContent = status;
+  progressBar.setAttribute('aria-valuenow', pct);
+}
+
+function updateProgress(label, done, total, pct, status) {
+  showProgress(label, done, total, pct, status);
+  if (['completed','partial','failed'].includes(status)) {
+    progressBar.classList.remove('progress-bar-animated');
+    progressBar.classList.toggle('bg-danger', status === 'failed');
+    progressBar.classList.toggle('bg-warning', status === 'partial');
+    progressBar.classList.toggle('bg-success', status === 'completed');
+  }
+}
+
+function hideProgress() { progressWrap.style.display = 'none'; }
+
+// ── Spinner ──────────────────────────────────────────────────
+let _spinnerEl = null;
+function showSpinner() {
+  _spinnerEl = document.createElement('div');
+  _spinnerEl.className = 'spinner-overlay';
+  _spinnerEl.innerHTML = '<div class="spinner-border text-light" style="width:3rem;height:3rem"></div>';
+  document.body.appendChild(_spinnerEl);
+}
+function hideSpinner() { _spinnerEl && _spinnerEl.remove(); _spinnerEl = null; }
+
+// ── Utilities ─────────────────────────────────────────────────
+function esc(str) {
+  return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function humanSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/1048576).toFixed(1) + ' MB';
+}
+
+function docTypeBadge(t) {
+  const m = { invoice:'bg-primary', receipt:'bg-success', form:'bg-info text-dark',
+              report:'bg-secondary', contract:'bg-dark', resume:'bg-warning text-dark',
+              letter:'bg-light text-dark', unknown:'bg-light text-muted' };
+  return m[t] || 'bg-secondary';
+}
+
+function qualityBadge(q) {
+  if (!q) return 'bg-secondary';
+  if (q >= 0.75) return 'bg-success';
+  if (q >= 0.4)  return 'bg-warning text-dark';
+  return 'bg-danger';
+}
+
+function qualityBg(q) {
+  if (!q) return 'bg-secondary';
+  if (q >= 0.75) return 'bg-success';
+  if (q >= 0.4)  return 'bg-warning';
+  return 'bg-danger';
+}
+
+function confClass(c) {
+  if (!c) return 'conf-low';
+  if (c >= 0.85) return 'conf-high';
+  if (c >= 0.65) return 'conf-med';
+  return 'conf-low';
+}
+
+function confPct(c) { return c ? `${(c*100).toFixed(0)}%` : '—'; }
+
+function showAlert(type, msg) {
+  const el = document.createElement('div');
+  el.className = `alert alert-${type} alert-dismissible fade show`;
+  el.innerHTML = `${esc(msg)}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
+  document.querySelector('.main-content').prepend(el);
+  setTimeout(() => el.remove(), 8000);
+}
+
+async function apiFetch(url, opts = {}) {
+  const headers = { 'X-CSRFToken': CSRF, ...(opts.headers || {}) };
+  const res = await fetch(url, { ...opts, headers, credentials: 'same-origin' });
+  if (!res.ok && !res.headers.get('content-type')?.includes('json')) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+  return res.json();
+}
+</script>
+{% endblock %}
