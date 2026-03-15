@@ -1941,3 +1941,99 @@ class TestExportAsPDF:
         # No summary page should be appended for empty-value fields
         assert result_doc.page_count == 1
         result_doc.close()
+
+    def test_no_bbox_replaces_existing_value_inline(self, tmp_path):
+        """When a PDF already has a value next to the label (e.g. 'Name: John Smith'),
+        exporting with a new value must place the new text inline (no summary page)
+        and the new value must appear in the result.
+
+        This covers the address-book template case: Apply Training Data updates
+        ExtractedField.value in the DB, the export must reflect those edits in
+        the original PDF page rather than silently appending a summary page.
+        """
+        import io
+        import fitz
+        svc = self._get_service()
+
+        # Build a PDF that already has "Name: John Smith" — simulates an
+        # address-book PDF whose fields were populated by a previous extraction.
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text(fitz.Point(50, 50), "Name: John Smith", fontsize=12)
+        page.insert_text(fitz.Point(50, 70), "City: OldCity", fontsize=12)
+        buf = io.BytesIO()
+        doc.save(buf)
+        doc.close()
+        src = tmp_path / "prefilled.pdf"
+        src.write_bytes(buf.getvalue())
+
+        # Export with new (training-applied) values — no bounding box supplied,
+        # forcing the label-search fallback path.
+        fields = [
+            {"field_name": "Name", "value": "Rahul Misra", "page_number": 1},
+            {"field_name": "City", "value": "Asansol", "page_number": 1},
+        ]
+        out = io.BytesIO()
+        svc._export_as_pdf(str(src), fields, out)
+        out.seek(0)
+        result_doc = fitz.open(stream=out.read(), filetype="pdf")
+
+        # Values must be placed inline — no summary page should be appended.
+        assert result_doc.page_count == 1, (
+            "Expected 1 page (values placed inline); got a summary page instead"
+        )
+
+        # The new values must appear in the first page.
+        page_text = result_doc[0].get_text()
+        result_doc.close()
+        assert "Rahul Misra" in page_text, "New 'Name' value not found in exported PDF"
+        assert "Asansol" in page_text, "New 'City' value not found in exported PDF"
+
+    def test_no_bbox_new_value_placed_at_label_position(self, tmp_path):
+        """The new value must be placed immediately to the right of the label,
+        not somewhere else on the page (e.g., not on a new line or offset)."""
+        import io
+        import fitz
+        svc = self._get_service()
+
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text(fitz.Point(50, 50), "Name: OldValue", fontsize=12)
+        buf = io.BytesIO()
+        doc.save(buf)
+        doc.close()
+        src = tmp_path / "src.pdf"
+        src.write_bytes(buf.getvalue())
+
+        fields = [{"field_name": "Name", "value": "NewValue", "page_number": 1}]
+        out = io.BytesIO()
+        svc._export_as_pdf(str(src), fields, out)
+        out.seek(0)
+        result_doc = fitz.open(stream=out.read(), filetype="pdf")
+
+        # Find "NewValue" span and "Name:" span; their y-ranges must overlap,
+        # confirming the new value is on the same line as the label.
+        text_dict = result_doc[0].get_text("dict")
+        result_doc.close()
+
+        label_bbox = None
+        new_value_bbox = None
+        for block in text_dict["blocks"]:
+            for line in block.get("lines", []):
+                for span in line["spans"]:
+                    if span["text"].startswith("Name:"):
+                        label_bbox = span["bbox"]
+                    if "NewValue" in span["text"]:
+                        new_value_bbox = span["bbox"]
+
+        assert new_value_bbox is not None, "'NewValue' span not found in result PDF"
+        assert label_bbox is not None, "'Name:' label span not found in result PDF"
+
+        # y-ranges must overlap: top of new value ≤ bottom of label and vice-versa
+        label_y0, label_y1 = label_bbox[1], label_bbox[3]
+        val_y0, val_y1 = new_value_bbox[1], new_value_bbox[3]
+        overlap = min(label_y1, val_y1) - max(label_y0, val_y0)
+        assert overlap > 0, (
+            f"New value y-range {(val_y0, val_y1)} does not overlap label y-range "
+            f"{(label_y0, label_y1)} — value not placed on same line as label"
+        )
