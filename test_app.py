@@ -1803,3 +1803,141 @@ class TestApplyTrainingToDocument:
         assert fields_map["Name"]["updated"] is True
         assert fields_map["Name"]["new_value"] == "Rahul Misra"
         assert fields_map["City"]["updated"] is False
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# PDFService._export_as_pdf — unit tests for the label-search fallback
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestExportAsPDF:
+    """Unit tests for PDFService._export_as_pdf.
+
+    Focuses on the fallback behaviour added to fix blank PDF exports for
+    address-book templates where bounding-box coordinates are absent.
+    """
+
+    def _get_service(self):
+        import importlib
+        import sys
+        repo_root = os.path.dirname(os.path.abspath(__file__))
+        backend_dir = os.path.join(repo_root, "backend")
+        if backend_dir not in sys.path:
+            sys.path.insert(0, backend_dir)
+        import services.pdf_service as mod
+        return mod.PDFService()
+
+    def _make_pdf_with_labels(self, labels: list[str]) -> bytes:
+        """Return a minimal PDF whose first page contains the given label strings."""
+        import io
+        import fitz
+        doc = fitz.open()
+        page = doc.new_page()
+        y = 50
+        for label in labels:
+            page.insert_text(fitz.Point(50, y), label, fontsize=12)
+            y += 20
+        buf = io.BytesIO()
+        doc.save(buf)
+        doc.close()
+        return buf.getvalue()
+
+    def test_bbox_path_stamps_value(self, tmp_path):
+        """Fields WITH a bounding box must be written at the specified location."""
+        import io
+        import fitz
+        svc = self._get_service()
+        pdf_bytes = self._make_pdf_with_labels(["Name:"])
+        src = tmp_path / "src.pdf"
+        src.write_bytes(pdf_bytes)
+
+        fields = [
+            {
+                "field_name": "Name",
+                "value": "Rahul Misra",
+                "page_number": 1,
+                "bbox_x": 10,
+                "bbox_y": 10,
+                "bbox_width": 100,
+                "bbox_height": 15,
+            }
+        ]
+        out = io.BytesIO()
+        svc._export_as_pdf(str(src), fields, out)
+        out.seek(0)
+        result_doc = fitz.open(stream=out.read(), filetype="pdf")
+        text = result_doc[0].get_text()
+        result_doc.close()
+        assert "Rahul Misra" in text
+
+    def test_no_bbox_inserts_value_after_label(self, tmp_path):
+        """Fields WITHOUT a bounding box must be placed next to the label found
+        in the PDF text (the primary fallback path)."""
+        import io
+        import fitz
+        svc = self._get_service()
+        pdf_bytes = self._make_pdf_with_labels(["Name:", "City:"])
+        src = tmp_path / "src.pdf"
+        src.write_bytes(pdf_bytes)
+
+        fields = [
+            {"field_name": "Name", "value": "Rahul Misra", "page_number": 1},
+            {"field_name": "City", "value": "Asansol", "page_number": 1},
+        ]
+        out = io.BytesIO()
+        svc._export_as_pdf(str(src), fields, out)
+        out.seek(0)
+        result_doc = fitz.open(stream=out.read(), filetype="pdf")
+        text = result_doc[0].get_text()
+        result_doc.close()
+        assert "Rahul Misra" in text
+        assert "Asansol" in text
+
+    def test_no_bbox_no_label_appends_summary_page(self, tmp_path):
+        """Fields whose label cannot be found in the PDF must appear in a
+        summary page appended at the end of the exported document."""
+        import io
+        import fitz
+        svc = self._get_service()
+        # Create a PDF with NO address-book labels
+        doc = fitz.open()
+        doc.new_page()
+        buf = io.BytesIO()
+        doc.save(buf)
+        doc.close()
+        pdf_bytes = buf.getvalue()
+
+        src = tmp_path / "blank.pdf"
+        src.write_bytes(pdf_bytes)
+
+        fields = [
+            {"field_name": "Name", "value": "Rahul Misra", "page_number": 1},
+        ]
+        out = io.BytesIO()
+        svc._export_as_pdf(str(src), fields, out)
+        out.seek(0)
+        result_doc = fitz.open(stream=out.read(), filetype="pdf")
+        # A summary page must have been appended
+        assert result_doc.page_count == 2
+        summary_text = result_doc[1].get_text()
+        result_doc.close()
+        assert "Rahul Misra" in summary_text
+
+    def test_empty_value_fields_are_skipped(self, tmp_path):
+        """Fields with blank values must not cause any modification or error."""
+        import io
+        import fitz
+        svc = self._get_service()
+        pdf_bytes = self._make_pdf_with_labels(["Name:"])
+        src = tmp_path / "src.pdf"
+        src.write_bytes(pdf_bytes)
+
+        fields = [
+            {"field_name": "Name", "value": "", "page_number": 1},
+        ]
+        out = io.BytesIO()
+        svc._export_as_pdf(str(src), fields, out)
+        out.seek(0)
+        result_doc = fitz.open(stream=out.read(), filetype="pdf")
+        # No summary page should be appended for empty-value fields
+        assert result_doc.page_count == 1
+        result_doc.close()

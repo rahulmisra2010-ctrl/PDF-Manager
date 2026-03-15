@@ -464,6 +464,15 @@ class PDFService:
 
         return result
 
+    # Pixels to nudge the insertion point upward so text sits on the label
+    # baseline rather than below it (fitz Point y = bottom of glyph box).
+    _BASELINE_NUDGE_PX: int = 2
+    # Minimum pixels of space required between the insertion point and the
+    # right edge of the page before we attempt an inline insert.
+    _MIN_RIGHT_MARGIN_PX: int = 20
+    # Pixels from the bottom of the page where we start a new summary page.
+    _SUMMARY_PAGE_BOTTOM_MARGIN_PX: int = 40
+
     def _export_as_pdf(
         self,
         original_path: str,
@@ -472,21 +481,49 @@ class PDFService:
     ) -> None:
         """Overlay updated field values onto the original PDF and save.
 
+        For fields that have bounding-box coordinates the value is stamped
+        directly over the original area (white-out + re-insert).  For fields
+        without bounding-box information (common for address-book templates
+        where coordinates were never captured) the method falls back to
+        searching for the field label inside the PDF text and inserting the
+        value immediately to the right of the label.  Any fields that could
+        not be placed via either strategy are collected and written onto an
+        appended summary page so no edited value is ever silently dropped.
+
         Args:
             original_path: Path to the original PDF file.
-            fields: Field dicts with optional ``bounding_box`` and ``page_number``.
+            fields: Field dicts with optional ``bounding_box`` and
+                    ``page_number`` keys.  Flat ``bbox_x`` / ``bbox_y`` /
+                    ``bbox_width`` / ``bbox_height`` keys are also accepted.
             output: Destination — either a file-system path (str) or a
                     writable binary file-like object (e.g. ``io.BytesIO``).
         """
         doc = fitz.open(original_path)
 
+        # Track fields that could not be placed anywhere in the original pages
+        # so they can be written to a summary page appended at the end.
+        unplaced: list[dict] = []
+
         for field in fields:
+            value = str(field.get("value", "")).strip()
+            if not value:
+                continue
+
             page_number = field.get("page_number", 1)
             if page_number < 1 or page_number > len(doc):
+                # Page number is out of range — treat as unplaced rather than
+                # silently placing on the wrong page.
+                logger.warning(
+                    "_export_as_pdf: page_number %s out of range (doc has %s page(s))"
+                    " for field '%s' — adding to summary.",
+                    page_number,
+                    len(doc),
+                    field.get("field_name", ""),
+                )
+                unplaced.append(field)
                 continue
             page = doc[page_number - 1]
             bbox = field.get("bounding_box")
-            value = str(field.get("value", ""))
 
             # Also support flat bbox_x/bbox_y/bbox_width/bbox_height format
             if bbox is None and field.get("bbox_x") is not None:
@@ -505,6 +542,12 @@ class PDFService:
                 x1 = bbox.get("x1")
                 y1 = bbox.get("y1")
                 if x1 is None or y1 is None:
+                    logger.warning(
+                        "_export_as_pdf: malformed bounding_box (missing x1/y1)"
+                        " for field '%s' — adding to summary.",
+                        field.get("field_name", ""),
+                    )
+                    unplaced.append(field)
                     continue
                 rect = fitz.Rect(
                     bbox.get("x0", 0),
@@ -517,6 +560,84 @@ class PDFService:
                 page.insert_text(
                     rect.tl, value, fontsize=10, color=(0, 0, 0)
                 )
+            else:
+                # -------------------------------------------------------
+                # Fallback: no bounding box available.
+                # Search every page for the field label and insert the
+                # value immediately to the right of the found label text.
+                # This is the common case for address-book templates where
+                # fields were extracted from structured text without pixel
+                # coordinates (e.g. after Apply Training Data).
+                # -------------------------------------------------------
+                field_name = str(field.get("field_name", "")).strip()
+                placed = False
+                # Search all pages, preferring the recorded page_number
+                search_order = [page_number - 1] + [
+                    p for p in range(len(doc)) if p != page_number - 1
+                ]
+                label_variants = [
+                    f"{field_name}:",
+                    f"{field_name} :",
+                    field_name,
+                ]
+                for page_idx in search_order:
+                    pg = doc[page_idx]
+                    for label_text in label_variants:
+                        hits = pg.search_for(label_text)
+                        if not hits:
+                            continue
+                        label_rect = hits[0]
+                        # Insert value just to the right of the label,
+                        # aligned to the label's baseline.
+                        insert_x = label_rect.x1 + 4
+                        # Nudge upward so the text sits on the baseline
+                        # rather than below the glyph descent.
+                        insert_y = label_rect.y1 - self._BASELINE_NUDGE_PX
+                        page_width = pg.rect.width
+                        if insert_x < page_width - self._MIN_RIGHT_MARGIN_PX:
+                            pg.insert_text(
+                                fitz.Point(insert_x, insert_y),
+                                value,
+                                fontsize=10,
+                                color=(0, 0, 0),
+                            )
+                            placed = True
+                            break
+                    if placed:
+                        break
+
+                if not placed:
+                    unplaced.append(field)
+
+        # -------------------------------------------------------------------
+        # Summary page — append only when there are unplaced fields with
+        # non-empty values so that edited data is never lost.
+        # -------------------------------------------------------------------
+        unplaced_with_values = [f for f in unplaced if str(f.get("value", "")).strip()]
+        if unplaced_with_values:
+            summary_page = doc.new_page()
+            y = 50
+            summary_page.insert_text(
+                fitz.Point(50, y),
+                "Edited Fields Summary",
+                fontsize=14,
+                color=(0, 0, 0),
+            )
+            y += 24
+            for f in unplaced_with_values:
+                fname = str(f.get("field_name", "")).strip()
+                fval = str(f.get("value", "")).strip()
+                line = f"{fname}: {fval}"
+                summary_page.insert_text(
+                    fitz.Point(50, y),
+                    line,
+                    fontsize=10,
+                    color=(0, 0, 0),
+                )
+                y += 16
+                if y > summary_page.rect.height - self._SUMMARY_PAGE_BOTTOM_MARGIN_PX:
+                    summary_page = doc.new_page()
+                    y = 50
 
         doc.save(output)
         doc.close()
