@@ -1,0 +1,67 @@
+# =============================================================================
+# PDF-Manager — Prometheus Configuration
+# =============================================================================
+global:
+  scrape_interval:     15s   # how often to scrape targets
+  evaluation_interval: 15s   # how often to evaluate alerting rules
+  scrape_timeout:      10s
+
+  external_labels:
+    environment: production
+    service: pdf-manager
+
+# ---------------------------------------------------------------------------
+# Alertmanager
+# ---------------------------------------------------------------------------
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+# ---------------------------------------------------------------------------
+# Alerting rules
+# ---------------------------------------------------------------------------
+rule_files:
+  - "alerts/*.yml"
+
+# ---------------------------------------------------------------------------
+# Scrape configurations
+# ---------------------------------------------------------------------------
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Flask application metrics (via prometheus-flask-exporter or /metrics endpoint)
+  - job_name: pdf-manager-web
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["web:5000"]
+    scrape_interval: 30s
+
+  # Nginx metrics (via nginx-prometheus-exporter sidecar)
+  - job_name: nginx
+    static_configs:
+      - targets: ["nginx-exporter:9113"]
+
+  # PostgreSQL metrics (via postgres_exporter)
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  # Redis metrics (via redis_exporter)
+  - job_name: redis
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+
+  # PgBouncer metrics (via pgbouncer_exporter)
+  - job_name: pgbouncer
+    static_configs:
+      - targets: ["pgbouncer-exporter:9127"]
+
+  # Node / host metrics
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
