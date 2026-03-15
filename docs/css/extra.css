@@ -1,0 +1,125 @@
+/* PDF Manager Documentation – custom styles */
+
+/* ─── Brand colours ───────────────────────────────────── */
+:root {
+  --pdf-blue: #1976d2;
+  --pdf-light-blue: #42a5f5;
+  --pdf-green: #4caf50;
+  --pdf-yellow: #ffc107;
+  --pdf-red: #f44336;
+}
+
+/* ─── Hero section on the home page ──────────────────── */
+.hero {
+  padding: 3rem 2rem;
+  text-align: center;
+  background: linear-gradient(135deg, #1565c0 0%, #1976d2 50%, #42a5f5 100%);
+  border-radius: 8px;
+  margin-bottom: 2rem;
+  color: #fff;
+}
+
+.hero h1 {
+  font-size: 2.5rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+  color: #fff !important;
+}
+
+.hero p {
+  font-size: 1.15rem;
+  opacity: 0.9;
+  margin-bottom: 1.5rem;
+}
+
+/* ─── Feature cards ───────────────────────────────────── */
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.25rem;
+  margin: 2rem 0;
+}
+
+.feature-card {
+  background: var(--md-default-bg-color);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 8px;
+  padding: 1.5rem;
+  text-align: center;
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+
+.feature-card:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  transform: translateY(-2px);
+}
+
+.feature-card .icon {
+  font-size: 2.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.feature-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.feature-card p {
+  font-size: 0.875rem;
+  opacity: 0.8;
+  margin: 0;
+}
+
+/* ─── Confidence badge colours ────────────────────────── */
+.badge-green  { color: var(--pdf-green);  font-weight: 600; }
+.badge-yellow { color: var(--pdf-yellow); font-weight: 600; }
+.badge-red    { color: var(--pdf-red);    font-weight: 600; }
+
+/* ─── API method labels ───────────────────────────────── */
+.http-get    { background: var(--pdf-green);     color: #fff; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-family: monospace; }
+.http-post   { background: var(--pdf-blue);      color: #fff; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-family: monospace; }
+.http-put    { background: var(--pdf-yellow);    color: #333; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-family: monospace; }
+.http-delete { background: var(--pdf-red);       color: #fff; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-family: monospace; }
+
+/* ─── Endpoint title strip ────────────────────────────── */
+.endpoint-title {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--md-code-bg-color);
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 1rem;
+  margin-bottom: 1rem;
+}
+
+/* ─── Quick-start CTA buttons ─────────────────────────── */
+.cta-buttons {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 1.5rem;
+}
+
+.cta-button {
+  display: inline-block;
+  padding: 0.6rem 1.4rem;
+  border-radius: 6px;
+  text-decoration: none !important;
+  font-weight: 600;
+  transition: opacity 0.15s;
+}
+
+.cta-button:hover { opacity: 0.85; }
+
+.cta-primary   { background: #fff; color: var(--pdf-blue) !important; }
+.cta-secondary { background: transparent; color: #fff !important; border: 2px solid #fff; }
+
+/* ─── Responsive tweaks ───────────────────────────────── */
+@media (max-width: 600px) {
+  .hero h1 { font-size: 1.75rem; }
+  .hero p  { font-size: 1rem; }
+}
