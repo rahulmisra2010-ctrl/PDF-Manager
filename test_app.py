@@ -1613,11 +1613,19 @@ class TestMapAddressBookFieldsBlankTemplate:
         assert field_map["Email"]["value"] == ""
 
     def test_non_addressbook_pdf_not_affected(self):
-        """Text with < 4 address-book labels → no placeholder fields added."""
+        """
+        Text with some (but < 4) address-book labels → template pass not triggered
+        (label_hits < 4) and heuristic suppressed (label_hits > 0).
+        When labels are present but yield no values the result is empty.
+        """
         svc = self._svc()
-        text = "Invoice #1234\nTotal: $100.00\nDate: 2024-01-01\n"
+        # Three address-book labels with no values → 3 labels detected (< 4),
+        # no values extracted, heuristic suppressed → result is [].
+        text = "City: State: Zip Code:\n"
         result = svc.map_address_book_fields(text)
-        assert result == [], f"Expected empty result for non-addressbook text, got {result}"
+        assert result == [], (
+            f"Expected empty result for text with 3 empty labels, got {result}"
+        )
 
     def test_four_labels_triggers_template_detection(self):
         """Exactly 4 address-book labels are enough to trigger template detection."""
@@ -1635,6 +1643,113 @@ class TestMapAddressBookFieldsBlankTemplate:
         # No values extracted and threshold not reached → empty result
         assert result == []
 
+
+# ─────────────────────────────────────────────────────────────────────────
+# PDFService.map_address_book_fields — heuristic fallback for unlabeled OCR
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestMapAddressBookFieldsHeuristic:
+    """
+    Unit tests for the heuristic fallback in PDFService.map_address_book_fields.
+
+    The heuristic applies when no label-based fields are detected:
+      - ≥ 2 non-empty lines → line[0] = Street Address, line[1] = Name
+      - exactly 1 non-empty line → Name (conservative default)
+      - empty text → empty result []
+    All 9 ADDRESS_BOOK_FIELDS are returned; heuristic values have
+    confidence=0.95, empty slots have confidence=0.0.
+    """
+
+    def _svc(self):
+        repo_root = os.path.dirname(os.path.abspath(__file__))
+        backend_dir = os.path.join(repo_root, "backend")
+        if backend_dir not in sys.path:
+            sys.path.insert(0, backend_dir)
+        from services.pdf_service import PDFService
+        return PDFService()
+
+    def _field_map(self, result):
+        return {item["field_name"]: item for item in result}
+
+    def test_two_line_ocr_maps_street_and_name(self):
+        """Two-line unlabeled OCR: line 1 → Street Address, line 2 → Name."""
+        svc = self._svc()
+        text = "sumoth pally west.\nDeep Misra"
+        result = svc.map_address_book_fields(text)
+        fm = self._field_map(result)
+
+        assert fm["Street Address"]["value"] == "sumoth pally west."
+        assert fm["Name"]["value"] == "Deep Misra"
+
+    def test_two_line_ocr_returns_all_nine_fields(self):
+        """Two-line unlabeled OCR produces all 9 ADDRESS_BOOK_FIELDS."""
+        svc = self._svc()
+        from services.pdf_service import ADDRESS_BOOK_FIELDS
+        text = "sumoth pally west.\nDeep Misra"
+        result = svc.map_address_book_fields(text)
+        assert {item["field_name"] for item in result} == set(ADDRESS_BOOK_FIELDS)
+
+    def test_two_line_heuristic_confidence(self):
+        """Heuristic-derived fields have confidence=0.95; empty slots have 0.0."""
+        svc = self._svc()
+        text = "sumoth pally west.\nDeep Misra"
+        result = svc.map_address_book_fields(text)
+        fm = self._field_map(result)
+
+        assert fm["Street Address"]["confidence"] == 0.95
+        assert fm["Name"]["confidence"] == 0.95
+        assert fm["City"]["confidence"] == 0.0
+        assert fm["Email"]["confidence"] == 0.0
+
+    def test_single_line_ocr_maps_to_name(self):
+        """Single unlabeled OCR line is conservatively mapped to Name."""
+        svc = self._svc()
+        text = "Deep Misra"
+        result = svc.map_address_book_fields(text)
+        fm = self._field_map(result)
+
+        assert fm["Name"]["value"] == "Deep Misra"
+        assert fm["Street Address"]["value"] == ""
+
+    def test_single_line_ocr_returns_all_nine_fields(self):
+        """Single unlabeled OCR line still produces all 9 ADDRESS_BOOK_FIELDS."""
+        svc = self._svc()
+        from services.pdf_service import ADDRESS_BOOK_FIELDS
+        text = "Deep Misra"
+        result = svc.map_address_book_fields(text)
+        assert {item["field_name"] for item in result} == set(ADDRESS_BOOK_FIELDS)
+
+    def test_empty_text_returns_empty_list(self):
+        """Empty text (or whitespace-only) returns an empty result."""
+        svc = self._svc()
+        assert svc.map_address_book_fields("") == []
+        assert svc.map_address_book_fields("   \n\n  ") == []
+
+    def test_heuristic_not_applied_when_labels_present(self):
+        """
+        Label-based mapping takes priority: heuristic is NOT applied when
+        label-based parsing already produced fields.
+        """
+        svc = self._svc()
+        text = "Name Rahul Misra\nCity: Asansol State: WB Zip Code: 713301\n"
+        result = svc.map_address_book_fields(text)
+        fm = self._field_map(result)
+
+        # Label-based values must be preserved
+        assert fm["Name"]["value"] == "Rahul Misra"
+        assert fm["City"]["value"] == "Asansol"
+        assert fm["State"]["value"] == "WB"
+        # Street Address was not in the text, so it should be empty (template pass)
+        assert fm["Street Address"]["value"] == ""
+
+    def test_result_ordered_by_address_book_fields(self):
+        """Heuristic result is ordered according to ADDRESS_BOOK_FIELDS."""
+        svc = self._svc()
+        from services.pdf_service import ADDRESS_BOOK_FIELDS
+        text = "123 Main St\nJane Doe"
+        result = svc.map_address_book_fields(text)
+        names = [item["field_name"] for item in result]
+        assert names == ADDRESS_BOOK_FIELDS
 
 
 # ─────────────────────────────────────────────────────────────────────────

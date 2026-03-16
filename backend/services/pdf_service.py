@@ -462,6 +462,49 @@ class PDFService:
                 if fn not in present:
                     result.append({"field_name": fn, "value": "", "confidence": 0.0})
 
+        # ------------------------------------------------------------------
+        # Heuristic fallback for unlabeled OCR text
+        # ------------------------------------------------------------------
+        # When no label-based fields were found (result is still empty) but
+        # the raw text contains usable lines, apply a positional heuristic:
+        #
+        #   ≥ 2 non-empty lines → line[0] = Street Address, line[1] = Name
+        #   exactly 1 non-empty line → treated as Name (conservative default)
+        #
+        # The heuristic is only applied when the text contains NO recognizable
+        # address-book field labels (label_hits == 0).  This prevents it from
+        # firing on blank templates or partially-filled forms whose labels
+        # yielded no extractable values.
+        #
+        # All 9 ADDRESS_BOOK_FIELDS are included in the output; heuristic-
+        # derived values carry confidence=0.95 and missing slots carry 0.0.
+        if not result and label_hits == 0:
+            non_empty_lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+            if non_empty_lines:
+                heuristic: dict[str, str] = {}
+                if len(non_empty_lines) >= 2:
+                    # First meaningful line is the street address,
+                    # second meaningful line is the person's name.
+                    heuristic["Street Address"] = non_empty_lines[0]
+                    heuristic["Name"] = non_empty_lines[1]
+                else:
+                    # Single line: conservatively treat as Name.
+                    heuristic["Name"] = non_empty_lines[0]
+
+                for fn in ADDRESS_BOOK_FIELDS:
+                    if fn in heuristic:
+                        result.append({
+                            "field_name": fn,
+                            "value": heuristic[fn],
+                            "confidence": 0.95,
+                        })
+                    else:
+                        result.append({
+                            "field_name": fn,
+                            "value": "",
+                            "confidence": 0.0,
+                        })
+
         return result
 
     # Pixels to nudge the insertion point upward so text sits on the label
