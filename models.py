@@ -14,10 +14,12 @@ Models
 * FieldCorrection  — per-field corrections applied by Train Me
 * TrainingExample  — labeled training examples for RAG confidence boosting
 * TrainingExample  — labeled field values used by TrainingService
+* DocumentSchema   — persisted ordered field labels discovered per document
 """
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from flask_bcrypt import Bcrypt
@@ -444,3 +446,41 @@ class TrainingExample(db.Model):
             f"<TrainingExample doc={self.document_id}"
             f" field={self.field_name!r} value={self.correct_value!r}>"
         )
+
+
+# ---------------------------------------------------------------------------
+# DocumentSchema
+# ---------------------------------------------------------------------------
+
+class DocumentSchema(db.Model):
+    """Persisted ordered list of field labels discovered for a document.
+
+    Created automatically the first time dynamic extraction runs for a document.
+    Subsequent extractions map discovered labels to this schema using exact,
+    normalised, and fuzzy matching so the field list stays stable across re-runs.
+    """
+
+    __tablename__ = "document_schemas"
+
+    id = db.Column(db.Integer, primary_key=True)
+    document_id = db.Column(
+        db.Integer, db.ForeignKey("documents.id"), nullable=False, unique=True
+    )
+    # Ordered list of label strings serialised as JSON, e.g. '["Name", "Email"]'
+    labels_json = db.Column(db.Text, nullable=False, default="[]")
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    @property
+    def labels(self) -> list[str]:
+        """Return the ordered list of field labels."""
+        return json.loads(self.labels_json)
+
+    @labels.setter
+    def labels(self, value: list[str]) -> None:
+        """Set and serialise the ordered list of field labels."""
+        self.labels_json = json.dumps(value, ensure_ascii=False)
+        self.updated_at = datetime.utcnow()
+
+    def __repr__(self) -> str:
+        return f"<DocumentSchema doc={self.document_id} n={len(self.labels)}>"
