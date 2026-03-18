@@ -144,47 +144,111 @@ def detail(doc_id: int):
     return render_template("pdf/detail.html", doc=doc, fields=fields)
 
 
+def _ensure_backend_on_path() -> None:
+    """Add backend/ directory to sys.path if not already present."""
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _backend = os.path.abspath(os.path.join(_here, "..", "backend"))
+    if _backend not in sys.path:
+        sys.path.insert(0, _backend)
+
+
 @pdf_bp.route("/<int:doc_id>/extract", methods=["POST"])
 @login_required
 def extract(doc_id: int):
-    """Run OCR extraction and address-book field mapping on the document."""
+    """Run extraction on the document.
+
+    Strategy:
+    1. Try dynamic label/value discovery (works for any PDF/image type).
+    2. If dynamic extraction yields no pairs, fall back to the address-book
+       mapping (legacy behaviour) so that address-book PDFs continue to work.
+    """
     doc = Document.query.get_or_404(doc_id)
+
+    if not os.path.exists(doc.file_path):
+        flash("Extraction failed: uploaded file not found on disk.", "danger")
+        return redirect(url_for("pdf.detail", doc_id=doc_id))
+
+    _ensure_backend_on_path()
+
+    # ------------------------------------------------------------------
+    # 1. Dynamic extraction (preferred)
+    # ------------------------------------------------------------------
+    dynamic_pairs: list[dict] = []
+    try:
+        from services.dynamic_extraction import extract_dynamic_fields  # type: ignore[import]
+        dynamic_pairs = extract_dynamic_fields(doc.file_path, page_index=0)
+    except Exception as _dyn_exc:
+        current_app.logger.warning(
+            "Dynamic extraction failed (will fall back to address-book): %s", _dyn_exc
+        )
+
+    if dynamic_pairs:
+        # Store dynamic pairs in DB
+        try:
+            ExtractedField.query.filter_by(document_id=doc_id).delete()
+
+            for pair in dynamic_pairs:
+                bbox = pair.get("bbox") or {}
+                field = ExtractedField(
+                    document_id=doc_id,
+                    field_name=pair["label"],
+                    value=pair["value"],
+                    confidence=pair.get("confidence", 1.0),
+                    page_number=pair.get("page_number", 1),
+                    bbox_x=bbox.get("x"),
+                    bbox_y=bbox.get("y"),
+                    bbox_width=bbox.get("width"),
+                    bbox_height=bbox.get("height"),
+                )
+                db.session.add(field)
+
+            # Determine page count
+            try:
+                import fitz  # type: ignore[import]
+                _doc = fitz.open(doc.file_path)
+                doc.page_count = len(_doc)
+                _doc.close()
+            except Exception:
+                doc.page_count = 1
+
+            doc.status = "extracted"
+            _log(current_user.id, "extract", "document", str(doc_id), "dynamic")
+            db.session.commit()
+            flash(
+                f"Dynamic extraction complete — {len(dynamic_pairs)} field(s) found.",
+                "success",
+            )
+        except Exception as exc:
+            db.session.rollback()
+            current_app.logger.exception(
+                "Error saving dynamic fields for doc %s: %s", doc_id, exc
+            )
+            flash(f"Extraction failed while saving fields: {exc}", "danger")
+
+        return redirect(url_for("pdf.detail", doc_id=doc_id))
+
+    # ------------------------------------------------------------------
+    # 2. Fallback: address-book field mapping (legacy)
+    # ------------------------------------------------------------------
     svc = _get_pdf_service()
     if svc is None:
         flash("PDF service is not available — check backend dependencies.", "danger")
         return redirect(url_for("pdf.detail", doc_id=doc_id))
 
     try:
-        if not os.path.exists(doc.file_path):
-            flash("Extraction failed: uploaded file not found on disk.", "danger")
-            return redirect(url_for("pdf.detail", doc_id=doc_id))
-
         text, _tables, page_count = svc.extract(doc.file_path)
         mapped = svc.map_address_book_fields(text)
 
-        # ------------------------------------------------------------------
-        # OCR fallback: if Street Address is still blank after text-based
-        # extraction (e.g. the PDF page is image-based), run EasyOCR.
-        # ------------------------------------------------------------------
+        # OCR fallback for blank address-book fields
         try:
-            import sys as _sys
-            import os as _os
-            _here = _os.path.dirname(_os.path.abspath(__file__))
-            _backend = _os.path.join(_here, "..", "backend")
-            if _os.path.abspath(_backend) not in _sys.path:
-                _sys.path.insert(0, _os.path.abspath(_backend))
             from services.ocr_utils import fill_missing_fields_with_ocr  # type: ignore[import]
-
-            # Build a mutable dict keyed by field_name
             fields_dict = {item["field_name"]: item.get("value", "") for item in mapped}
             fields_dict = fill_missing_fields_with_ocr(fields_dict, doc.file_path, page_index=0)
-            # Reflect any OCR-filled values back into the mapped list
             for item in mapped:
                 item["value"] = fields_dict.get(item["field_name"], item.get("value", ""))
         except Exception as _exc:
             current_app.logger.warning("OCR fallback failed (non-fatal): %s", _exc)
 
-        # Remove previous fields and replace with freshly mapped ones
         ExtractedField.query.filter_by(document_id=doc_id).delete()
 
         for item in mapped:
@@ -198,9 +262,9 @@ def extract(doc_id: int):
 
         doc.status = "extracted"
         doc.page_count = page_count
-        _log(current_user.id, "extract", "document", str(doc_id))
+        _log(current_user.id, "extract", "document", str(doc_id), "address-book")
         db.session.commit()
-        flash("Extraction complete.", "success")
+        flash("Extraction complete (address-book schema).", "success")
     except (OSError, RuntimeError, ValueError) as exc:
         db.session.rollback()
         flash(f"Extraction failed: {exc}", "danger")

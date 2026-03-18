@@ -112,9 +112,23 @@
 
 <!-- Extracted fields editor -->
 {% if fields %}
+{# Detect whether fields look like address-book (fixed) or dynamic extraction #}
+{% set ab_field_names = ['Name','Street Address','City','State','Zip Code','Home Phone','Cell Phone','Work Phone','Email'] %}
+{% set ab_count = fields | selectattr('field_name', 'in', ab_field_names) | list | length %}
+{% set is_dynamic = (ab_count < (fields | length)) or (fields | length > 9) %}
 <div class="card">
   <div class="card-header d-flex justify-content-between align-items-center fw-semibold">
-    <span>Extracted Fields</span>
+    <span>
+      Extracted Fields
+      {% if is_dynamic %}
+        <span class="badge bg-primary ms-2" title="Labels and values were discovered dynamically from the document">
+          <i class="bi bi-magic me-1"></i>Dynamic
+        </span>
+      {% else %}
+        <span class="badge bg-secondary ms-2" title="Fixed address-book schema">Address Book</span>
+      {% endif %}
+      <span class="badge bg-light text-dark ms-1">{{ fields | length }} field(s)</span>
+    </span>
     <button type="button" id="btn-mark-training"
             class="btn btn-outline-success btn-sm"
             title="Save current extracted fields as training examples to improve future extractions">
@@ -132,9 +146,11 @@
             {% if field.is_edited %}
               <span class="badge bg-warning text-dark ms-1">edited</span>
             {% endif %}
-            {% if field.confidence_source in ('training', 'training_generated', 'training_completed') %}
-              <span class="badge bg-success ms-1"
-                    title="Value filled/generated from training data">training</span>
+            {% if field.confidence is defined and field.confidence < 0.85 %}
+              <span class="badge bg-info text-dark ms-1"
+                    title="OCR confidence {{ '%.0f' | format(field.confidence * 100) }}%">
+                {{ '%.0f' | format(field.confidence * 100) }}%
+              </span>
             {% endif %}
           </label>
           <input type="text" class="form-control" name="field_{{ field.id }}"
