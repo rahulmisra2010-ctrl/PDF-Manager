@@ -375,6 +375,72 @@ the app.
 
 ---
 
+## Troubleshooting OCR / EasyOCR
+
+### CMD vs Python — "command not recognized" errors
+
+When you are in **Windows CMD** your prompt looks like:
+
+```
+(.venv) C:\Users\RAHUL MISRA\PDF-Manager>
+```
+
+In CMD you run **script files**, not individual Python statements:
+
+```bat
+python easyocr_on_image.py     ← correct: run a .py file
+```
+
+If your prompt shows `>>>` you are inside the **Python REPL**; Python
+statements can be typed there directly.  Type `exit()` to return to CMD
+before running `python script.py`.
+
+### My file is named `.png` but OCR says it is a PDF
+
+A file extension does not determine the actual file type.  A PDF document
+can be saved with a `.png` extension and it will still be a PDF internally.
+
+**Check the file signature in PowerShell:**
+
+```powershell
+# Shows the first 4 bytes as decimal numbers
+(Get-Content -Path "test.png" -Encoding Byte -TotalCount 4) -join " "
+```
+
+| Result | Meaning |
+|--------|---------|
+| `137 80 78 71` | Real PNG file (hex `89 50 4E 47`) ✔ |
+| `37 80 68 70` or starts with `%PDF` | PDF renamed to `.png` — use a real screenshot |
+
+**Create a genuine PNG screenshot on Windows:**
+
+1. Press **Win + Shift + S** to open the Snipping Tool.
+2. Select the area you want to capture.
+3. Click the notification → **Save as** → choose a folder and save as `.png`.
+4. Use the saved file path in your script or upload it to PDF Manager.
+
+### `ocr_image_text` vs `ocr_page_text`
+
+| Function | Input | Use when |
+|----------|-------|----------|
+| `ocr_page_text(pdf_path)` | PDF file | You have a PDF document |
+| `ocr_image_text(image_path)` | PNG / JPG | You have a real screenshot or photo |
+
+`ocr_image_text` validates the file signature and raises a clear error if the
+file is actually a PDF.  It uses **OpenCV** (`cv2.imread`) to load the image,
+which is more reliable than `skimage.io.imread` and avoids missing-backend
+errors.
+
+### OpenCV returns `None` (image cannot be opened)
+
+If you see a message like *"OpenCV could not open …"*, check:
+
+- The full file path is correct (copy-paste from File Explorer to avoid typos).
+- The file extension matches the actual format (`.png`, `.jpg`, `.bmp`, etc.).
+- Run the PowerShell signature check above to confirm it is a real image.
+
+---
+
 ## License
 
 MIT

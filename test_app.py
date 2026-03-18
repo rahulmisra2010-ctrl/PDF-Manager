@@ -2269,3 +2269,129 @@ class TestFillMissingFieldsWithOCR:
         fields = {"street_address": ""}
         result = mod.fill_missing_fields_with_ocr(fields, str(tmp_path / "dummy.pdf"))
         assert result["street_address"] == "Sumoth pally. Durgamandir"
+
+
+class TestExtractCellPhoneFromOCR:
+    """Unit tests for backend/services/ocr_utils.extract_cell_phone_from_ocr."""
+
+    def test_basic_inline(self):
+        """10-digit number on the same line as the label is returned."""
+        mod = _import_ocr_utils()
+        text = "Cell Phone: 7699888010"
+        result = mod.extract_cell_phone_from_ocr(text)
+        assert result == "7699888010"
+
+    def test_label_with_extra_spaces(self):
+        """Extra spaces between 'Cell' and 'Phone' are tolerated."""
+        mod = _import_ocr_utils()
+        text = "Cell  Phone: 7699888010"
+        result = mod.extract_cell_phone_from_ocr(text)
+        assert result == "7699888010"
+
+    def test_label_in_longer_line(self):
+        """Number found when label is embedded in a longer text line."""
+        mod = _import_ocr_utils()
+        text = "Home Phone: Cell Phone: 7699888010 Work Phone:"
+        result = mod.extract_cell_phone_from_ocr(text)
+        assert result == "7699888010"
+
+    def test_not_found_returns_none(self):
+        """Returns None when no Cell Phone label is present."""
+        mod = _import_ocr_utils()
+        text = "Name: John\nStreet Address\n123 Main St"
+        result = mod.extract_cell_phone_from_ocr(text)
+        assert result is None
+
+    def test_empty_string_returns_none(self):
+        """Returns None for empty input."""
+        mod = _import_ocr_utils()
+        result = mod.extract_cell_phone_from_ocr("")
+        assert result is None
+
+    def test_wrong_digit_count_returns_none(self):
+        """A number that is not exactly 10 digits is not returned."""
+        mod = _import_ocr_utils()
+        text = "Cell Phone: 123456"
+        result = mod.extract_cell_phone_from_ocr(text)
+        assert result is None
+
+
+class TestOCRImageText:
+    """Unit tests for backend/services/ocr_utils.ocr_image_text."""
+
+    def test_file_not_found(self):
+        """Raises FileNotFoundError for a non-existent path."""
+        mod = _import_ocr_utils()
+        import pytest
+        with pytest.raises(FileNotFoundError, match="not found"):
+            mod.ocr_image_text("/nonexistent/path/image.png")
+
+    def test_pdf_signature_raises(self, tmp_path):
+        """Raises ValueError when the file starts with %PDF."""
+        mod = _import_ocr_utils()
+        import pytest
+        fake_png = tmp_path / "fake.png"
+        fake_png.write_bytes(b"%PDF-1.7 some content here")
+        with pytest.raises(ValueError, match="PDF"):
+            mod.ocr_image_text(str(fake_png))
+
+    def test_opencv_none_raises(self, tmp_path, monkeypatch):
+        """Raises ValueError when cv2.imread returns None."""
+        mod = _import_ocr_utils()
+        import pytest
+        # Write a file with a valid PNG signature but garbage body
+        fake_img = tmp_path / "bad.png"
+        fake_img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+
+        import types
+        fake_cv2 = types.ModuleType("cv2")
+        fake_cv2.imread = lambda *a, **kw: None
+        fake_cv2.COLOR_BGR2RGB = 4
+        fake_cv2.cvtColor = lambda img, code: img
+        monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
+
+        with pytest.raises(ValueError, match="OpenCV could not open"):
+            mod.ocr_image_text(str(fake_img))
+
+
+class TestFillMissingFieldsWithOCRCellPhone:
+    """Tests for the Cell Phone part of fill_missing_fields_with_ocr."""
+
+    def test_fills_cell_phone_display_key(self, monkeypatch, tmp_path):
+        """OCR result is written to 'Cell Phone' key when it is blank."""
+        mod = _import_ocr_utils()
+        monkeypatch.setenv("OCR_FALLBACK_ENABLED", "1")
+        monkeypatch.setattr(
+            mod,
+            "ocr_page_text",
+            lambda *a, **kw: "Home Phone: Cell Phone: 7699888010 Work Phone:",
+        )
+        fields = {"Street Address": "123 Main St", "Cell Phone": ""}
+        result = mod.fill_missing_fields_with_ocr(fields, str(tmp_path / "dummy.pdf"))
+        assert result["Cell Phone"] == "7699888010"
+
+    def test_fills_cell_phone_snake_key(self, monkeypatch, tmp_path):
+        """OCR result is written to 'cell_phone' key when it is blank."""
+        mod = _import_ocr_utils()
+        monkeypatch.setenv("OCR_FALLBACK_ENABLED", "1")
+        monkeypatch.setattr(
+            mod,
+            "ocr_page_text",
+            lambda *a, **kw: "Cell Phone: 7699888010",
+        )
+        fields = {"street_address": "123 Main St", "cell_phone": ""}
+        result = mod.fill_missing_fields_with_ocr(fields, str(tmp_path / "dummy.pdf"))
+        assert result["cell_phone"] == "7699888010"
+
+    def test_skips_cell_phone_when_present(self, monkeypatch, tmp_path):
+        """When Cell Phone is already filled, it is not overwritten."""
+        mod = _import_ocr_utils()
+        monkeypatch.setenv("OCR_FALLBACK_ENABLED", "1")
+
+        def _should_not_be_called(*a, **kw):
+            raise AssertionError("ocr_page_text should not be called")
+
+        monkeypatch.setattr(mod, "ocr_page_text", _should_not_be_called)
+        fields = {"Street Address": "123 Main St", "Cell Phone": "9876543210"}
+        result = mod.fill_missing_fields_with_ocr(fields, str(tmp_path / "dummy.pdf"))
+        assert result["Cell Phone"] == "9876543210"
