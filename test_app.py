@@ -2152,3 +2152,120 @@ class TestExportAsPDF:
             f"New value y-range {(val_y0, val_y1)} does not overlap label y-range "
             f"{(label_y0, label_y1)} — value not placed on same line as label"
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# OCR utils unit tests
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _import_ocr_utils():
+    """Import backend/services/ocr_utils, adding backend/ to sys.path if needed."""
+    import importlib
+    repo_root = os.path.dirname(os.path.abspath(__file__))
+    backend_dir = os.path.join(repo_root, "backend")
+    if backend_dir not in sys.path:
+        sys.path.insert(0, backend_dir)
+    return importlib.import_module("services.ocr_utils")
+
+
+class TestExtractStreetAddressFromOCR:
+    """Unit tests for backend/services/ocr_utils.extract_street_address_from_ocr."""
+
+    def test_basic_next_line(self):
+        """Value on the line immediately after the label is returned."""
+        mod = _import_ocr_utils()
+        text = "Street Address\nSumoth pally. Durgamandir\nCity: Asansol"
+        result = mod.extract_street_address_from_ocr(text)
+        assert result == "Sumoth pally. Durgamandir"
+
+    def test_inline_value(self):
+        """Value on the same line as the label is returned."""
+        mod = _import_ocr_utils()
+        text = "Street Address: Sumoth pally. Durgamandir"
+        result = mod.extract_street_address_from_ocr(text)
+        assert result == "Sumoth pally. Durgamandir"
+
+    def test_case_insensitive(self):
+        """Label matching is case-insensitive."""
+        mod = _import_ocr_utils()
+        text = "STREET ADDRESS\nSumoth pally. Durgamandir"
+        result = mod.extract_street_address_from_ocr(text)
+        assert result == "Sumoth pally. Durgamandir"
+
+    def test_ocr_noise_spaces(self):
+        """Extra spaces between words in the label are tolerated."""
+        mod = _import_ocr_utils()
+        text = "Street  Address\nSumoth pally. Durgamandir"
+        result = mod.extract_street_address_from_ocr(text)
+        assert result == "Sumoth pally. Durgamandir"
+
+    def test_not_found_returns_none(self):
+        """Returns None when no Street Address label is present."""
+        mod = _import_ocr_utils()
+        text = "Name: John\nCity: Asansol"
+        result = mod.extract_street_address_from_ocr(text)
+        assert result is None
+
+    def test_empty_string_returns_none(self):
+        """Returns None for empty input."""
+        mod = _import_ocr_utils()
+        result = mod.extract_street_address_from_ocr("")
+        assert result is None
+
+    def test_full_address_book_block(self):
+        """Realistic OCR block with multiple fields returns correct address."""
+        mod = _import_ocr_utils()
+        text = (
+            "Address Book A-B-C\n"
+            "Name Rahul Misra\n"
+            "Street Address\n"
+            "Sumoth pally. Durgamandir\n"
+            "City: Asansol State: WB Zip Code: 713301\n"
+            "Home Phone: Cell Phone: 7699888010\n"
+        )
+        result = mod.extract_street_address_from_ocr(text)
+        assert result == "Sumoth pally. Durgamandir"
+
+
+class TestFillMissingFieldsWithOCR:
+    """Unit tests for ocr_utils.fill_missing_fields_with_ocr (sans real OCR)."""
+
+    def test_does_not_run_when_disabled(self, monkeypatch):
+        """When OCR_FALLBACK_ENABLED=0, fields dict is returned unchanged."""
+        mod = _import_ocr_utils()
+        monkeypatch.setenv("OCR_FALLBACK_ENABLED", "0")
+        fields = {"Street Address": ""}
+        result = mod.fill_missing_fields_with_ocr(fields, "/nonexistent.pdf")
+        assert result["Street Address"] == ""
+
+    def test_skips_when_street_address_present(self, monkeypatch, tmp_path):
+        """When Street Address is already filled, OCR is not invoked."""
+        mod = _import_ocr_utils()
+        monkeypatch.setenv("OCR_FALLBACK_ENABLED", "1")
+
+        def _should_not_be_called(*a, **kw):
+            raise AssertionError("ocr_page_text should not be called")
+
+        monkeypatch.setattr(mod, "ocr_page_text", _should_not_be_called)
+        fields = {"Street Address": "123 Main St"}
+        result = mod.fill_missing_fields_with_ocr(fields, str(tmp_path / "dummy.pdf"))
+        assert result["Street Address"] == "123 Main St"
+
+    def test_fills_display_key_from_ocr(self, monkeypatch, tmp_path):
+        """OCR result is written to 'Street Address' key when it is blank."""
+        mod = _import_ocr_utils()
+        monkeypatch.setenv("OCR_FALLBACK_ENABLED", "1")
+        monkeypatch.setattr(mod, "ocr_page_text", lambda *a, **kw: "Street Address\nSumoth pally. Durgamandir")
+        fields = {"Street Address": ""}
+        result = mod.fill_missing_fields_with_ocr(fields, str(tmp_path / "dummy.pdf"))
+        assert result["Street Address"] == "Sumoth pally. Durgamandir"
+
+    def test_fills_snake_key_from_ocr(self, monkeypatch, tmp_path):
+        """OCR result is written to 'street_address' key when it is blank."""
+        mod = _import_ocr_utils()
+        monkeypatch.setenv("OCR_FALLBACK_ENABLED", "1")
+        monkeypatch.setattr(mod, "ocr_page_text", lambda *a, **kw: "Street Address: Sumoth pally. Durgamandir")
+        fields = {"street_address": ""}
+        result = mod.fill_missing_fields_with_ocr(fields, str(tmp_path / "dummy.pdf"))
+        assert result["street_address"] == "Sumoth pally. Durgamandir"
