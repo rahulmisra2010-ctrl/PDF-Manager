@@ -230,3 +230,151 @@ class TestMergeLabelWords:
         assert len(merged) == 1
         text = merged[0]["text"]
         assert "Net" in text and "Payable" in text and "Amount" in text
+
+
+# ---------------------------------------------------------------------------
+# Import schema helpers
+# ---------------------------------------------------------------------------
+
+from services.dynamic_extraction import (
+    create_schema_from_pairs,
+    map_pairs_to_schema,
+)
+
+
+# ---------------------------------------------------------------------------
+# create_schema_from_pairs
+# ---------------------------------------------------------------------------
+
+
+def _pair(label: str, value: str = "", confidence: float = 0.95) -> dict:
+    """Helper: build a minimal pair dict."""
+    return {"label": label, "value": value, "confidence": confidence, "bbox": None, "page_number": 1}
+
+
+class TestCreateSchemaFromPairs:
+    def test_basic_ordering(self):
+        """Labels appear in the same order as the input pairs."""
+        pairs = [_pair("Name"), _pair("Email"), _pair("Phone")]
+        schema = create_schema_from_pairs(pairs)
+        assert schema == ["Name", "Email", "Phone"]
+
+    def test_duplicates_deduplicated(self):
+        """Duplicate labels are included only once (first occurrence)."""
+        pairs = [_pair("Name"), _pair("Email"), _pair("Name")]
+        schema = create_schema_from_pairs(pairs)
+        assert schema == ["Name", "Email"]
+        assert schema.count("Name") == 1
+
+    def test_empty_pairs(self):
+        """Empty input produces an empty schema."""
+        assert create_schema_from_pairs([]) == []
+
+    def test_lic_form_labels(self):
+        """LIC form labels are preserved in document order."""
+        pairs = [
+            _pair("Present Address"),
+            _pair("Net Payable"),
+            _pair("Policy Number"),
+        ]
+        schema = create_schema_from_pairs(pairs)
+        assert schema == ["Present Address", "Net Payable", "Policy Number"]
+
+    def test_label_strings_preserved(self):
+        """Label strings are not normalised or modified."""
+        pairs = [_pair("Date of Birth"), _pair("IFSC Code")]
+        schema = create_schema_from_pairs(pairs)
+        assert "Date of Birth" in schema
+        assert "IFSC Code" in schema
+
+
+# ---------------------------------------------------------------------------
+# map_pairs_to_schema
+# ---------------------------------------------------------------------------
+
+
+class TestMapPairsToSchema:
+    def test_exact_match(self):
+        """Discovered pair matches schema label exactly."""
+        schema = ["Name", "Email"]
+        pairs = [_pair("Name", "Alice"), _pair("Email", "alice@example.com")]
+        result = map_pairs_to_schema(pairs, schema)
+        by_label = {r["label"]: r for r in result}
+        assert by_label["Name"]["value"] == "Alice"
+        assert by_label["Email"]["value"] == "alice@example.com"
+
+    def test_case_insensitive_exact_match(self):
+        """Matching is case-insensitive for exact comparison."""
+        schema = ["Name"]
+        pairs = [_pair("name", "Bob")]
+        result = map_pairs_to_schema(pairs, schema)
+        assert result[0]["value"] == "Bob"
+        assert result[0]["matched"] is True
+
+    def test_normalised_match_strips_colon(self):
+        """'Name:' in discovered pair matches schema label 'Name'."""
+        schema = ["Name"]
+        pairs = [_pair("Name:", "Carol")]
+        result = map_pairs_to_schema(pairs, schema)
+        assert result[0]["value"] == "Carol"
+        assert result[0]["matched"] is True
+
+    def test_fuzzy_match_ocr_variation(self):
+        """Minor OCR variation in label (extra character glitch) is fuzzy-matched."""
+        schema = ["Name"]
+        # Simulate OCR glitch: extra 'a' inserted → 'Naame' instead of 'Name'
+        pairs = [_pair("Naame", "Dave")]
+        result = map_pairs_to_schema(pairs, schema, fuzzy_threshold=0.70)
+        assert result[0]["value"] == "Dave"
+        assert result[0]["matched"] is True
+
+    def test_unmatched_schema_label_gets_empty_value(self):
+        """Schema labels with no matching pair get empty value and zero confidence."""
+        schema = ["Name", "Phone"]
+        pairs = [_pair("Name", "Eve")]
+        result = map_pairs_to_schema(pairs, schema)
+        by_label = {r["label"]: r for r in result}
+        assert by_label["Name"]["value"] == "Eve"
+        assert by_label["Phone"]["value"] == ""
+        assert by_label["Phone"]["confidence"] == 0.0
+        assert by_label["Phone"]["matched"] is False
+
+    def test_schema_order_preserved(self):
+        """Output list follows schema label order, not discovered-pair order."""
+        schema = ["Phone", "Name", "Email"]
+        pairs = [_pair("Name", "Frank"), _pair("Email", "f@example.com"), _pair("Phone", "555")]
+        result = map_pairs_to_schema(pairs, schema)
+        assert [r["label"] for r in result] == ["Phone", "Name", "Email"]
+
+    def test_each_pair_used_at_most_once(self):
+        """A discovered pair is not matched to two different schema labels."""
+        schema = ["Name", "FullName"]
+        pairs = [_pair("Name", "Grace")]
+        result = map_pairs_to_schema(pairs, schema)
+        matched = [r for r in result if r["matched"]]
+        assert len(matched) == 1  # only one pair available
+
+    def test_empty_schema(self):
+        """Empty schema produces an empty result."""
+        pairs = [_pair("Name", "Heidi")]
+        result = map_pairs_to_schema(pairs, [])
+        assert result == []
+
+    def test_empty_pairs_all_unmatched(self):
+        """No discovered pairs → all schema labels are unmatched."""
+        schema = ["Name", "Email"]
+        result = map_pairs_to_schema([], schema)
+        assert all(r["matched"] is False for r in result)
+        assert all(r["value"] == "" for r in result)
+
+    def test_lic_form_present_address_fuzzy(self):
+        """'Present  Address' (double space OCR) fuzzy-matches schema 'Present Address'."""
+        schema = ["Present Address", "Net Payable"]
+        pairs = [
+            _pair("Present  Address", "Anoop layout"),  # double space OCR glitch
+            _pair("Net Payable", "73001"),
+        ]
+        result = map_pairs_to_schema(pairs, schema)
+        by_label = {r["label"]: r for r in result}
+        assert "Anoop layout" in by_label["Present Address"]["value"]
+        assert by_label["Net Payable"]["value"] == "73001"

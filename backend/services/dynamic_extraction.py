@@ -39,6 +39,19 @@ If ``file_path`` ends with ``.png`` / ``.jpg`` but actually starts with the
 ``%PDF`` magic bytes, a ``ValueError`` is raised with a clear message.
 Use PyMuPDF / ``extract_dynamic_fields`` with a proper ``.pdf`` extension
 for PDF content.
+
+Per-document schema helpers
+---------------------------
+create_schema_from_pairs(pairs) -> list[str]
+    Build an ordered, deduplicated list of label strings from discovered pairs.
+
+map_pairs_to_schema(discovered_pairs, schema_labels, fuzzy_threshold=0.80) -> list[dict]
+    Map discovered pairs to an existing schema using:
+      1. Exact match (case-insensitive)
+      2. Normalised match (strip colon / whitespace)
+      3. Fuzzy similarity ≥ fuzzy_threshold (difflib.SequenceMatcher)
+    Returns one dict per schema label (in schema order), with matched values
+    or empty strings for unmatched labels.
 """
 
 from __future__ import annotations
@@ -47,6 +60,7 @@ import io
 import logging
 import os
 import re
+from difflib import SequenceMatcher
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -572,3 +586,126 @@ def extract_dynamic_fields(
         len(pairs), page_index + 1, file_path,
     )
     return pairs
+
+
+# ---------------------------------------------------------------------------
+# Per-document schema helpers
+# ---------------------------------------------------------------------------
+
+def _normalise_label(label: str) -> str:
+    """Strip trailing colon, collapse whitespace, and lowercase."""
+    return re.sub(r"[\s:]+", " ", label).strip().lower()
+
+
+def _label_similarity(a: str, b: str) -> float:
+    """Return a character-level similarity ratio between two normalised labels."""
+    return SequenceMatcher(None, _normalise_label(a), _normalise_label(b)).ratio()
+
+
+def create_schema_from_pairs(pairs: list[dict]) -> list[str]:
+    """Return an ordered, deduplicated list of label strings from *pairs*.
+
+    The order mirrors the document's top-to-bottom, left-to-right reading
+    order as returned by ``extract_dynamic_fields``.
+
+    Args:
+        pairs: List of dicts as returned by ``extract_dynamic_fields`` /
+               ``_pair_labels_values``.  Each dict must contain a ``"label"``
+               key.
+
+    Returns:
+        Ordered list of unique label strings (preserving first-seen order).
+    """
+    seen: set[str] = set()
+    schema: list[str] = []
+    for pair in pairs:
+        label = pair.get("label", "").strip()
+        if label and label not in seen:
+            seen.add(label)
+            schema.append(label)
+    return schema
+
+
+def map_pairs_to_schema(
+    discovered_pairs: list[dict],
+    schema_labels: list[str],
+    fuzzy_threshold: float = 0.80,
+) -> list[dict]:
+    """Map *discovered_pairs* to an existing *schema_labels* list.
+
+    Each schema label is matched against the discovered pairs using:
+      1. Exact match (case-insensitive)
+      2. Normalised match (strip colon / whitespace, lowercase)
+      3. Fuzzy similarity ≥ *fuzzy_threshold* (difflib.SequenceMatcher)
+
+    Every discovered pair is used at most once (greedy left-to-right).
+    Unmatched schema labels get an empty value and zero confidence.
+
+    Args:
+        discovered_pairs: List of dicts from ``extract_dynamic_fields``.
+        schema_labels:    Ordered list of label strings from the stored schema.
+        fuzzy_threshold:  Minimum SequenceMatcher ratio to accept a fuzzy match.
+
+    Returns:
+        List of one dict per schema label (in schema order):
+            label       — schema label string
+            value       — matched value string (or ``""`` if unmatched)
+            confidence  — float 0.0–1.0 (0.0 if unmatched)
+            bbox        — matched bbox dict (or ``None`` if unmatched)
+            page_number — int (1 if unmatched)
+            matched     — bool
+    """
+    used: set[int] = set()
+    result: list[dict] = []
+
+    for schema_label in schema_labels:
+        schema_norm = _normalise_label(schema_label)
+        best_idx: int | None = None
+        best_score: float = 0.0
+
+        for i, pair in enumerate(discovered_pairs):
+            if i in used:
+                continue
+            pair_label = pair.get("label", "")
+
+            # 1. Exact case-insensitive match
+            if pair_label.lower() == schema_label.lower():
+                best_idx = i
+                best_score = 1.0
+                break
+
+            # 2. Normalised match
+            pair_norm = _normalise_label(pair_label)
+            if pair_norm == schema_norm:
+                best_idx = i
+                best_score = 1.0
+                break
+
+            # 3. Fuzzy match
+            score = _label_similarity(pair_label, schema_label)
+            if score >= fuzzy_threshold and score > best_score:
+                best_idx = i
+                best_score = score
+
+        if best_idx is not None:
+            used.add(best_idx)
+            pair = discovered_pairs[best_idx]
+            result.append({
+                "label": schema_label,
+                "value": pair.get("value", ""),
+                "confidence": pair.get("confidence", 1.0),
+                "bbox": pair.get("bbox"),
+                "page_number": pair.get("page_number", 1),
+                "matched": True,
+            })
+        else:
+            result.append({
+                "label": schema_label,
+                "value": "",
+                "confidence": 0.0,
+                "bbox": None,
+                "page_number": 1,
+                "matched": False,
+            })
+
+    return result

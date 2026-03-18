@@ -112,22 +112,30 @@
 
 <!-- Extracted fields editor -->
 {% if fields %}
-{# Detect whether fields look like address-book (fixed) or dynamic extraction #}
-{% set ab_field_names = ['Name','Street Address','City','State','Zip Code','Home Phone','Cell Phone','Work Phone','Email'] %}
-{% set ab_count = fields | selectattr('field_name', 'in', ab_field_names) | list | length %}
-{% set is_dynamic = (ab_count < (fields | length)) or (fields | length > 9) %}
+{# Use per-document schema when available; fall back to heuristic detection #}
+{% if schema %}
+  {% set is_dynamic = true %}
+{% else %}
+  {# Heuristic: detect whether fields look like address-book (fixed) or dynamic #}
+  {% set ab_field_names = ['Name','Street Address','City','State','Zip Code','Home Phone','Cell Phone','Work Phone','Email'] %}
+  {% set ab_count = fields | selectattr('field_name', 'in', ab_field_names) | list | length %}
+  {% set is_dynamic = (ab_count < (fields | length)) or (fields | length > 9) %}
+{% endif %}
 <div class="card">
   <div class="card-header d-flex justify-content-between align-items-center fw-semibold">
     <span>
-      Extracted Fields
       {% if is_dynamic %}
-        <span class="badge bg-primary ms-2" title="Labels and values were discovered dynamically from the document">
-          <i class="bi bi-magic me-1"></i>Dynamic
+        Extracted Fields — Dynamic
+        <span class="badge bg-primary ms-2"
+              title="Labels and values were discovered dynamically from this document">
+          <i class="bi bi-magic me-1"></i>{{ fields | length }} field(s)
         </span>
       {% else %}
-        <span class="badge bg-secondary ms-2" title="Fixed address-book schema">Address Book</span>
+        Extracted Fields — Address Book
+        <span class="badge bg-secondary ms-2" title="Fixed address-book schema">
+          {{ fields | length }} field(s)
+        </span>
       {% endif %}
-      <span class="badge bg-light text-dark ms-1">{{ fields | length }} field(s)</span>
     </span>
     <button type="button" id="btn-mark-training"
             class="btn btn-outline-success btn-sm"

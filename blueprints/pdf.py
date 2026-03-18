@@ -40,7 +40,7 @@ from flask import (
 from flask_login import current_user, login_required
 from werkzeug.utils import secure_filename
 
-from models import AuditLog, Document, ExtractedField, db
+from models import AuditLog, Document, DocumentSchema, ExtractedField, db
 
 pdf_bp = Blueprint("pdf", __name__, template_folder="../templates/pdf")
 
@@ -141,7 +141,8 @@ def detail(doc_id: int):
     """Show document details and extracted fields."""
     doc = Document.query.get_or_404(doc_id)
     fields = ExtractedField.query.filter_by(document_id=doc_id).all()
-    return render_template("pdf/detail.html", doc=doc, fields=fields)
+    schema = DocumentSchema.query.filter_by(document_id=doc_id).first()
+    return render_template("pdf/detail.html", doc=doc, fields=fields, schema=schema)
 
 
 def _ensure_backend_on_path() -> None:
@@ -159,8 +160,12 @@ def extract(doc_id: int):
 
     Strategy:
     1. Try dynamic label/value discovery (works for any PDF/image type).
-    2. If dynamic extraction yields no pairs, fall back to the address-book
-       mapping (legacy behaviour) so that address-book PDFs continue to work.
+       a. If no per-document schema exists yet, create one from discovered labels.
+       b. If a schema already exists, map discovered labels to it using exact,
+          normalised, and fuzzy matching so the field list stays stable.
+    2. If dynamic extraction yields no pairs AND this document has no schema yet,
+       fall back to the address-book mapping (legacy behaviour) for address-book
+       PDFs.  Documents that already have a schema keep their existing fields.
     """
     doc = Document.query.get_or_404(doc_id)
 
@@ -174,25 +179,53 @@ def extract(doc_id: int):
     # 1. Dynamic extraction (preferred)
     # ------------------------------------------------------------------
     dynamic_pairs: list[dict] = []
+    dyn_exc_msg: str = ""
     try:
-        from services.dynamic_extraction import extract_dynamic_fields  # type: ignore[import]
+        from services.dynamic_extraction import (  # type: ignore[import]
+            create_schema_from_pairs,
+            extract_dynamic_fields,
+            map_pairs_to_schema,
+        )
         dynamic_pairs = extract_dynamic_fields(doc.file_path, page_index=0)
     except Exception as _dyn_exc:
+        dyn_exc_msg = str(_dyn_exc)
         current_app.logger.warning(
-            "Dynamic extraction failed (will fall back to address-book): %s", _dyn_exc
+            "Dynamic extraction failed for doc %s: %s", doc_id, _dyn_exc
         )
 
     if dynamic_pairs:
-        # Store dynamic pairs in DB
         try:
+            # Load or create the per-document schema
+            schema = DocumentSchema.query.filter_by(document_id=doc_id).first()
+            if schema is None:
+                # First extraction — build schema from discovered labels
+                schema = DocumentSchema(document_id=doc_id)
+                schema.labels = create_schema_from_pairs(dynamic_pairs)
+                db.session.add(schema)
+                pairs_to_save = dynamic_pairs
+                current_app.logger.info(
+                    "Created new schema for doc %s: %d labels", doc_id, len(schema.labels)
+                )
+            else:
+                # Re-extraction — map to existing schema
+                pairs_to_save = map_pairs_to_schema(dynamic_pairs, schema.labels)
+                current_app.logger.info(
+                    "Mapped %d discovered pair(s) to schema (%d labels) for doc %s",
+                    len(dynamic_pairs), len(schema.labels), doc_id,
+                )
+
             ExtractedField.query.filter_by(document_id=doc_id).delete()
 
-            for pair in dynamic_pairs:
+            for pair in pairs_to_save:
+                # extract_dynamic_fields uses 'label'; map_pairs_to_schema
+                # also uses 'label'.  The 'field_name' fallback handles any
+                # legacy dicts that may use the alternative key.
+                label = pair.get("label") or pair.get("field_name", "")
                 bbox = pair.get("bbox") or {}
                 field = ExtractedField(
                     document_id=doc_id,
-                    field_name=pair["label"],
-                    value=pair["value"],
+                    field_name=label,
+                    value=pair.get("value", ""),
                     confidence=pair.get("confidence", 1.0),
                     page_number=pair.get("page_number", 1),
                     bbox_x=bbox.get("x"),
@@ -205,9 +238,8 @@ def extract(doc_id: int):
             # Determine page count
             try:
                 import fitz  # type: ignore[import]
-                _doc = fitz.open(doc.file_path)
-                doc.page_count = len(_doc)
-                _doc.close()
+                with fitz.open(doc.file_path) as _fitz_doc:
+                    doc.page_count = len(_fitz_doc)
             except Exception:
                 doc.page_count = 1
 
@@ -215,7 +247,7 @@ def extract(doc_id: int):
             _log(current_user.id, "extract", "document", str(doc_id), "dynamic")
             db.session.commit()
             flash(
-                f"Dynamic extraction complete — {len(dynamic_pairs)} field(s) found.",
+                f"Extraction complete — {len(pairs_to_save)} field(s) found.",
                 "success",
             )
         except Exception as exc:
@@ -228,7 +260,19 @@ def extract(doc_id: int):
         return redirect(url_for("pdf.detail", doc_id=doc_id))
 
     # ------------------------------------------------------------------
-    # 2. Fallback: address-book field mapping (legacy)
+    # Dynamic extraction returned no pairs.
+    # If this document already has a schema, keep existing fields unchanged.
+    # ------------------------------------------------------------------
+    existing_schema = DocumentSchema.query.filter_by(document_id=doc_id).first()
+    if existing_schema is not None:
+        msg = "No new fields discovered"
+        if dyn_exc_msg:
+            msg += f" ({dyn_exc_msg})"
+        flash(f"{msg} — keeping existing extracted fields.", "info")
+        return redirect(url_for("pdf.detail", doc_id=doc_id))
+
+    # ------------------------------------------------------------------
+    # 2. Fallback: address-book field mapping (legacy, no schema yet)
     # ------------------------------------------------------------------
     svc = _get_pdf_service()
     if svc is None:
