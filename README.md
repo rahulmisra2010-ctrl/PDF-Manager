@@ -375,6 +375,69 @@ the app.
 
 ---
 
+## Dynamic Label/Value Discovery
+
+The **Extract Fields** button at `/pdf/<id>` now uses a *dynamic* extraction
+engine instead of a fixed address-book schema.  This means it works correctly
+for **any** PDF or scanned image — not just address-book forms.
+
+### How it works
+
+1. **Text-based PDFs** — PyMuPDF (`get_text("words")`) returns every word with
+   its bounding box.  No rendering or OCR is needed.
+2. **Image-based PDFs / Scanned pages** — PyMuPDF renders the page at 150 DPI
+   to a raster image, then EasyOCR reads the image and returns word-level
+   bounding boxes.
+3. **PNG / JPG images** — OpenCV loads the image and EasyOCR processes it.
+
+### Label detection heuristics (v1)
+
+A word or phrase is classified as a **label** if:
+
+- It ends with a colon (`:`)  — e.g. `Present Address:`, `Net Payable:`
+- OR it matches a list of common form-field keywords such as
+  `Name`, `Address`, `Date`, `Amount`, `Email`, `Phone`, `Pin`, `Net`, `Total`,
+  `Payable`, `Policy`, `IFSC`, `Account`, `Signature`, `Bank`, etc.
+
+Consecutive label-candidate words on the same line are merged into a single
+multi-word label (e.g. `Present` + `Address:` → `Present Address`).
+
+### Value pairing
+
+After identifying labels, the engine finds their values:
+
+1. **Right side first** — nearest text to the right on the same line (within
+   ±½ text-height vertically).  Multi-word values are merged until a new label
+   or a large gap is encountered.
+2. **Below fallback** — if nothing useful is to the right, the nearest
+   non-label text below (within 3× label height) is used as the value.
+
+### Example — LIC surrender form
+
+| Label discovered | Value discovered |
+|------------------|-----------------|
+| Present Address  | Anoop layout    |
+| Net Payable      | 73001           |
+
+### Backwards compatibility
+
+If dynamic extraction finds no pairs (e.g. for a plain address-book PDF), the
+engine automatically falls back to the legacy address-book field mapping
+(`PDFService.map_address_book_fields`).  The "Extracted Fields" header shows
+a **Dynamic** badge when dynamic extraction was used and an **Address Book**
+badge for the legacy path.
+
+### Running the unit tests
+
+The pairing heuristics are tested without any external dependencies (no OCR
+models or PDF files required):
+
+```bash
+python -m pytest tests/test_dynamic_extraction.py -v
+```
+
+---
+
 ## Troubleshooting OCR / EasyOCR
 
 ### CMD vs Python — "command not recognized" errors
