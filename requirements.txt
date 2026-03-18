@@ -17,3 +17,9 @@ python-docx~=1.1.0
 # Utilities
 python-dotenv~=1.0.1
 Werkzeug~=3.0.0
+
+# OCR fallback for image-based PDFs (EasyOCR + dependencies)
+easyocr~=1.7.2
+opencv-python~=4.13.0.92
+torch~=2.10.0
+torchvision~=0.25.0

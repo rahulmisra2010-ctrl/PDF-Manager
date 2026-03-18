@@ -162,6 +162,28 @@ def extract(doc_id: int):
         text, _tables, page_count = svc.extract(doc.file_path)
         mapped = svc.map_address_book_fields(text)
 
+        # ------------------------------------------------------------------
+        # OCR fallback: if Street Address is still blank after text-based
+        # extraction (e.g. the PDF page is image-based), run EasyOCR.
+        # ------------------------------------------------------------------
+        try:
+            import sys as _sys
+            import os as _os
+            _here = _os.path.dirname(_os.path.abspath(__file__))
+            _backend = _os.path.join(_here, "..", "backend")
+            if _os.path.abspath(_backend) not in _sys.path:
+                _sys.path.insert(0, _os.path.abspath(_backend))
+            from services.ocr_utils import fill_missing_fields_with_ocr  # type: ignore[import]
+
+            # Build a mutable dict keyed by field_name
+            fields_dict = {item["field_name"]: item.get("value", "") for item in mapped}
+            fields_dict = fill_missing_fields_with_ocr(fields_dict, doc.file_path, page_index=0)
+            # Reflect any OCR-filled values back into the mapped list
+            for item in mapped:
+                item["value"] = fields_dict.get(item["field_name"], item.get("value", ""))
+        except Exception as _exc:
+            current_app.logger.warning("OCR fallback failed (non-fatal): %s", _exc)
+
         # Remove previous fields and replace with freshly mapped ones
         ExtractedField.query.filter_by(document_id=doc_id).delete()
 

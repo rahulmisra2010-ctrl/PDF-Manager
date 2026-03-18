@@ -335,6 +335,46 @@ root is the recommended command.
 
 ---
 
+## OCR Fallback for Image-Based PDFs
+
+Some PDFs contain scanned pages where text-based extraction (pdfplumber / PyMuPDF)
+yields no words.  The **OCR fallback** automatically detects this condition for the
+**Street Address** field and re-extracts it using [EasyOCR](https://github.com/JaidedAI/EasyOCR).
+
+### How it works
+
+1. After the primary extraction run completes, the `/pdf/<id>/extract` route
+   inspects the **Street Address** value.
+2. If the value is empty, `backend/services/ocr_utils.fill_missing_fields_with_ocr`
+   is called.
+3. PyMuPDF renders the first page at 300 DPI and EasyOCR reads the resulting image.
+4. `extract_street_address_from_ocr` locates the line that follows the
+   "Street Address" label in the OCR output and returns it as the field value.
+
+### First-run model download
+
+EasyOCR downloads its recognition models (~150 MB) the **first time** it runs.
+The models are cached in `~/.EasyOCR/model/` and are not re-downloaded on
+subsequent runs.
+
+### CPU-only mode
+
+The EasyOCR reader is initialised with `gpu=False` by default, making it
+compatible with machines that do not have a CUDA-capable GPU.
+
+### Enabling / disabling OCR fallback
+
+| Environment variable     | Default | Effect |
+|--------------------------|---------|--------|
+| `OCR_FALLBACK_ENABLED`   | `1`     | Set to `0` / `false` to disable OCR entirely |
+| `OCR_FALLBACK_DPI`       | `300`   | Render resolution; increase for better accuracy on small text |
+| `OCR_FALLBACK_PAGE`      | `0`     | Zero-based page index to OCR (not used by the route directly; pass via code) |
+
+Add these to your `.env` file or export them as shell variables before starting
+the app.
+
+---
+
 ## License
 
 MIT
