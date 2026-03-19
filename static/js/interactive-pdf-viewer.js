@@ -115,14 +115,30 @@ class InteractivePDFViewer {
     }
   }
 
-  /** Draw all field bounding boxes at once with confidence-based colours. */
+  /** Draw all field bounding boxes at once with confidence-based colours.
+   *
+   * For fields that have a ``label_bbox`` the label box is drawn in pink and
+   * the value box (``bbox``) in the normal confidence colour.  Fields that
+   * have only a ``label_bbox`` (label-only, no value found) are drawn in pink.
+   */
   drawFields(fields) {
     this.clearOverlay();
     for (const f of fields) {
-      const { x0, y0, x1, y1 } = f.bbox || {};
-      if (x0 === undefined) continue;
-      const { fill, stroke } = this._confColor(f.confidence || 0.5);
-      this.drawHighlight(x0, y0, x1, y1, fill, stroke);
+      // Draw label bbox in pink when present
+      if (f.label_bbox) {
+        const { x0, y0, x1, y1 } = f.label_bbox;
+        if (x0 !== undefined) {
+          this.drawHighlight(x0, y0, x1, y1, 'rgba(255,99,132,0.25)', '#e0497a');
+        }
+      }
+      // Draw value bbox in confidence colour when present
+      if (f.bbox) {
+        const { x0, y0, x1, y1 } = f.bbox;
+        if (x0 !== undefined) {
+          const { fill, stroke } = this._confColor(f.confidence || 0.5);
+          this.drawHighlight(x0, y0, x1, y1, fill, stroke);
+        }
+      }
     }
   }
 

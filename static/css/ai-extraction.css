@@ -201,6 +201,24 @@
   flex: 1;
 }
 
+/* Label tag — shown in pink to match the PDF label highlight colour */
+.field-card .field-label-tag {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #c0335c;
+  background: rgba(255,99,132,0.12);
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+  letter-spacing: 0.03em;
+  flex: 1;
+}
+
+/* Arrow separator between label and value */
+.field-card .field-arrow {
+  font-size: 0.75rem;
+  color: #6c757d;
+}
+
 .field-card .field-type-badge {
   font-size: 0.65rem;
   padding: 0.1rem 0.4rem;

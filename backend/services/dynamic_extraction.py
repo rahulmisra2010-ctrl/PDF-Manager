@@ -174,6 +174,74 @@ def _merge_label_words(words: list[dict]) -> list[dict]:
     return merged
 
 
+def _merge_adjacent_value_tokens(
+    seed_box: dict,
+    seed_idx: int,
+    all_boxes: list[dict],
+    used_idxs: set[int],
+    lb_h: float,
+) -> tuple[str, list[dict], set[int]]:
+    """Collect and merge value tokens adjacent to *seed_box* on the same line.
+
+    Starting from *seed_box*, scans *all_boxes* for additional tokens on the
+    same horizontal line and merges them into a single value string when the
+    gap between tokens is small enough.
+
+    Parameters
+    ----------
+    seed_box:
+        The initial value box (already selected as best candidate).
+    seed_idx:
+        Index of *seed_box* within *all_boxes*.
+    all_boxes:
+        Full list of word boxes (same page).
+    used_idxs:
+        Set of already-consumed box indices (updated in place on return).
+    lb_h:
+        Label box height, used to compute the gap tolerance.
+
+    Returns
+    -------
+    (value_text, value_boxes_used, updated_used_idxs)
+    """
+    vb_cy = _box_center_y(seed_box)
+    vb_line_thresh = seed_box["height"] * _LINE_THRESH_FACTOR
+    value_parts: list[str] = [seed_box["text"]]
+    value_boxes_used: list[dict] = [seed_box]
+    used_idxs.add(seed_idx)
+    prev_right_edge = seed_box["x"] + seed_box["width"]
+
+    for j, wb in enumerate(all_boxes):
+        if j == seed_idx or j in used_idxs:
+            continue
+        wb_cy = _box_center_y(wb)
+        if abs(wb_cy - vb_cy) > vb_line_thresh:
+            continue
+        if wb["x"] < prev_right_edge - 4:
+            continue
+        gap = wb["x"] - prev_right_edge
+        if gap > lb_h * 4:
+            break
+        if _is_label_candidate(wb["text"]):
+            break
+        value_parts.append(wb["text"])
+        value_boxes_used.append(wb)
+        prev_right_edge = wb["x"] + wb["width"]
+        used_idxs.add(j)
+
+    return " ".join(value_parts).strip(), value_boxes_used, used_idxs
+
+
+def _make_bbox(boxes_used: list[dict]) -> dict:
+    """Return a bbox dict that spans all boxes in *boxes_used*."""
+    return {
+        "x":      min(b["x"] for b in boxes_used),
+        "y":      min(b["y"] for b in boxes_used),
+        "width":  max(b["x"] + b["width"]  for b in boxes_used) - min(b["x"] for b in boxes_used),
+        "height": max(b["y"] + b["height"] for b in boxes_used) - min(b["y"] for b in boxes_used),
+    }
+
+
 def _pair_labels_values(boxes: list[dict]) -> list[dict]:
     """Pair label boxes with their nearest value boxes.
 
@@ -185,7 +253,10 @@ def _pair_labels_values(boxes: list[dict]) -> list[dict]:
 
     Returns
     -------
-    list of dicts: {label, value, bbox, confidence}
+    list of dicts: {label, value, bbox, label_bbox, confidence}
+        bbox      — value bounding box (x, y, width, height) for value highlight.
+        label_bbox — label bounding box (x, y, width, height) for label highlight.
+        For label-only entries (no value found), bbox is None.
     """
     if not boxes:
         return []
@@ -215,6 +286,11 @@ def _pair_labels_values(boxes: list[dict]) -> list[dict]:
         line_thresh = lb_h * _LINE_THRESH_FACTOR
         below_thresh = lb_h * _BELOW_THRESH_FACTOR
 
+        label_bbox = {
+            "x": lb["x"], "y": lb["y"],
+            "width": lb["width"], "height": lb["height"],
+        }
+
         # 1) Find candidates to the RIGHT on the same line
         right_candidates = []
         for i, vb in enumerate(value_boxes):
@@ -230,6 +306,7 @@ def _pair_labels_values(boxes: list[dict]) -> list[dict]:
             right_candidates.sort(key=lambda t: t[1]["x"])
             # Merge consecutive right-side boxes on same line into one value
             value_parts = []
+            value_boxes_used: list[dict] = []
             prev_right_edge = lb_right
             for i, vb in right_candidates:
                 gap = vb["x"] - prev_right_edge
@@ -238,18 +315,26 @@ def _pair_labels_values(boxes: list[dict]) -> list[dict]:
                 if _is_label_candidate(vb["text"]) and value_parts:
                     break  # new label starts; stop
                 value_parts.append(vb["text"])
+                value_boxes_used.append(vb)
                 prev_right_edge = vb["x"] + vb["width"]
                 used_value_idxs.add(i)
 
             value_text = " ".join(value_parts).strip()
-            if value_text:
+            if value_text and value_boxes_used:
                 pairs.append({
                     "label": label_text,
                     "value": value_text,
-                    "bbox": {
-                        "x": lb["x"], "y": lb["y"],
-                        "width": lb["width"], "height": lb["height"],
-                    },
+                    "bbox": _make_bbox(value_boxes_used),
+                    "label_bbox": label_bbox,
+                    "confidence": lb["confidence"],
+                })
+            else:
+                # Label found but value is empty — emit label-only entry
+                pairs.append({
+                    "label": label_text,
+                    "value": "",
+                    "bbox": None,
+                    "label_bbox": label_bbox,
                     "confidence": lb["confidence"],
                 })
             continue
@@ -270,18 +355,59 @@ def _pair_labels_values(boxes: list[dict]) -> list[dict]:
             below_candidates.sort(key=lambda t: (t[2], t[1]["x"]))
             i, vb, _ = below_candidates[0]
             if not _is_label_candidate(vb["text"]):
-                value_text = vb["text"].strip()
+                value_text, value_boxes_used, used_value_idxs = _merge_adjacent_value_tokens(
+                    vb, i, value_boxes, used_value_idxs, lb_h
+                )
                 if value_text:
-                    used_value_idxs.add(i)
                     pairs.append({
                         "label": label_text,
                         "value": value_text,
-                        "bbox": {
-                            "x": lb["x"], "y": lb["y"],
-                            "width": lb["width"], "height": lb["height"],
-                        },
+                        "bbox": _make_bbox(value_boxes_used),
+                        "label_bbox": label_bbox,
                         "confidence": lb["confidence"],
                     })
+                    continue
+
+        # 3) Nothing to the right or below — look ABOVE (for label-below-value layouts,
+        #    e.g., "Net Payable" label appearing beneath the value "73001")
+        above_candidates = []
+        for i, vb in enumerate(value_boxes):
+            if i in used_value_idxs:
+                continue
+            vb_bottom = vb["y"] + vb["height"]
+            lb_top = lb["y"]
+            is_above = vb_bottom < lb_top + 4  # slight tolerance
+            vertical_gap = lb_top - vb_bottom
+            within_thresh = vertical_gap <= below_thresh
+            is_same_text = vb["text"].rstrip(":").strip() == label_text
+            if is_above and within_thresh and not is_same_text:
+                above_candidates.append((i, vb, vertical_gap))
+
+        if above_candidates:
+            above_candidates.sort(key=lambda t: (t[2], abs(_box_center_x(t[1]) - _box_center_x(lb))))
+            i, vb, _ = above_candidates[0]
+            if not _is_label_candidate(vb["text"]):
+                value_text, value_boxes_used, used_value_idxs = _merge_adjacent_value_tokens(
+                    vb, i, value_boxes, used_value_idxs, lb_h
+                )
+                if value_text:
+                    pairs.append({
+                        "label": label_text,
+                        "value": value_text,
+                        "bbox": _make_bbox(value_boxes_used),
+                        "label_bbox": label_bbox,
+                        "confidence": lb["confidence"],
+                    })
+                    continue
+
+        # 4) No value found at all — emit a label-only entry with blank value
+        pairs.append({
+            "label": label_text,
+            "value": "",
+            "bbox": None,
+            "label_bbox": label_bbox,
+            "confidence": lb["confidence"],
+        })
 
     return pairs
 

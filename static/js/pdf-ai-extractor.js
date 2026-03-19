@@ -297,23 +297,36 @@ function _makeFieldCard(field) {
 
   card.innerHTML = `
     <div class="field-header">
-      <span class="field-name">${_esc(label)}</span>
+      <span class="field-label-tag">${_esc(label)}</span>
+      <span class="field-arrow">→</span>
       ${field.page ? `<span class="badge bg-secondary" style="font-size:0.6rem">p${field.page}</span>` : ''}
     </div>
     <input class="field-value-input"
            type="text"
+           placeholder="(no value)"
            data-field-name="${_esc(label)}"
            value="${_esc(displayValue)}">
     <div class="confidence-bar" style="--pct: ${confStr}"></div>
     <div class="confidence-label">Confidence: ${confStr}</div>
   `;
 
-  // Highlight bounding box on card hover
+  // Highlight bounding boxes on card hover: label in pink, value in green
   card.addEventListener('mouseenter', () => {
     if (field.page && field.page !== viewer.currentPage) return;
-    const { x0, y0, x1, y1 } = field.bbox || {};
-    if (x0 !== undefined) {
-      viewer.drawHighlight(x0, y0, x1, y1, 'rgba(13,110,253,0.30)', '#0d6efd');
+    viewer.clearOverlay();
+    // Highlight label bbox in pink
+    if (field.label_bbox) {
+      const { x0, y0, x1, y1 } = field.label_bbox;
+      if (x0 !== undefined) {
+        viewer.drawHighlight(x0, y0, x1, y1, 'rgba(255,99,132,0.35)', '#e0497a');
+      }
+    }
+    // Highlight value bbox in green/orange
+    if (field.bbox) {
+      const { x0, y0, x1, y1 } = field.bbox;
+      if (x0 !== undefined) {
+        viewer.drawHighlight(x0, y0, x1, y1, 'rgba(40,167,69,0.30)', '#28a745');
+      }
     }
   });
   card.addEventListener('mouseleave', () => {
