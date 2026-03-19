@@ -168,16 +168,28 @@ class TestPairLabelsValues:
         assert len(pairs) == 1
 
     def test_bbox_present_in_output(self):
-        """Each pair dict must include a bbox with x/y/width/height."""
+        """value bbox must be at the VALUE position, not the label position."""
         boxes = [
             _box("Phone:", x=10, y=10),
             _box("9876543210", x=80, y=10, w=90),
         ]
         pairs = _pair_labels_values(boxes)
-        assert pairs[0]["bbox"]["x"] == 10
+        # bbox should point to the value box (x=80), not the label box (x=10)
+        assert pairs[0]["bbox"]["x"] == 80
         assert pairs[0]["bbox"]["y"] == 10
         assert "width" in pairs[0]["bbox"]
         assert "height" in pairs[0]["bbox"]
+
+    def test_label_bbox_present_in_output(self):
+        """Each pair dict must include both label_bbox and bbox separately."""
+        boxes = [
+            _box("Phone:", x=10, y=10),
+            _box("9876543210", x=80, y=10, w=90),
+        ]
+        pairs = _pair_labels_values(boxes)
+        assert "label_bbox" in pairs[0]
+        assert pairs[0]["label_bbox"]["x"] == 10  # label at x=10
+        assert pairs[0]["bbox"]["x"] == 80        # value at x=80
 
     def test_confidence_preserved(self):
         """Confidence from the label box is propagated to the pair."""
@@ -187,6 +199,49 @@ class TestPairLabelsValues:
         ]
         pairs = _pair_labels_values(boxes)
         assert abs(pairs[0]["confidence"] - 0.72) < 0.01
+
+    def test_label_only_entry_when_no_value(self):
+        """Label with no nearby value produces a label-only entry with blank value."""
+        boxes = [
+            _box("Pin:", x=10, y=10),
+            # No value box anywhere near it
+        ]
+        pairs = _pair_labels_values(boxes)
+        assert len(pairs) == 1
+        assert pairs[0]["label"] == "Pin"
+        assert pairs[0]["value"] == ""
+        assert pairs[0]["bbox"] is None
+        assert pairs[0]["label_bbox"] is not None
+
+    def test_lic_form_net_payable_label_below_value(self):
+        """Handle the case where label 'Net Payable' appears below value '73001'."""
+        boxes = [
+            _box("73001", x=50, y=100, w=40),    # value appears ABOVE
+            _box("Net", x=10, y=120, w=25),       # label appears BELOW the value
+            _box("Payable:", x=40, y=120, w=50),  # second word of label on same line
+        ]
+        pairs = _pair_labels_values(boxes)
+        by_label = {p["label"]: p["value"] for p in pairs}
+        found = any("payable" in lbl.lower() and "73001" in val
+                    for lbl, val in by_label.items())
+        assert found, f"Expected 'Net Payable'→'73001' (label below value) in {by_label}"
+
+    def test_value_bbox_spans_merged_tokens(self):
+        """Value bbox for merged multi-token values spans all tokens."""
+        boxes = [
+            _box("Address:", x=10, y=10),
+            _box("Anoop", x=80, y=10, w=40),
+            _box("layout", x=125, y=10, w=40),
+        ]
+        pairs = _pair_labels_values(boxes)
+        by_label = {p["label"]: p for p in pairs}
+        assert "Address" in by_label
+        pair = by_label["Address"]
+        assert pair["value"] == "Anoop layout"
+        # value bbox should span from start of "Anoop" to end of "layout"
+        # Anoop: x=80, w=40 → right=120; layout: x=125, w=40 → right=165
+        assert pair["bbox"]["x"] == 80
+        assert pair["bbox"]["x"] + pair["bbox"]["width"] == pytest.approx(165, abs=1)
 
 
 # ---------------------------------------------------------------------------

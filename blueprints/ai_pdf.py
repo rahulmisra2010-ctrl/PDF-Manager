@@ -135,21 +135,27 @@ def detect_fields(doc_id: int):
         if pairs:
             fields_out = []
             for pair in pairs:
-                bbox = pair.get("bbox") or {}
-                # Convert PDF-point bbox → pixel coords at the current zoom level
-                pixel_bbox = {
-                    "x0": bbox.get("x", 0) * zoom,
-                    "y0": bbox.get("y", 0) * zoom,
-                    "x1": (bbox.get("x", 0) + bbox.get("width", 0)) * zoom,
-                    "y1": (bbox.get("y", 0) + bbox.get("height", 0)) * zoom,
-                } if bbox else None
+                def _to_pixel_bbox(raw_bbox):
+                    """Convert a {x, y, width, height} PDF-point bbox to pixel coords."""
+                    if not raw_bbox:
+                        return None
+                    return {
+                        "x0": raw_bbox.get("x", 0) * zoom,
+                        "y0": raw_bbox.get("y", 0) * zoom,
+                        "x1": (raw_bbox.get("x", 0) + raw_bbox.get("width", 0)) * zoom,
+                        "y1": (raw_bbox.get("y", 0) + raw_bbox.get("height", 0)) * zoom,
+                    }
+
+                pixel_bbox       = _to_pixel_bbox(pair.get("bbox"))
+                pixel_label_bbox = _to_pixel_bbox(pair.get("label_bbox"))
                 fields_out.append({
-                    "field_name": pair["label"],
-                    "label":      pair["label"],
-                    "value":      pair.get("value", ""),
-                    "confidence": pair.get("confidence", 1.0),
-                    "bbox":       pixel_bbox,
-                    "page":       page_num,
+                    "field_name":  pair["label"],
+                    "label":       pair["label"],
+                    "value":       pair.get("value", ""),
+                    "confidence":  pair.get("confidence", 1.0),
+                    "bbox":        pixel_bbox,
+                    "label_bbox":  pixel_label_bbox,
+                    "page":        page_num,
                 })
             return jsonify({"fields": fields_out, "page": page_num})
     except Exception as exc:
