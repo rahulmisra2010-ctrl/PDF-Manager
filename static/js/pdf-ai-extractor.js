@@ -176,7 +176,7 @@ async function detectAllFields() {
 
     viewer.drawFields(fields.filter(f => f.page === viewer.currentPage));
     _renderFieldsPanel(fields);
-    _setStatus(`Detected ${(data.fields || []).length} fields on page ${viewer.currentPage}`, 'success');
+    _setStatus(`Detected ${(data.fields || []).length} field(s) on page ${viewer.currentPage}`, 'success');
   } catch (err) {
     _setStatus(`Error: ${err.message}`, 'danger');
   }
@@ -200,16 +200,16 @@ async function extractRegion(x0, y0, x1, y1) {
 
     const newField = {
       field_name:  fieldName,
+      label:       fieldName,
       text:        data.text,
       value:       data.text,
-      field_type:  data.field_type,
       confidence:  data.confidence,
       bbox:        data.bbox,
       page:        viewer.currentPage,
     };
 
-    // Remove previous field with same name on this page
-    fields = fields.filter(f => !(f.field_name === fieldName && f.page === viewer.currentPage));
+    // Remove previous field with same label on this page
+    fields = fields.filter(f => (f.label || f.field_name) !== fieldName || f.page !== viewer.currentPage);
     fields.push(newField);
 
     viewer.drawFields(fields.filter(f => f.page === viewer.currentPage));
@@ -225,11 +225,14 @@ async function saveFields() {
   if (fields.length === 0) { _setStatus('No fields to save.', 'warning'); return; }
 
   // Collect current values from the input fields
-  const toSave = fields.map(f => ({
-    field_name: f.field_name,
-    value:      _getFieldInputValue(f.field_name) || f.value || f.text || '',
-    confidence: f.confidence || 0.8,
-  }));
+  const toSave = fields.map(f => {
+    const label = f.label || f.field_name || '';
+    return {
+      field_name: label,
+      value:      _getFieldInputValue(label) || f.value || f.text || '',
+      confidence: f.confidence || 0.8,
+    };
+  });
 
   _setStatus('Saving…', 'info');
   try {
@@ -282,23 +285,25 @@ function _filterFieldsPanel(pageNum) {
 function _makeFieldCard(field) {
   const card = document.createElement('div');
   card.className = 'field-card';
-  card.dataset.fieldName = field.field_name;
+  // Use label as the stable identifier; fall back to field_name for legacy entries
+  const label = field.label || field.field_name || '';
+  card.dataset.fieldName = label;
   card.dataset.page      = field.page || '';
 
-  const typeBadgeClass = FIELD_TYPE_CLASSES[field.field_type] || 'field-type-text';
-  const conf           = Math.round((field.confidence || 0.5) * 100);
-  const confStr        = `${conf}%`;
+  const conf    = Math.round((field.confidence || 0.5) * 100);
+  const confStr = `${conf}%`;
+  // Display value: prefer explicit 'value', fall back to 'text' for legacy raw entries
+  const displayValue = (field.value !== undefined) ? field.value : (field.text || '');
 
   card.innerHTML = `
     <div class="field-header">
-      <span class="field-name">${_esc(field.field_name)}</span>
-      <span class="field-type-badge ${typeBadgeClass}">${_esc(field.field_type || 'text')}</span>
+      <span class="field-name">${_esc(label)}</span>
       ${field.page ? `<span class="badge bg-secondary" style="font-size:0.6rem">p${field.page}</span>` : ''}
     </div>
     <input class="field-value-input"
            type="text"
-           data-field-name="${_esc(field.field_name)}"
-           value="${_esc(field.value || field.text || '')}">
+           data-field-name="${_esc(label)}"
+           value="${_esc(displayValue)}">
     <div class="confidence-bar" style="--pct: ${confStr}"></div>
     <div class="confidence-label">Confidence: ${confStr}</div>
   `;
@@ -325,7 +330,7 @@ function _makeFieldCard(field) {
   removeBtn.textContent = '✕';
   removeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    fields = fields.filter(f => f.field_name !== field.field_name || f.page !== field.page);
+    fields = fields.filter(f => (f.label || f.field_name) !== label || f.page !== field.page);
     _renderFieldsPanel(fields);
     const pageFields = fields.filter(f => f.page === viewer.currentPage || !f.page);
     viewer.drawFields(pageFields);
@@ -373,7 +378,7 @@ function _setStatus(msg, type) {
 }
 
 function _getFieldInputValue(fieldName) {
-  const input = document.querySelector(`input[data-field-name="${CSS.escape(fieldName)}"]`);
+  const input = document.querySelector(`input.field-value-input[data-field-name="${CSS.escape(fieldName)}"]`);
   return input ? input.value : null;
 }
 
