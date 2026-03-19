@@ -40,6 +40,18 @@ def _ensure_backend_on_path() -> None:
 ai_pdf_bp = Blueprint("ai_pdf", __name__, template_folder="../templates/pdf")
 
 
+def _xywh_to_pixel_bbox(raw_bbox: dict | None) -> dict | None:
+    """Convert a ``{x, y, width, height}`` bbox (pixel coords) to ``{x0, y0, x1, y1}``."""
+    if not raw_bbox:
+        return None
+    return {
+        "x0": raw_bbox.get("x", 0),
+        "y0": raw_bbox.get("y", 0),
+        "x1": raw_bbox.get("x", 0) + raw_bbox.get("width", 0),
+        "y1": raw_bbox.get("y", 0) + raw_bbox.get("height", 0),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Service loader
 # ---------------------------------------------------------------------------
@@ -134,18 +146,19 @@ def detect_fields(doc_id: int):
         pairs = extract_dynamic_fields(doc.file_path, page_index=page_num - 1)
         if pairs:
             fields_out = []
-            for pair in pairs:
-                def _to_pixel_bbox(raw_bbox):
-                    """Convert a {x, y, width, height} PDF-point bbox to pixel coords."""
-                    if not raw_bbox:
-                        return None
-                    return {
-                        "x0": raw_bbox.get("x", 0) * zoom,
-                        "y0": raw_bbox.get("y", 0) * zoom,
-                        "x1": (raw_bbox.get("x", 0) + raw_bbox.get("width", 0)) * zoom,
-                        "y1": (raw_bbox.get("y", 0) + raw_bbox.get("height", 0)) * zoom,
-                    }
 
+            def _to_pixel_bbox(raw_bbox):
+                """Convert a {x, y, width, height} PDF-point bbox to pixel coords."""
+                if not raw_bbox:
+                    return None
+                return {
+                    "x0": raw_bbox.get("x", 0) * zoom,
+                    "y0": raw_bbox.get("y", 0) * zoom,
+                    "x1": (raw_bbox.get("x", 0) + raw_bbox.get("width", 0)) * zoom,
+                    "y1": (raw_bbox.get("y", 0) + raw_bbox.get("height", 0)) * zoom,
+                }
+
+            for pair in pairs:
                 pixel_bbox       = _to_pixel_bbox(pair.get("bbox"))
                 pixel_label_bbox = _to_pixel_bbox(pair.get("label_bbox"))
                 fields_out.append({
@@ -157,26 +170,70 @@ def detect_fields(doc_id: int):
                     "label_bbox":  pixel_label_bbox,
                     "page":        page_num,
                 })
-            return jsonify({"fields": fields_out, "page": page_num})
+            unpaired = sum(1 for f in fields_out if not f["value"])
+            return jsonify({
+                "fields": fields_out,
+                "page": page_num,
+                "pairing_mode": "dynamic",
+                "unpaired_labels_count": unpaired,
+            })
     except Exception as exc:
         current_app.logger.warning(
             "Dynamic extraction in detect_fields failed for doc %s page %s: %s",
             doc_id, page_num, exc,
         )
 
-    # ── Strategy 2: fallback — raw word-level AI service ────────────────────
+    # ── Strategy 2: fallback — derive label/value pairs from raw word tokens ─
     svc = _get_ai_service()
     if svc is None:
         return jsonify({"error": "AI service unavailable"}), 503
 
     try:
+        from services.dynamic_extraction import _pair_labels_values  # type: ignore[import]
+
         raw_fields = svc.extract_page_fields(doc.file_path, page_num, zoom=zoom)
-        # Normalise to a consistent shape so the JS panel can render label/value
+
+        # Convert pixel-coord tokens {x0,y0,x1,y1} → {x,y,width,height} for pairing
+        boxes = []
         for f in raw_fields:
-            f.setdefault("field_name", f.get("text", ""))
-            f.setdefault("label", f.get("text", ""))
-            f.setdefault("value", f.get("text", ""))
-        return jsonify({"fields": raw_fields, "page": page_num})
+            bb = f.get("bbox") or {}
+            x0_px = bb.get("x0", 0)
+            y0_px = bb.get("y0", 0)
+            x1_px = bb.get("x1", x0_px)
+            y1_px = bb.get("y1", y0_px)
+            boxes.append({
+                "text":       f.get("text", ""),
+                "x":          x0_px,
+                "y":          y0_px,
+                "width":      x1_px - x0_px,
+                "height":     y1_px - y0_px,
+                "confidence": f.get("confidence", 0.5),
+            })
+
+        pairs = _pair_labels_values(boxes)
+        fields_out = []
+        for pair in pairs:
+            fields_out.append({
+                "field_name": pair["label"],
+                "label":      pair["label"],
+                "value":      pair.get("value", ""),
+                "confidence": pair.get("confidence", 0.5),
+                "bbox":       _xywh_to_pixel_bbox(pair.get("bbox")),
+                "label_bbox": _xywh_to_pixel_bbox(pair.get("label_bbox")),
+                "page":       page_num,
+            })
+
+        unpaired = sum(1 for f in fields_out if not f["value"])
+        current_app.logger.info(
+            "detect_fields fallback pairing: doc=%s page=%s pairs=%d unpaired=%d",
+            doc_id, page_num, len(fields_out), unpaired,
+        )
+        return jsonify({
+            "fields": fields_out,
+            "page": page_num,
+            "pairing_mode": "fallback",
+            "unpaired_labels_count": unpaired,
+        })
     except Exception as exc:
         current_app.logger.exception(
             "Field detection failed for doc %s page %s", doc_id, page_num
