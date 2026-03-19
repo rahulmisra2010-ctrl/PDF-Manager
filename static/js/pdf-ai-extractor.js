@@ -176,7 +176,7 @@ async function detectAllFields() {
 
     viewer.drawFields(fields.filter(f => f.page === viewer.currentPage));
     _renderFieldsPanel(fields);
-    _setStatus(`Detected ${(data.fields || []).length} field(s) on page ${viewer.currentPage}`, 'success');
+    _setStatus(`Detected ${(data.fields || []).length} label/value pair(s) on page ${viewer.currentPage}`, 'success');
   } catch (err) {
     _setStatus(`Error: ${err.message}`, 'danger');
   }
