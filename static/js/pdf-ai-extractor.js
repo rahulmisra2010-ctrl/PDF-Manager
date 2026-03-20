@@ -46,7 +46,7 @@ const FIELD_TYPE_CLASSES = {
 // State
 // ---------------------------------------------------------------------------
 let viewer   = null;   // InteractivePDFViewer instance
-let fields   = [];     // current extracted fields array
+let fields   = [];     // current extracted fields array (in-memory, auto-synced)
 let mode     = 'view'; // 'view' | 'select' | 'detect'
 let selStart = null;   // {x, y} drag start in canvas coords
 
@@ -73,6 +73,8 @@ function initAIExtractor() {
       // Re-draw fields for the new page
       const pageFields = fields.filter(f => f.page === pageNum || f.page === undefined);
       viewer.drawFields(pageFields);
+      // Re-render overlay inputs for the new page
+      _renderOverlayInputs(pageFields);
       // Update active page highlight in fields panel
       _filterFieldsPanel(pageNum);
     },
@@ -82,15 +84,16 @@ function initAIExtractor() {
   viewer.renderCurrentPage();
 
   // ---- Toolbar button wiring ----
-  _wire('btn-prev',      () => viewer.prevPage());
-  _wire('btn-next',      () => viewer.nextPage());
-  _wire('btn-zoom-in',   () => viewer.setZoom(viewer.zoom + 0.25));
-  _wire('btn-zoom-out',  () => viewer.setZoom(Math.max(0.5, viewer.zoom - 0.25)));
-  _wire('btn-detect',    () => detectAllFields());
-  _wire('btn-clear',     () => clearFields());
-  _wire('btn-save',      () => saveFields());
-  _wire('btn-mode-view', () => setMode('view'));
-  _wire('btn-mode-select',() => setMode('select'));
+  _wire('btn-prev',        () => viewer.prevPage());
+  _wire('btn-next',        () => viewer.nextPage());
+  _wire('btn-zoom-in',     () => viewer.setZoom(viewer.zoom + 0.25));
+  _wire('btn-zoom-out',    () => viewer.setZoom(Math.max(0.5, viewer.zoom - 0.25)));
+  _wire('btn-detect',      () => detectAllFields());
+  _wire('btn-clear',       () => clearFields());
+  _wire('btn-save',        () => saveFields());
+  _wire('btn-save-sample', () => saveSample());
+  _wire('btn-mode-view',   () => setMode('view'));
+  _wire('btn-mode-select', () => setMode('select'));
 
   // ---- Drag-to-select on the selection canvas ----
   if (selCanvas) {
@@ -174,7 +177,9 @@ async function detectAllFields() {
     fields = fields.filter(f => f.page !== viewer.currentPage);
     fields = fields.concat(data.fields || []);
 
-    viewer.drawFields(fields.filter(f => f.page === viewer.currentPage));
+    const pageFields = fields.filter(f => f.page === viewer.currentPage);
+    viewer.drawFields(pageFields);
+    _renderOverlayInputs(pageFields);
     _renderFieldsPanel(fields);
     _setStatus(`Detected ${(data.fields || []).length} label/value pair(s) on page ${viewer.currentPage}`, 'success');
   } catch (err) {
@@ -212,7 +217,9 @@ async function extractRegion(x0, y0, x1, y1) {
     fields = fields.filter(f => (f.label || f.field_name) !== fieldName || f.page !== viewer.currentPage);
     fields.push(newField);
 
-    viewer.drawFields(fields.filter(f => f.page === viewer.currentPage));
+    const pageFields = fields.filter(f => f.page === viewer.currentPage);
+    viewer.drawFields(pageFields);
+    _renderOverlayInputs(pageFields);
     _renderFieldsPanel(fields);
     _setStatus(`Extracted "${data.text}" as ${fieldName}`, 'success');
   } catch (err) {
@@ -248,13 +255,112 @@ async function saveFields() {
 function clearFields() {
   fields = [];
   viewer.clearOverlay();
+  _clearOverlayInputs();
   _renderFieldsPanel([]);
   _setStatus('Fields cleared.', 'secondary');
 }
 
 // ---------------------------------------------------------------------------
-// Fields panel rendering
+// Save as Sample — export current (edited) fields as JSON download
 // ---------------------------------------------------------------------------
+
+function saveSample() {
+  if (fields.length === 0) { _setStatus('No fields to export.', 'warning'); return; }
+
+  // Build export data using current in-memory values (already auto-synced)
+  const exportData = fields.map(f => ({
+    field_name: f.field_name || f.label || '',
+    label:      f.label || f.field_name || '',
+    value:      f.value || f.text || '',
+    confidence: f.confidence || 0,
+    page:       f.page || 1,
+    bbox:       f.bbox || null,
+  }));
+
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+  const link = document.createElement('a');
+  link.href     = URL.createObjectURL(blob);
+  link.download = 'form_data_sample.json';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
+  _setStatus('Sample JSON downloaded.', 'success');
+}
+
+// ---------------------------------------------------------------------------
+// PDF overlay inputs — absolutely-positioned editable inputs at OCR bbox coords
+// ---------------------------------------------------------------------------
+
+/**
+ * Render editable <input> elements over the PDF canvas using bounding boxes.
+ * Inputs auto-sync edits back into the in-memory `fields` array immediately.
+ */
+function _renderOverlayInputs(pageFields) {
+  const overlay = document.getElementById('pdf-overlay');
+  if (!overlay) return;
+
+  // Remove old inputs
+  overlay.innerHTML = '';
+
+  for (const field of pageFields) {
+    const bbox = field.bbox;
+    if (!bbox) continue;
+
+    // bbox uses {x0, y0, x1, y1} pixel coords
+    const x = bbox.x0;
+    const y = bbox.y0;
+    const w = (bbox.x1 || bbox.x0) - bbox.x0;
+    const h = (bbox.y1 || bbox.y0) - bbox.y0;
+
+    if (w < 4 || h < 4) continue; // skip degenerate boxes
+
+    const input = document.createElement('input');
+    input.type  = 'text';
+    input.value = field.value || '';
+    input.title = field.label || field.field_name || '';
+    input.setAttribute('data-field-label', field.label || field.field_name || '');
+    input.style.cssText = [
+      'position:absolute',
+      `left:${x}px`,
+      `top:${y}px`,
+      `width:${Math.max(w, 40)}px`,
+      `height:${Math.max(h, 16)}px`,
+      'background:rgba(255,255,180,0.6)',
+      'border:1px solid rgba(255,200,0,0.8)',
+      'border-radius:2px',
+      'font-size:' + Math.max(Math.min(h * 0.7, 13), 8) + 'px',
+      'padding:0 2px',
+      'box-sizing:border-box',
+      'pointer-events:auto',
+      'z-index:10',
+      'color:#222',
+      'overflow:hidden',
+    ].join(';');
+
+    // Auto-sync: update the in-memory field immediately on each keystroke
+    input.addEventListener('input', () => {
+      field.value = input.value;
+      // Also keep the side-panel input in sync
+      const label = field.label || field.field_name || '';
+      const sideInput = document.querySelector(
+        `input.field-value-input[data-field-name="${CSS.escape(label)}"]`
+      );
+      if (sideInput) sideInput.value = input.value;
+    });
+
+    overlay.appendChild(input);
+  }
+
+  // The overlay container itself stays pointer-events:none so the canvas
+  // below is still reachable; each individual input element has pointer-events:auto.
+  overlay.style.pointerEvents = 'none';
+}
+
+function _clearOverlayInputs() {
+  const overlay = document.getElementById('pdf-overlay');
+  if (overlay) overlay.innerHTML = '';
+}
 
 function _renderFieldsPanel(allFields) {
   const container = document.getElementById('fields-list');
@@ -310,6 +416,19 @@ function _makeFieldCard(field) {
     <div class="confidence-label">Confidence: ${confStr}</div>
   `;
 
+  // Auto-sync: update the in-memory field when the side-panel input changes
+  const inputEl = card.querySelector('.field-value-input');
+  if (inputEl) {
+    inputEl.addEventListener('input', () => {
+      field.value = inputEl.value;
+      // Also keep any overlay input in sync
+      const overlayInput = document.querySelector(
+        `#pdf-overlay input[data-field-label="${CSS.escape(label)}"]`
+      );
+      if (overlayInput) overlayInput.value = inputEl.value;
+    });
+  }
+
   // Highlight bounding boxes on card hover: label in pink, value in green
   card.addEventListener('mouseenter', () => {
     if (field.page && field.page !== viewer.currentPage) return;
@@ -347,6 +466,7 @@ function _makeFieldCard(field) {
     _renderFieldsPanel(fields);
     const pageFields = fields.filter(f => f.page === viewer.currentPage || !f.page);
     viewer.drawFields(pageFields);
+    _renderOverlayInputs(pageFields);
   });
   card.querySelector('.field-header').prepend(removeBtn);
 

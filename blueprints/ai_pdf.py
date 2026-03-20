@@ -189,7 +189,7 @@ def detect_fields(doc_id: int):
         return jsonify({"error": "AI service unavailable"}), 503
 
     try:
-        from services.dynamic_extraction import _pair_labels_values  # type: ignore[import]
+        from services.dynamic_extraction import _pair_labels_values, CONFIDENCE_THRESHOLD  # type: ignore[import]
 
         raw_fields = svc.extract_page_fields(doc.file_path, page_num, zoom=zoom)
 
@@ -212,6 +212,8 @@ def detect_fields(doc_id: int):
 
         pairs = _pair_labels_values(boxes)
         fields_out = []
+        paired_labels = {p["label"].lower() for p in pairs}
+        paired_value_words: set[str] = set()
         for pair in pairs:
             fields_out.append({
                 "field_name": pair["label"],
@@ -220,6 +222,31 @@ def detect_fields(doc_id: int):
                 "confidence": pair.get("confidence", 0.5),
                 "bbox":       _xywh_to_pixel_bbox(pair.get("bbox")),
                 "label_bbox": _xywh_to_pixel_bbox(pair.get("label_bbox")),
+                "page":       page_num,
+            })
+            for w in (pair.get("value") or "").split():
+                paired_value_words.add(w.lower())
+
+        # Also include raw unpaired tokens so the UI can show all text blocks
+        for box in boxes:
+            text = box["text"].strip()
+            if not text:
+                continue
+            if box.get("confidence", 0.5) < CONFIDENCE_THRESHOLD:
+                continue
+            # Skip tokens already represented as paired labels or within label text
+            if any(text.lower() in pl for pl in paired_labels):
+                continue
+            if text.lower() in paired_value_words:
+                continue
+            x, y, w, h = box["x"], box["y"], box["width"], box["height"]
+            fields_out.append({
+                "field_name": text,
+                "label":      text,
+                "value":      "",
+                "confidence": box.get("confidence", 0.5),
+                "bbox":       {"x0": x, "y0": y, "x1": x + w, "y1": y + h},
+                "label_bbox": {"x0": x, "y0": y, "x1": x + w, "y1": y + h},
                 "page":       page_num,
             })
 
