@@ -621,10 +621,12 @@ document.getElementById("save-sample-json")?.addEventListener("click", e => {
 document.getElementById("save-sample-pdf")?.addEventListener("click", e => {
   e.preventDefault();
   
+  const exportUrl = `{{ url_for('pdf.export', doc_id=doc.id, fmt='pdf') }}`;
+  
   // First, sync all current field values to the form
   FIELDS.forEach(f => {
     const inp = document.getElementById("form-field-" + f.id);
-    if (inp) inp.value = f.value;
+    if (inp) inp.value = f.value || "";
   });
   
   // Submit the form via AJAX to save fields, then redirect to PDF export
@@ -640,16 +642,16 @@ document.getElementById("save-sample-pdf")?.addEventListener("click", e => {
     })
     .then(() => {
       // After saving, redirect to PDF export
-      window.location.href = `{{ url_for('pdf.export', doc_id=doc.id, fmt='pdf') }}`;
+      window.location.href = exportUrl;
     })
     .catch(err => {
       console.error("Failed to save fields before export:", err);
       // Still attempt export even if save failed
-      window.location.href = `{{ url_for('pdf.export', doc_id=doc.id, fmt='pdf') }}`;
+      window.location.href = exportUrl;
     });
   } else {
     // No form available, just redirect to export
-    window.location.href = `{{ url_for('pdf.export', doc_id=doc.id, fmt='pdf') }}`;
+    window.location.href = exportUrl;
   }
 });
 
