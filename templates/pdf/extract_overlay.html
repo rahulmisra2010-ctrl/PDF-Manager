@@ -156,6 +156,53 @@
     padding: 0.75rem;
     font-size: 0.85rem;
   }
+
+  /* ------------------------------------------------------------------ */
+  /* Save as Sample dropdown                                              */
+  /* ------------------------------------------------------------------ */
+  .dropdown-menu {
+    background: #2b2b2b;
+    border-color: #444;
+  }
+  .dropdown-menu .dropdown-item {
+    color: #ddd;
+  }
+  .dropdown-menu .dropdown-item:hover {
+    background: #444;
+    color: #fff;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Auto-sync indicator                                                   */
+  /* ------------------------------------------------------------------ */
+  .auto-sync-status {
+    font-size: 0.75rem;
+    color: #888;
+    margin-left: 0.5rem;
+  }
+  .auto-sync-status.synced {
+    color: #16a34a;
+  }
+  .auto-sync-status.pending {
+    color: #f59e0b;
+  }
+
+  /* Field overlay with inline editing */
+  .field-overlay-value {
+    position: absolute;
+    bottom: 2px;
+    left: 4px;
+    right: 4px;
+    font-size: 0.7rem;
+    color: rgba(255,255,255,0.9);
+    background: rgba(0,0,0,0.5);
+    padding: 1px 4px;
+    border-radius: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+  }
 </style>
 {% endblock %}
 
@@ -222,6 +269,27 @@
             style="background:#2563eb;" title="Save all edited field values">
       <i class="bi bi-save me-1"></i>Save Fields
     </button>
+
+    <!-- Save as Sample dropdown -->
+    <div class="dropdown d-inline-block ms-2">
+      <button id="btn-save-sample" class="btn-toolbar-pdf dropdown-toggle"
+              style="background:#16a34a;" data-bs-toggle="dropdown" aria-expanded="false"
+              title="Save current data as a sample">
+        <i class="bi bi-download me-1"></i>Save as Sample
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li>
+          <a class="dropdown-item" href="#" id="save-sample-json">
+            <i class="bi bi-filetype-json me-2"></i>Download JSON Sample
+          </a>
+        </li>
+        <li>
+          <a class="dropdown-item" href="#" id="save-sample-pdf">
+            <i class="bi bi-file-earmark-pdf me-2"></i>Download Filled PDF
+          </a>
+        </li>
+      </ul>
+    </div>
   </div>
 
   <!-- Canvas area -->
@@ -422,6 +490,14 @@ function drawOverlays(page, canvasW, canvasH) {
     label.textContent = field.field_name;
     el.appendChild(label);
 
+    // Show current value on the overlay
+    if (field.value) {
+      const valueDisplay = document.createElement("div");
+      valueDisplay.className = "field-overlay-value";
+      valueDisplay.textContent = field.value;
+      el.appendChild(valueDisplay);
+    }
+
     el.addEventListener("click", e => openPopup(e, field, el));
     wrapper.appendChild(el);
   });
@@ -479,12 +555,10 @@ function closePopup() {
 function applyPopup() {
   if (!activeField) return;
   const newVal = document.getElementById("popup-input").value;
-  activeField.value = newVal;
-
-  // Sync to the backup form input
-  const formInput = document.getElementById("form-field-" + activeField.id);
-  if (formInput) formInput.value = newVal;
-
+  
+  // Use auto-sync to update field and UI
+  autoSyncField(activeField, newVal);
+  
   closePopup();
 }
 
@@ -514,6 +588,95 @@ document.getElementById("btn-save-overlay").addEventListener("click", () => {
   const form = document.getElementById("fields-form");
   if (form) form.submit();
 });
+
+// ---------------------------------------------------------------------------
+// Save as Sample — JSON Download
+// ---------------------------------------------------------------------------
+document.getElementById("save-sample-json")?.addEventListener("click", e => {
+  e.preventDefault();
+  
+  // Build JSON object from current field values
+  const sampleData = {};
+  FIELDS.forEach(f => {
+    sampleData[f.field_name] = f.value || "";
+  });
+  
+  // Create and download JSON file
+  const jsonStr = JSON.stringify(sampleData, null, 2);
+  const blob = new Blob([jsonStr], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `form_data_sample_${DOC_ID}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+
+// ---------------------------------------------------------------------------
+// Save as Sample — Filled PDF Download
+// ---------------------------------------------------------------------------
+document.getElementById("save-sample-pdf")?.addEventListener("click", e => {
+  e.preventDefault();
+  
+  const exportUrl = `{{ url_for('pdf.export', doc_id=doc.id, fmt='pdf') }}`;
+  
+  // First, sync all current field values to the form
+  FIELDS.forEach(f => {
+    const inp = document.getElementById("form-field-" + f.id);
+    if (inp) inp.value = f.value || "";
+  });
+  
+  // Submit the form via AJAX to save fields, then redirect to PDF export
+  const form = document.getElementById("fields-form");
+  if (form) {
+    const formData = new FormData(form);
+    fetch(form.action, {
+      method: "POST",
+      body: formData,
+      headers: {
+        "X-Requested-With": "XMLHttpRequest"
+      }
+    })
+    .then(() => {
+      // After saving, redirect to PDF export
+      window.location.href = exportUrl;
+    })
+    .catch(err => {
+      console.error("Failed to save fields before export:", err);
+      // Still attempt export even if save failed
+      window.location.href = exportUrl;
+    });
+  } else {
+    // No form available, just redirect to export
+    window.location.href = exportUrl;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Auto-Sync: Automatically update the FIELDS array when popup values change
+// ---------------------------------------------------------------------------
+function autoSyncField(field, newValue) {
+  field.value = newValue;
+  
+  // Sync to the backup form input
+  const formInput = document.getElementById("form-field-" + field.id);
+  if (formInput) formInput.value = newValue;
+  
+  // Show value preview on overlay
+  const overlayEl = wrapper.querySelector(`.field-overlay[data-field-id="${field.id}"]`);
+  if (overlayEl) {
+    let valueDisplay = overlayEl.querySelector('.field-overlay-value');
+    if (!valueDisplay) {
+      valueDisplay = document.createElement('div');
+      valueDisplay.className = 'field-overlay-value';
+      overlayEl.appendChild(valueDisplay);
+    }
+    valueDisplay.textContent = newValue || '—';
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Navigation
@@ -577,13 +740,13 @@ pdfjsLib.getDocument(PDF_URL).promise.then(pdf => {
     err.message + '</div>';
 });
 
-// Sync form inputs → FIELDS array (so Save Fields toolbar button picks up
-// changes made directly in the backup form without using overlays).
+// Sync form inputs → FIELDS array using auto-sync (so Save Fields toolbar button
+// picks up changes made directly in the backup form without using overlays).
 document.querySelectorAll(".field-input").forEach(inp => {
   inp.addEventListener("change", e => {
     const id = parseInt(e.target.dataset.fieldId, 10);
     const f  = FIELDS.find(x => x.id === id);
-    if (f) f.value = e.target.value;
+    if (f) autoSyncField(f, e.target.value);
   });
 });
 </script>
