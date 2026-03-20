@@ -95,7 +95,7 @@
 
     <!-- Canvas area -->
     <div class="pdf-canvas-area">
-      <div class="canvas-wrapper" id="canvas-wrapper">
+      <div class="canvas-wrapper" id="canvas-wrapper" style="position:relative">
         <!-- Loading overlay -->
         <div id="pdf-loading-overlay" class="loading-overlay" style="display:none">
           <div class="spinner-border text-light"></div>
@@ -103,6 +103,9 @@
 
         <!-- Main rendered PDF page -->
         <canvas id="pdf-canvas"></canvas>
+
+        <!-- Editable field inputs overlaid on the PDF at bounding box positions -->
+        <div id="pdf-overlay" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:hidden"></div>
 
         <!-- Highlights overlay (drawn by InteractivePDFViewer) -->
         <canvas id="overlay-canvas" style="position:absolute;top:0;left:0;pointer-events:none"></canvas>
@@ -146,6 +149,9 @@
     <div class="fields-panel-footer">
       <button id="btn-save" class="btn btn-primary btn-sm flex-fill">
         <i class="bi bi-save me-1"></i>Save Fields
+      </button>
+      <button id="btn-save-sample" class="btn btn-success btn-sm" title="Export current fields as JSON sample">
+        <i class="bi bi-download me-1"></i>Save as Sample
       </button>
       <a href="{{ url_for('pdf.export', doc_id=doc.id, fmt='json') }}"
          class="btn btn-outline-secondary btn-sm">

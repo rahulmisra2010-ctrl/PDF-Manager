@@ -84,7 +84,14 @@ _LABEL_KW_RE = re.compile(
     r"Surrender|Premium|Policy|Sum|Insured|Present|Permanent|City|"
     r"State|Zip|District|Country|Nationality|DOB|Gender|Age|Salary|"
     r"Designation|Department|Employee|Customer|Invoice|Receipt|"
-    r"Reference|Ref|Serial|Sr|Branch|Mobile|Fax|Website|Subject"
+    r"Reference|Ref|Serial|Sr|Branch|Mobile|Fax|Website|Subject|"
+    r"From|To|Due|Balance|Rate|Tax|Status|Description|Purpose|"
+    r"Remarks|Note|Cheque|Demand|Draft|UTR|PAN|TAN|GSTIN|CIN|"
+    r"Father|Mother|Spouse|Guardian|Nominee|Relation|Relationship|"
+    r"Occupation|Income|Salary|Pension|Source|Mode|Channel|"
+    r"Period|Duration|Tenure|Term|Year|Month|Day|Time|"
+    r"Place|Location|Area|Zone|Region|Division|Section|Unit|"
+    r"Category|Class|Group|Type|Sub|Sub-Type|Sub-Category"
     r")$",
     re.IGNORECASE,
 )
@@ -93,10 +100,17 @@ _LABEL_KW_RE = re.compile(
 # Spatial thresholds (in image pixels; scale-independent relative to text height)
 # ---------------------------------------------------------------------------
 
-_LINE_THRESH_FACTOR = 0.6   # label box height × factor = vertical tolerance for "same line"
-_BELOW_THRESH_FACTOR = 3.0  # label box height × factor = max vertical gap for "below" match
-_RIGHT_MIN_GAP = 2          # minimum horizontal gap (px) to be considered "to the right"
-_MULTI_WORD_LABEL_MAX_GAP = 80  # max horizontal gap (px) between consecutive label words
+_LINE_THRESH_FACTOR = 0.7       # label box height × factor = vertical tolerance for "same line"
+_BELOW_THRESH_FACTOR = 5.0      # label box height × factor = max vertical gap for "below" match
+_RIGHT_MIN_GAP = 2              # minimum horizontal gap (px) to be considered "to the right"
+_MULTI_WORD_LABEL_MAX_GAP = 120 # max horizontal gap (px) between consecutive label words
+_VALUE_MERGE_GAP_FACTOR = 8     # label box height × factor = max gap between adjacent value tokens
+
+# ---------------------------------------------------------------------------
+# Minimum confidence for including OCR tokens
+# ---------------------------------------------------------------------------
+
+CONFIDENCE_THRESHOLD = 0.40  # lower bound; includes more candidate fields for UI review
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +324,7 @@ def _pair_labels_values(boxes: list[dict]) -> list[dict]:
             prev_right_edge = lb_right
             for i, vb in right_candidates:
                 gap = vb["x"] - prev_right_edge
-                if gap > lb_h * 4 and value_parts:
+                if gap > lb_h * _VALUE_MERGE_GAP_FACTOR and value_parts:
                     break  # too far; stop here
                 if _is_label_candidate(vb["text"]) and value_parts:
                     break  # new label starts; stop
@@ -702,6 +716,36 @@ def extract_dynamic_fields(
 
     # Apply label/value pairing heuristic
     pairs = _pair_labels_values(boxes)
+
+    # Also include all raw text blocks that were not consumed as part of a pair,
+    # so the UI can show/validate lower-confidence or unpaired candidates.
+    paired_labels = {p["label"].lower() for p in pairs}
+    paired_value_texts = set()
+    for p in pairs:
+        if p.get("value"):
+            for word in p["value"].split():
+                paired_value_texts.add(word.lower())
+
+    for box in boxes:
+        box_text = box["text"].strip()
+        if not box_text:
+            continue
+        # Skip tokens already represented within a paired label or its value words
+        if any(box_text.lower() in p["label"].lower() for p in pairs):
+            continue
+        if box_text.lower() in paired_value_texts:
+            continue
+        # Include this raw token as an unpaired field with its bbox
+        conf = float(box.get("confidence", 1.0))
+        if conf < CONFIDENCE_THRESHOLD:
+            continue
+        pairs.append({
+            "label": box_text,
+            "value": "",
+            "bbox": {"x": box["x"], "y": box["y"], "width": box["width"], "height": box["height"]},
+            "label_bbox": {"x": box["x"], "y": box["y"], "width": box["width"], "height": box["height"]},
+            "confidence": conf,
+        })
 
     # Attach page_number (1-based)
     for p in pairs:
