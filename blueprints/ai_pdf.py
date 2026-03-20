@@ -58,6 +58,7 @@ def _xywh_to_pixel_bbox(raw_bbox: dict | None) -> dict | None:
 
 def _get_ai_service():
     """Lazily import AIExtractionService (backend/ must be on sys.path)."""
+    _ensure_backend_on_path()
     try:
         from services.ai_extraction_service import AIExtractionService  # type: ignore[import]
         return AIExtractionService()
@@ -66,6 +67,21 @@ def _get_ai_service():
     except Exception:
         current_app.logger.exception("Failed to initialise AIExtractionService")
         return None
+
+
+def _render_page_pymupdf(pdf_path: str, page_num: int, zoom: float) -> bytes:
+    """Render a PDF page to PNG bytes using PyMuPDF directly (no AI service needed)."""
+    import fitz  # type: ignore[import]
+    doc = fitz.open(pdf_path)
+    try:
+        if page_num < 1 or page_num > doc.page_count:
+            raise ValueError(f"Page {page_num} out of range (1–{doc.page_count})")
+        page = doc[page_num - 1]
+        mat = fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=mat)
+        return pix.tobytes("png")
+    finally:
+        doc.close()
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +107,12 @@ def view(doc_id: int):
 @ai_pdf_bp.route("/<int:doc_id>/page/<int:page_num>")
 @login_required
 def page_image(doc_id: int, page_num: int):
-    """Serve a single PDF page rendered as a PNG image."""
+    """Serve a single PDF page rendered as a PNG image.
+
+    Tries the AIExtractionService first; falls back to direct PyMuPDF rendering
+    so that basic PDF viewing always works even when AI/OCR services are
+    unavailable.
+    """
     doc = Document.query.get_or_404(doc_id)
 
     if not os.path.exists(doc.file_path):
@@ -101,17 +122,28 @@ def page_image(doc_id: int, page_num: int):
     # Clamp zoom to a safe range to avoid denial-of-service via large images
     zoom = max(0.5, min(zoom, 3.0))
 
+    # Primary path: use AIExtractionService
     svc = _get_ai_service()
-    if svc is None:
-        abort(503)
+    if svc is not None:
+        try:
+            png_bytes = svc.render_page(doc.file_path, page_num, zoom=zoom)
+            return Response(png_bytes, mimetype="image/png")
+        except ValueError as exc:
+            abort(404, str(exc))
+        except Exception:
+            current_app.logger.exception(
+                "AIExtractionService failed to render page %s of doc %s; falling back to PyMuPDF",
+                page_num, doc_id,
+            )
 
+    # Fallback: render directly with PyMuPDF (always available)
     try:
-        png_bytes = svc.render_page(doc.file_path, page_num, zoom=zoom)
+        png_bytes = _render_page_pymupdf(doc.file_path, page_num, zoom)
     except ValueError as exc:
         abort(404, str(exc))
     except Exception:
         current_app.logger.exception(
-            "Failed to render page %s of doc %s", page_num, doc_id
+            "Failed to render page %s of doc %s with PyMuPDF", page_num, doc_id
         )
         abort(500)
 
@@ -186,7 +218,16 @@ def detect_fields(doc_id: int):
     # ── Strategy 2: fallback — derive label/value pairs from raw word tokens ─
     svc = _get_ai_service()
     if svc is None:
-        return jsonify({"error": "AI service unavailable"}), 503
+        current_app.logger.warning(
+            "AI service unavailable for detect_fields doc=%s page=%s — returning empty fields",
+            doc_id, page_num,
+        )
+        return jsonify({
+            "fields": [],
+            "page": page_num,
+            "pairing_mode": "none",
+            "ai_unavailable": True,
+        })
 
     try:
         from services.dynamic_extraction import _pair_labels_values  # type: ignore[import]

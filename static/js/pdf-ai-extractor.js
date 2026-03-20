@@ -73,6 +73,7 @@ function initAIExtractor() {
       // Re-draw fields for the new page
       const pageFields = fields.filter(f => f.page === pageNum || f.page === undefined);
       viewer.drawFields(pageFields);
+      _renderOverlayInputs(pageFields);
       // Update active page highlight in fields panel
       _filterFieldsPanel(pageNum);
     },
@@ -82,15 +83,16 @@ function initAIExtractor() {
   viewer.renderCurrentPage();
 
   // ---- Toolbar button wiring ----
-  _wire('btn-prev',      () => viewer.prevPage());
-  _wire('btn-next',      () => viewer.nextPage());
-  _wire('btn-zoom-in',   () => viewer.setZoom(viewer.zoom + 0.25));
-  _wire('btn-zoom-out',  () => viewer.setZoom(Math.max(0.5, viewer.zoom - 0.25)));
-  _wire('btn-detect',    () => detectAllFields());
-  _wire('btn-clear',     () => clearFields());
-  _wire('btn-save',      () => saveFields());
-  _wire('btn-mode-view', () => setMode('view'));
-  _wire('btn-mode-select',() => setMode('select'));
+  _wire('btn-prev',        () => viewer.prevPage());
+  _wire('btn-next',        () => viewer.nextPage());
+  _wire('btn-zoom-in',     () => viewer.setZoom(viewer.zoom + 0.25));
+  _wire('btn-zoom-out',    () => viewer.setZoom(Math.max(0.5, viewer.zoom - 0.25)));
+  _wire('btn-detect',      () => detectAllFields());
+  _wire('btn-clear',       () => clearFields());
+  _wire('btn-save',        () => saveFields());
+  _wire('btn-save-sample', () => saveAsSample());
+  _wire('btn-mode-view',   () => setMode('view'));
+  _wire('btn-mode-select', () => setMode('select'));
 
   // ---- Drag-to-select on the selection canvas ----
   if (selCanvas) {
@@ -170,13 +172,20 @@ async function detectAllFields() {
     const data = await res.json();
     if (!res.ok) { _setStatus(data.error || 'Detection failed', 'danger'); return; }
 
+    if (data.ai_unavailable) {
+      _setStatus('AI service unavailable — PDF viewer is still functional. Use Selection mode to extract regions.', 'warning');
+    }
+
     // Merge into global fields, replacing same-page entries
     fields = fields.filter(f => f.page !== viewer.currentPage);
     fields = fields.concat(data.fields || []);
 
     viewer.drawFields(fields.filter(f => f.page === viewer.currentPage));
+    _renderOverlayInputs(fields.filter(f => f.page === viewer.currentPage));
     _renderFieldsPanel(fields);
-    _setStatus(`Detected ${(data.fields || []).length} label/value pair(s) on page ${viewer.currentPage}`, 'success');
+    if (!data.ai_unavailable) {
+      _setStatus(`Detected ${(data.fields || []).length} label/value pair(s) on page ${viewer.currentPage}`, 'success');
+    }
   } catch (err) {
     _setStatus(`Error: ${err.message}`, 'danger');
   }
@@ -213,6 +222,7 @@ async function extractRegion(x0, y0, x1, y1) {
     fields.push(newField);
 
     viewer.drawFields(fields.filter(f => f.page === viewer.currentPage));
+    _renderOverlayInputs(fields.filter(f => f.page === viewer.currentPage));
     _renderFieldsPanel(fields);
     _setStatus(`Extracted "${data.text}" as ${fieldName}`, 'success');
   } catch (err) {
@@ -224,12 +234,12 @@ async function saveFields() {
   const cfg = window.AI_CONFIG;
   if (fields.length === 0) { _setStatus('No fields to save.', 'warning'); return; }
 
-  // Collect current values from the input fields
+  // Collect current values — prefer in-memory value (already auto-synced via _syncFieldValue)
   const toSave = fields.map(f => {
     const label = f.label || f.field_name || '';
     return {
       field_name: label,
-      value:      _getFieldInputValue(label) || f.value || f.text || '',
+      value:      f.value || f.text || '',
       confidence: f.confidence || 0.8,
     };
   });
@@ -248,6 +258,7 @@ async function saveFields() {
 function clearFields() {
   fields = [];
   viewer.clearOverlay();
+  _clearOverlayInputs();
   _renderFieldsPanel([]);
   _setStatus('Fields cleared.', 'secondary');
 }
@@ -310,6 +321,12 @@ function _makeFieldCard(field) {
     <div class="confidence-label">Confidence: ${confStr}</div>
   `;
 
+  // Auto-sync panel input edits into in-memory fields
+  const panelInput = card.querySelector('.field-value-input');
+  if (panelInput) {
+    panelInput.addEventListener('input', () => _syncFieldValue(label, panelInput.value));
+  }
+
   // Highlight bounding boxes on card hover: label in pink, value in green
   card.addEventListener('mouseenter', () => {
     if (field.page && field.page !== viewer.currentPage) return;
@@ -347,10 +364,126 @@ function _makeFieldCard(field) {
     _renderFieldsPanel(fields);
     const pageFields = fields.filter(f => f.page === viewer.currentPage || !f.page);
     viewer.drawFields(pageFields);
+    _renderOverlayInputs(pageFields);
   });
   card.querySelector('.field-header').prepend(removeBtn);
 
   return card;
+}
+
+// ---------------------------------------------------------------------------
+// Overlay field inputs (positioned over the PDF canvas)
+// ---------------------------------------------------------------------------
+
+/** Minimum bounding-box dimension (px) to render an overlay input. */
+const MIN_OVERLAY_SIZE_PX = 4;
+/** Minimum height (px) for an overlay input so it remains clickable. */
+const MIN_OVERLAY_INPUT_HEIGHT_PX = 18;
+
+function _renderOverlayInputs(pageFields) {
+  const container = document.getElementById('field-overlays');
+  if (!container) return;
+  container.innerHTML = '';
+
+  for (const f of pageFields) {
+    const bbox = f.bbox;
+    if (!bbox || bbox.x0 === undefined) continue;
+
+    const x0 = bbox.x0;
+    const y0 = bbox.y0;
+    const w  = bbox.x1 - bbox.x0;
+    const h  = bbox.y1 - bbox.y0;
+    if (w < MIN_OVERLAY_SIZE_PX || h < MIN_OVERLAY_SIZE_PX) continue;
+
+    const label = f.label || f.field_name || '';
+
+    const input = document.createElement('input');
+    input.type        = 'text';
+    input.className   = 'pdf-overlay-input';
+    input.value       = f.value || f.text || '';
+    input.title       = label;
+    input.dataset.fieldName = label;
+    input.style.cssText = [
+      `position:absolute`,
+      `left:${x0}px`,
+      `top:${y0}px`,
+      `width:${w}px`,
+      `min-height:${Math.max(h, MIN_OVERLAY_INPUT_HEIGHT_PX)}px`,
+      `pointer-events:auto`,
+    ].join(';');
+
+    // Auto-sync value into in-memory fields array
+    input.addEventListener('input', () => _syncFieldValue(label, input.value));
+
+    container.appendChild(input);
+  }
+}
+
+function _clearOverlayInputs() {
+  const container = document.getElementById('field-overlays');
+  if (container) container.innerHTML = '';
+}
+
+/** Immediately update the in-memory fields array when a field value changes.
+ *  Mirrors the new value to both the side-panel input and the overlay input
+ *  so all UI representations stay in sync.
+ */
+function _syncFieldValue(label, newValue) {
+  for (const f of fields) {
+    if ((f.label || f.field_name) === label) {
+      f.value = newValue;
+    }
+  }
+  // Mirror to side-panel input (if visible)
+  const panelInput = document.querySelector(
+    `input.field-value-input[data-field-name="${CSS.escape(label)}"]`
+  );
+  if (panelInput && panelInput.value !== newValue) {
+    panelInput.value = newValue;
+  }
+  // Mirror to overlay input (if visible)
+  const overlayInput = document.querySelector(
+    `#field-overlays input[data-field-name="${CSS.escape(label)}"]`
+  );
+  if (overlayInput && overlayInput.value !== newValue) {
+    overlayInput.value = newValue;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Save as Sample — export in-memory fields as a downloadable JSON file
+// ---------------------------------------------------------------------------
+
+function saveAsSample() {
+  if (fields.length === 0) {
+    _setStatus('No fields to export. Use Auto-Detect or Selection mode first.', 'warning');
+    return;
+  }
+
+  const cfg = window.AI_CONFIG;
+  const sample = {
+    document_id: cfg.docId,
+    exported_at: new Date().toISOString(),
+    fields: fields.map(f => ({
+      field_name: f.label || f.field_name || '',
+      value:      f.value || f.text || '',
+      confidence: f.confidence || null,
+      page:       f.page || null,
+      bbox:       f.bbox || null,
+    })),
+  };
+
+  const blob = new Blob([JSON.stringify(sample, null, 2)], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `sample_doc_${cfg.docId}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  _setStatus(`Exported ${fields.length} field(s) as sample JSON.`, 'success');
 }
 
 // ---------------------------------------------------------------------------

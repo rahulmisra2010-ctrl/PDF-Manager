@@ -352,6 +352,31 @@
 }
 
 /* =========================================================================
+   PDF overlay field inputs
+   ========================================================================= */
+
+.pdf-overlay-input {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(13, 110, 253, 0.5);
+  border-radius: 2px;
+  padding: 0 3px;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  color: #212529;
+  box-sizing: border-box;
+  outline: none;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.pdf-overlay-input:focus {
+  background: rgba(255, 255, 255, 0.97);
+  border-color: #0d6efd;
+  box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.25);
+  z-index: 5;
+}
+
+/* =========================================================================
    Responsive
    ========================================================================= */
 
