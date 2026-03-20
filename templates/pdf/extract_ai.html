@@ -147,6 +147,9 @@
       <button id="btn-save" class="btn btn-primary btn-sm flex-fill">
         <i class="bi bi-save me-1"></i>Save Fields
       </button>
+      <button id="btn-save-sample" class="btn btn-success btn-sm" title="Export all fields (including blank ones) as JSON">
+        <i class="bi bi-download me-1"></i>Save as Sample
+      </button>
       <a href="{{ url_for('pdf.export', doc_id=doc.id, fmt='json') }}"
          class="btn btn-outline-secondary btn-sm">
         <i class="bi bi-filetype-json me-1"></i>JSON
