@@ -20,6 +20,7 @@ for _p in [_repo_root, _backend]:
 import pytest
 from services.dynamic_extraction import (
     _is_label_candidate,
+    _group_into_lines,
     _merge_label_words,
     _pair_labels_values,
 )
@@ -46,6 +47,14 @@ class TestIsLabelCandidate:
         assert _is_label_candidate("Date")
         assert _is_label_candidate("Present")
         assert _is_label_candidate("Payable")
+
+    def test_insurance_keywords(self):
+        """Insurance-specific keywords added in v2 are detected as labels."""
+        for kw in ["Occupation", "Income", "Nominee", "Relation", "Plan", "Term",
+                   "Mode", "Cover", "Proposer", "Assured", "Maturity", "Frequency",
+                   "Payment", "Father", "Mother", "Spouse", "Beneficiary", "Rider",
+                   "Death", "Survival", "Pension", "Commencement", "Anniversary"]:
+            assert _is_label_candidate(kw), f"Expected '{kw}' to be a label candidate"
 
     def test_non_label(self):
         assert not _is_label_candidate("Anoop")
@@ -243,10 +252,157 @@ class TestPairLabelsValues:
         assert pair["bbox"]["x"] == 80
         assert pair["bbox"]["x"] + pair["bbox"]["width"] == pytest.approx(165, abs=1)
 
+    def test_multi_column_same_line(self):
+        """Multiple label+value pairs on the same line (two-column form)."""
+        boxes = [
+            _box("Pin:", x=10, y=10),
+            _box("110001", x=50, y=10),
+            _box("Email", x=200, y=10),
+            _box("ID:", x=245, y=10),
+            _box("test@test.com", x=280, y=10, w=100),
+        ]
+        pairs = _pair_labels_values(boxes)
+        by_label = {p["label"]: p["value"] for p in pairs}
+        assert by_label.get("Pin") == "110001"
+        assert by_label.get("Email ID") == "test@test.com"
+
+    def test_multi_word_value_merged(self):
+        """Multiple value tokens on the same line are joined into one value."""
+        boxes = [
+            _box("Nominee:", x=10, y=10),
+            _box("John", x=90, y=10, w=35),
+            _box("Doe", x=130, y=10, w=30),
+        ]
+        pairs = _pair_labels_values(boxes)
+        assert len(pairs) == 1
+        assert pairs[0]["value"] == "John Doe"
+
+    def test_slight_y_offset_value_merged(self):
+        """Value tokens with a small vertical y-offset are still on the same line."""
+        boxes = [
+            _box("Address:", x=10, y=100, h=12),
+            _box("Anoop", x=90, y=100, h=12),
+            _box("layout", x=135, y=108, h=12),   # 8 px lower — same line, wider tolerance
+        ]
+        pairs = _pair_labels_values(boxes)
+        by_label = {p["label"]: p["value"] for p in pairs}
+        assert "Address" in by_label
+        assert "anoop" in by_label["Address"].lower()
+        assert "layout" in by_label["Address"].lower()
+
+    def test_connector_word_in_label(self):
+        """Connector words like 'of' between label keywords form one label phrase."""
+        boxes = [
+            _box("Date", x=10, y=10, w=30),
+            _box("of", x=45, y=10, w=15),
+            _box("Birth:", x=65, y=10, w=35),
+            _box("01/01/1990", x=110, y=10, w=70),
+        ]
+        pairs = _pair_labels_values(boxes)
+        by_label = {p["label"]: p["value"] for p in pairs}
+        assert "Date of Birth" in by_label
+        assert by_label["Date of Birth"] == "01/01/1990"
+
+    def test_insurance_keyword_occupation(self):
+        """'Occupation' (newly added keyword) is detected as a label."""
+        boxes = [
+            _box("Occupation:", x=10, y=10),
+            _box("Engineer", x=100, y=10, w=60),
+        ]
+        pairs = _pair_labels_values(boxes)
+        by_label = {p["label"]: p["value"] for p in pairs}
+        assert "Occupation" in by_label
+        assert by_label["Occupation"] == "Engineer"
+
+    def test_insurance_keyword_nominee(self):
+        """'Nominee' (newly added keyword) is detected as a label."""
+        boxes = [
+            _box("Nominee:", x=10, y=10),
+            _box("Alice", x=90, y=10, w=40),
+            _box("Smith", x=135, y=10, w=40),
+        ]
+        pairs = _pair_labels_values(boxes)
+        by_label = {p["label"]: p["value"] for p in pairs}
+        assert "Nominee" in by_label
+        assert by_label["Nominee"] == "Alice Smith"
+
+    def test_insurance_keyword_mode_of_payment(self):
+        """'Mode of Payment' detected as label using connector + keyword pairing."""
+        boxes = [
+            _box("Mode", x=10, y=10, w=35),
+            _box("of", x=50, y=10, w=15),
+            _box("Payment:", x=70, y=10, w=60),
+            _box("Yearly", x=140, y=10, w=50),
+        ]
+        pairs = _pair_labels_values(boxes)
+        by_label = {p["label"]: p["value"] for p in pairs}
+        assert "Mode of Payment" in by_label
+        assert by_label["Mode of Payment"] == "Yearly"
+
+    def test_label_below_value_via_group_lines(self):
+        """Label appearing on a lower line than its value is matched correctly."""
+        boxes = [
+            _box("73001", x=50, y=100, w=50),     # value line above
+            _box("Net", x=10, y=130, w=25),        # label line below
+            _box("Payable:", x=40, y=130, w=50),
+        ]
+        pairs = _pair_labels_values(boxes)
+        by_label = {p["label"]: p["value"] for p in pairs}
+        found = any("payable" in k.lower() and "73001" in v for k, v in by_label.items())
+        assert found, f"Expected Net Payable→73001, got {by_label}"
+
 
 # ---------------------------------------------------------------------------
-# _merge_label_words
+# _group_into_lines
 # ---------------------------------------------------------------------------
+
+
+class TestGroupIntoLines:
+    def test_same_y_single_line(self):
+        """All boxes at the same y form one line."""
+        boxes = [
+            _box("Name:", x=10, y=50),
+            _box("Alice", x=80, y=50),
+            _box("Age:", x=200, y=50),
+            _box("30", x=240, y=50),
+        ]
+        lines = _group_into_lines(boxes)
+        assert len(lines) == 1
+        assert len(lines[0]) == 4
+
+    def test_different_y_multiple_lines(self):
+        """Boxes on clearly separate y positions form separate lines."""
+        boxes = [
+            _box("Name:", x=10, y=10),
+            _box("Alice", x=80, y=10),
+            _box("Email:", x=10, y=50),
+            _box("alice@example.com", x=80, y=50, w=120),
+        ]
+        lines = _group_into_lines(boxes)
+        assert len(lines) == 2
+
+    def test_slight_y_offset_grouped(self):
+        """Boxes with a small y-offset (< 1 font-height) still land on same line."""
+        boxes = [
+            _box("Anoop", x=145, y=100, h=12),
+            _box("layout", x=200, y=106, h=12),   # 6px offset, within tolerance
+        ]
+        lines = _group_into_lines(boxes)
+        assert len(lines) == 1
+
+    def test_lines_sorted_left_to_right(self):
+        """Words within each line are sorted by x position."""
+        boxes = [
+            _box("Zee", x=200, y=10),
+            _box("Aaa", x=10, y=10),
+        ]
+        lines = _group_into_lines(boxes)
+        assert lines[0][0]["text"] == "Aaa"
+        assert lines[0][1]["text"] == "Zee"
+
+    def test_empty_input(self):
+        """Empty input returns empty list."""
+        assert _group_into_lines([]) == []
 
 
 class TestMergeLabelWords:

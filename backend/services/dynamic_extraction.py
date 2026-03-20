@@ -18,20 +18,33 @@ extract_dynamic_fields(file_path, page_index=0, dpi=150) -> list[dict]
         confidence  — float 0.0–1.0
         bbox        — dict {x, y, width, height} in PDF points or pixels
 
-Label-detection heuristics (v1)
+Label-detection heuristics (v2)
 --------------------------------
 A word/span is treated as a label candidate if:
   1. It ends with ``:`` (colon), OR
-  2. It ends with a keyword that commonly introduces a value on forms
-     (Address, Name, Date, Amount, No, ID, Email, Phone, Pin, Payable, etc.).
+  2. It matches a keyword that commonly introduces a value on forms.
+     The keyword list covers general form fields (Address, Name, Date, …)
+     **and** insurance-specific terms (Occupation, Nominee, Proposer,
+     Assured, Maturity, Mode, Plan, Term, Beneficiary, Rider, …).
 
-The value for a label is chosen as:
-  - The nearest text to the **right** on the same line (within ±``_LINE_THRESH``
-    of vertical centre), OR if none,
-  - The nearest text **below** within ``_BELOW_THRESH`` pixels.
+Pairing strategy (v2 — line-based)
+-------------------------------------
+Word boxes are first grouped into physical text lines using
+:func:`_group_into_lines` (Y-centre proximity within one font-height).
 
-Multi-word labels are merged by grouping consecutive label candidates that
-appear on the same text line before any non-label word.
+Each line is then scanned left-to-right.  Runs of consecutive label-keyword
+words (optionally linked by connector words like "of", "to") form a single
+label phrase.  All non-label words that immediately follow on the **same
+line** become the value.  When no same-line value is found:
+
+  * Strategy A — search the next few lines for a pure-value line (no
+    labels).  Handles stacked "label then blank/fill-in line then value"
+    layouts.
+  * Strategy B — search preceding lines for a pure-value line.  Handles
+    table-style forms where the value appears *above* its label.
+
+Multiple label+value pairs on the same physical line are supported, which
+covers two-column form layouts (e.g. ``Name: Alice   Age: 30``).
 
 Troubleshooting — PDF files disguised as images
 -----------------------------------------------
@@ -84,7 +97,17 @@ _LABEL_KW_RE = re.compile(
     r"Surrender|Premium|Policy|Sum|Insured|Present|Permanent|City|"
     r"State|Zip|District|Country|Nationality|DOB|Gender|Age|Salary|"
     r"Designation|Department|Employee|Customer|Invoice|Receipt|"
-    r"Reference|Ref|Serial|Sr|Branch|Mobile|Fax|Website|Subject"
+    r"Reference|Ref|Serial|Sr|Branch|Mobile|Fax|Website|Subject|"
+    # Insurance / structured-form additions
+    r"Occupation|Income|Mode|Nominee|Relation|Plan|Term|Cover|Risk|"
+    r"Commencement|Anniversary|Proposer|Assured|Maturity|Frequency|"
+    r"Payment|First|Last|Middle|Father|Mother|Spouse|Applicant|"
+    r"Beneficiary|Rider|Benefit|Death|Survival|Pension|Fund|"
+    r"Annuity|Proof|Declaration|Health|Medical|Height|Weight|"
+    r"Habits|Residence|Birth|Marital|Status|Annual|Monthly|"
+    r"Gross|Basic|Special|Table|Duration|Period|Currency|Rate|"
+    r"Percentage|Pct|Tax|GST|PAN|Aadhaar|Voter|Passport|Driving|"
+    r"License|Registration|Profession|Business|Company|Organization"
     r")$",
     re.IGNORECASE,
 )
@@ -93,10 +116,10 @@ _LABEL_KW_RE = re.compile(
 # Spatial thresholds (in image pixels; scale-independent relative to text height)
 # ---------------------------------------------------------------------------
 
-_LINE_THRESH_FACTOR = 0.6   # label box height × factor = vertical tolerance for "same line"
-_BELOW_THRESH_FACTOR = 3.0  # label box height × factor = max vertical gap for "below" match
+_LINE_THRESH_FACTOR = 1.2   # label box height × factor = vertical tolerance for "same line"
+_BELOW_THRESH_FACTOR = 5.0  # label box height × factor = max vertical gap for "below" match
 _RIGHT_MIN_GAP = 2          # minimum horizontal gap (px) to be considered "to the right"
-_MULTI_WORD_LABEL_MAX_GAP = 80  # max horizontal gap (px) between consecutive label words
+_MULTI_WORD_LABEL_MAX_GAP = 150  # max horizontal gap (px) between consecutive label words
 
 
 # ---------------------------------------------------------------------------
@@ -242,8 +265,67 @@ def _make_bbox(boxes_used: list[dict]) -> dict:
     }
 
 
+def _group_into_lines(boxes: list[dict]) -> list[list[dict]]:
+    """Group word boxes into lines based on Y-centre proximity.
+
+    Uses the median box height as the grouping tolerance so the function
+    adapts automatically to the font size of the page being analysed.
+
+    Parameters
+    ----------
+    boxes:
+        Flat list of word-box dicts (text, x, y, width, height, confidence).
+
+    Returns
+    -------
+    List of lines.  Each line is a list of boxes sorted left-to-right by
+    their x coordinate.  Lines are ordered top-to-bottom.
+    """
+    if not boxes:
+        return []
+
+    sorted_boxes = sorted(boxes, key=lambda b: (b["y"], b["x"]))
+
+    heights = sorted(b["height"] for b in sorted_boxes)
+    n = len(heights)
+    if n == 0:
+        median_h = 12.0
+    elif n % 2 == 0:
+        median_h = (heights[n // 2 - 1] + heights[n // 2]) / 2.0
+    else:
+        median_h = heights[n // 2]
+    tol = max(median_h * 1.0, 4.0)
+
+    lines: list[list[dict]] = []
+    current_line: list[dict] = [sorted_boxes[0]]
+    line_cy = _box_center_y(sorted_boxes[0])
+
+    for box in sorted_boxes[1:]:
+        cy = _box_center_y(box)
+        if abs(cy - line_cy) <= tol:
+            current_line.append(box)
+        else:
+            lines.append(sorted(current_line, key=lambda b: b["x"]))
+            current_line = [box]
+            line_cy = cy
+
+    if current_line:
+        lines.append(sorted(current_line, key=lambda b: b["x"]))
+
+    return lines
+
+
 def _pair_labels_values(boxes: list[dict]) -> list[dict]:
     """Pair label boxes with their nearest value boxes.
+
+    Uses :func:`_group_into_lines` to group word boxes into physical text
+    lines first, then processes each line to find all label→value pairs.
+
+    Supports:
+    - Multiple label+value pairs on the same line (multi-column forms).
+    - Label on one line with value on the next (stacked blank-line forms).
+    - Label appearing *below* its value (some table-style insurance forms).
+    - Connector words (``of``, ``to``, …) inside multi-word label phrases.
 
     Parameters
     ----------
@@ -254,160 +336,143 @@ def _pair_labels_values(boxes: list[dict]) -> list[dict]:
     Returns
     -------
     list of dicts: {label, value, bbox, label_bbox, confidence}
-        bbox      — value bounding box (x, y, width, height) for value highlight.
-        label_bbox — label bounding box (x, y, width, height) for label highlight.
-        For label-only entries (no value found), bbox is None.
+        bbox       — value bounding box (x, y, width, height).  ``None`` when
+                     no value is found.
+        label_bbox — label bounding box (x, y, width, height).
     """
     if not boxes:
         return []
 
-    # Split into label candidates and all other (value candidates)
-    label_idxs = [i for i, b in enumerate(boxes) if _is_label_candidate(b["text"])]
-
-    # Merge consecutive label words into multi-word labels
-    label_boxes_raw = [boxes[i] for i in label_idxs]
-    label_boxes = _merge_label_words(label_boxes_raw)
-
-    # All boxes are potential value candidates
-    value_boxes = boxes  # we'll skip self-matches below
-
+    lines = _group_into_lines(boxes)
     pairs: list[dict] = []
-    used_value_idxs: set[int] = set()
+    line_consumed = [False] * len(lines)
 
-    for lb in label_boxes:
-        label_text = lb["text"].rstrip(":").strip()
-        if not label_text:
+    # Small function words that may appear *between* two label-keyword words
+    # (e.g. "Date of Birth", "Mode of Payment") and should be treated as
+    # part of the label phrase rather than as a value.
+    _LABEL_CONNECTORS = {"of", "to", "the", "and", "or", "for", "in", "at", "by"}
+
+    for li, line in enumerate(lines):
+        if line_consumed[li]:
             continue
 
-        lb_cy = _box_center_y(lb)
-        lb_right = lb["x"] + lb["width"]
-        lb_h = lb["height"] or 12.0
-
-        line_thresh = lb_h * _LINE_THRESH_FACTOR
-        below_thresh = lb_h * _BELOW_THRESH_FACTOR
-
-        label_bbox = {
-            "x": lb["x"], "y": lb["y"],
-            "width": lb["width"], "height": lb["height"],
-        }
-
-        # 1) Find candidates to the RIGHT on the same line
-        right_candidates = []
-        for i, vb in enumerate(value_boxes):
-            vb_cy = _box_center_y(vb)
-            on_same_line = abs(vb_cy - lb_cy) <= line_thresh
-            to_the_right = vb["x"] >= lb_right + _RIGHT_MIN_GAP
-            is_same_text = vb["text"].rstrip(":").strip() == label_text
-            if on_same_line and to_the_right and not is_same_text:
-                right_candidates.append((i, vb))
-
-        if right_candidates:
-            # Pick the nearest to the right (smallest x)
-            right_candidates.sort(key=lambda t: t[1]["x"])
-            # Merge consecutive right-side boxes on same line into one value
-            value_parts = []
-            value_boxes_used: list[dict] = []
-            prev_right_edge = lb_right
-            for i, vb in right_candidates:
-                gap = vb["x"] - prev_right_edge
-                if gap > lb_h * 4 and value_parts:
-                    break  # too far; stop here
-                if _is_label_candidate(vb["text"]) and value_parts:
-                    break  # new label starts; stop
-                value_parts.append(vb["text"])
-                value_boxes_used.append(vb)
-                prev_right_edge = vb["x"] + vb["width"]
-                used_value_idxs.add(i)
-
-            value_text = " ".join(value_parts).strip()
-            if value_text and value_boxes_used:
-                pairs.append({
-                    "label": label_text,
-                    "value": value_text,
-                    "bbox": _make_bbox(value_boxes_used),
-                    "label_bbox": label_bbox,
-                    "confidence": lb["confidence"],
-                })
-            else:
-                # Label found but value is empty — emit label-only entry
-                pairs.append({
-                    "label": label_text,
-                    "value": "",
-                    "bbox": None,
-                    "label_bbox": label_bbox,
-                    "confidence": lb["confidence"],
-                })
-            continue
-
-        # 2) Nothing to the right — look BELOW
-        below_candidates = []
-        for i, vb in enumerate(value_boxes):
-            vb_top = vb["y"]
-            lb_bottom = lb["y"] + lb["height"]
-            is_below = vb_top > lb_bottom - 4  # slight tolerance
-            vertical_gap = vb_top - lb_bottom
-            within_thresh = vertical_gap <= below_thresh
-            is_same_text = vb["text"].rstrip(":").strip() == label_text
-            if is_below and within_thresh and not is_same_text:
-                below_candidates.append((i, vb, vertical_gap))
-
-        if below_candidates:
-            below_candidates.sort(key=lambda t: (t[2], t[1]["x"]))
-            i, vb, _ = below_candidates[0]
-            if not _is_label_candidate(vb["text"]):
-                value_text, value_boxes_used, used_value_idxs = _merge_adjacent_value_tokens(
-                    vb, i, value_boxes, used_value_idxs, lb_h
-                )
-                if value_text:
-                    pairs.append({
-                        "label": label_text,
-                        "value": value_text,
-                        "bbox": _make_bbox(value_boxes_used),
-                        "label_bbox": label_bbox,
-                        "confidence": lb["confidence"],
-                    })
-                    continue
-
-        # 3) Nothing to the right or below — look ABOVE (for label-below-value layouts,
-        #    e.g., "Net Payable" label appearing beneath the value "73001")
-        above_candidates = []
-        for i, vb in enumerate(value_boxes):
-            if i in used_value_idxs:
+        # Walk left-to-right along the line.  Each run of label-candidate
+        # words (possibly linked by connector words) forms one label.  The
+        # non-label words that immediately follow it form its value.
+        i = 0
+        while i < len(line):
+            # Skip non-label words until we find a label-keyword
+            if not _is_label_candidate(line[i]["text"]):
+                i += 1
                 continue
-            vb_bottom = vb["y"] + vb["height"]
-            lb_top = lb["y"]
-            is_above = vb_bottom < lb_top + 4  # slight tolerance
-            vertical_gap = lb_top - vb_bottom
-            within_thresh = vertical_gap <= below_thresh
-            is_same_text = vb["text"].rstrip(":").strip() == label_text
-            if is_above and within_thresh and not is_same_text:
-                above_candidates.append((i, vb, vertical_gap))
 
-        if above_candidates:
-            above_candidates.sort(key=lambda t: (t[2], abs(_box_center_x(t[1]) - _box_center_x(lb))))
-            i, vb, _ = above_candidates[0]
-            if not _is_label_candidate(vb["text"]):
-                value_text, value_boxes_used, used_value_idxs = _merge_adjacent_value_tokens(
-                    vb, i, value_boxes, used_value_idxs, lb_h
-                )
-                if value_text:
-                    pairs.append({
-                        "label": label_text,
-                        "value": value_text,
-                        "bbox": _make_bbox(value_boxes_used),
-                        "label_bbox": label_bbox,
-                        "confidence": lb["confidence"],
-                    })
+            # ── Build label phrase ────────────────────────────────────────
+            label_boxes: list[dict] = [line[i]]
+            i += 1
+
+            while i < len(line):
+                w_text = line[i]["text"].strip().lower()
+                if _is_label_candidate(line[i]["text"]):
+                    # Another keyword: extend the label
+                    label_boxes.append(line[i])
+                    i += 1
+                elif (
+                    w_text in _LABEL_CONNECTORS
+                    and i + 1 < len(line)
+                    and _is_label_candidate(line[i + 1]["text"])
+                ):
+                    # Connector word followed by a keyword → include both
+                    label_boxes.append(line[i])
+                    label_boxes.append(line[i + 1])
+                    i += 2
+                else:
+                    break
+
+            label_text = " ".join(b["text"].rstrip(":").strip() for b in label_boxes)
+            label_text = " ".join(label_text.split())   # normalise whitespace
+            if not label_text:
+                continue
+
+            label_bbox = _make_bbox(label_boxes)
+            label_conf = min(b.get("confidence", 1.0) for b in label_boxes)
+
+            # ── Collect value words (same line, until next label) ─────────
+            value_boxes: list[dict] = []
+            while i < len(line):
+                if _is_label_candidate(line[i]["text"]):
+                    break   # next label starts; stop collecting value words
+                value_boxes.append(line[i])
+                i += 1
+
+            if value_boxes:
+                value_text = " ".join(b["text"] for b in value_boxes).strip()
+                pairs.append({
+                    "label":      label_text,
+                    "value":      value_text,
+                    "bbox":       _make_bbox(value_boxes),
+                    "label_bbox": label_bbox,
+                    "confidence": label_conf,
+                })
+                continue
+
+            # ── No value on the same line ─────────────────────────────────
+            # Strategy A: look at subsequent lines for a pure-value line.
+            value_found = False
+            for lj in range(li + 1, min(li + 4, len(lines))):
+                if line_consumed[lj]:
                     continue
+                next_line = lines[lj]
+                has_labels = any(_is_label_candidate(b["text"]) for b in next_line)
+                if not has_labels:
+                    value_text = " ".join(b["text"] for b in next_line).strip()
+                    if value_text:
+                        pairs.append({
+                            "label":      label_text,
+                            "value":      value_text,
+                            "bbox":       _make_bbox(next_line),
+                            "label_bbox": label_bbox,
+                            "confidence": label_conf,
+                        })
+                        line_consumed[lj] = True
+                        value_found = True
+                        break
+                else:
+                    break   # next line has its own labels; stop
 
-        # 4) No value found at all — emit a label-only entry with blank value
-        pairs.append({
-            "label": label_text,
-            "value": "",
-            "bbox": None,
-            "label_bbox": label_bbox,
-            "confidence": lb["confidence"],
-        })
+            if value_found:
+                continue
+
+            # Strategy B: look at preceding lines (label appears *below* value).
+            for lj in range(li - 1, max(li - 4, -1), -1):
+                if line_consumed[lj]:
+                    continue
+                prev_line = lines[lj]
+                has_labels = any(_is_label_candidate(b["text"]) for b in prev_line)
+                if not has_labels:
+                    value_text = " ".join(b["text"] for b in prev_line).strip()
+                    if value_text:
+                        pairs.append({
+                            "label":      label_text,
+                            "value":      value_text,
+                            "bbox":       _make_bbox(prev_line),
+                            "label_bbox": label_bbox,
+                            "confidence": label_conf,
+                        })
+                        line_consumed[lj] = True
+                        value_found = True
+                        break
+                else:
+                    break   # prev line has its own labels; stop
+
+            if not value_found:
+                # Emit a label-only entry so callers know the field exists
+                pairs.append({
+                    "label":      label_text,
+                    "value":      "",
+                    "bbox":       None,
+                    "label_bbox": label_bbox,
+                    "confidence": label_conf,
+                })
 
     return pairs
 
