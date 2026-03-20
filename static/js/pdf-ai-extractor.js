@@ -82,15 +82,16 @@ function initAIExtractor() {
   viewer.renderCurrentPage();
 
   // ---- Toolbar button wiring ----
-  _wire('btn-prev',      () => viewer.prevPage());
-  _wire('btn-next',      () => viewer.nextPage());
-  _wire('btn-zoom-in',   () => viewer.setZoom(viewer.zoom + 0.25));
-  _wire('btn-zoom-out',  () => viewer.setZoom(Math.max(0.5, viewer.zoom - 0.25)));
-  _wire('btn-detect',    () => detectAllFields());
-  _wire('btn-clear',     () => clearFields());
-  _wire('btn-save',      () => saveFields());
-  _wire('btn-mode-view', () => setMode('view'));
-  _wire('btn-mode-select',() => setMode('select'));
+  _wire('btn-prev',        () => viewer.prevPage());
+  _wire('btn-next',        () => viewer.nextPage());
+  _wire('btn-zoom-in',     () => viewer.setZoom(viewer.zoom + 0.25));
+  _wire('btn-zoom-out',    () => viewer.setZoom(Math.max(0.5, viewer.zoom - 0.25)));
+  _wire('btn-detect',      () => detectAllFields());
+  _wire('btn-clear',       () => clearFields());
+  _wire('btn-save',        () => saveFields());
+  _wire('btn-save-sample', () => saveSample());
+  _wire('btn-mode-view',   () => setMode('view'));
+  _wire('btn-mode-select', () => setMode('select'));
 
   // ---- Drag-to-select on the selection canvas ----
   if (selCanvas) {
@@ -176,7 +177,14 @@ async function detectAllFields() {
 
     viewer.drawFields(fields.filter(f => f.page === viewer.currentPage));
     _renderFieldsPanel(fields);
-    _setStatus(`Detected ${(data.fields || []).length} label/value pair(s) on page ${viewer.currentPage}`, 'success');
+
+    const total   = (data.fields || []).length;
+    const paired  = total - (data.unpaired_labels_count || 0);
+    const blank   = data.unpaired_labels_count || 0;
+    const msg = blank > 0
+      ? `Detected ${total} field(s) on page ${viewer.currentPage}: ${paired} with values, ${blank} label-only (editable)`
+      : `Detected ${total} label/value pair(s) on page ${viewer.currentPage}`;
+    _setStatus(msg, 'success');
   } catch (err) {
     _setStatus(`Error: ${err.message}`, 'danger');
   }
@@ -250,6 +258,41 @@ function clearFields() {
   viewer.clearOverlay();
   _renderFieldsPanel([]);
   _setStatus('Fields cleared.', 'secondary');
+}
+
+/**
+ * Export all current fields (including blank label-only ones) as a JSON file.
+ * Values are taken from the live UI inputs so any manual edits are captured.
+ */
+function saveSample() {
+  if (fields.length === 0) {
+    _setStatus('No fields to export. Run Auto-Detect first.', 'warning');
+    return;
+  }
+
+  // Build { label: value } object — read current input values from the panel
+  const sample = {};
+  for (const f of fields) {
+    const label = f.label || f.field_name || '';
+    if (!label) continue;
+    // Prefer the live input value (user may have edited it) over the original value
+    const liveValue = _getFieldInputValue(label);
+    sample[label] = (liveValue !== null) ? liveValue : (f.value || f.text || '');
+  }
+
+  const json    = JSON.stringify(sample, null, 2);
+  const blob    = new Blob([json], { type: 'application/json' });
+  const url     = URL.createObjectURL(blob);
+  const anchor  = document.createElement('a');
+  const docId   = window.AI_CONFIG ? window.AI_CONFIG.docId : 'doc';
+  anchor.href     = url;
+  anchor.download = `sample_doc_${docId}.json`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+
+  _setStatus(`Exported ${Object.keys(sample).length} field(s) as JSON sample.`, 'success');
 }
 
 // ---------------------------------------------------------------------------

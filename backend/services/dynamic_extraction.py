@@ -84,8 +84,26 @@ _LABEL_KW_RE = re.compile(
     r"Surrender|Premium|Policy|Sum|Insured|Present|Permanent|City|"
     r"State|Zip|District|Country|Nationality|DOB|Gender|Age|Salary|"
     r"Designation|Department|Employee|Customer|Invoice|Receipt|"
-    r"Reference|Ref|Serial|Sr|Branch|Mobile|Fax|Website|Subject"
+    r"Reference|Ref|Serial|Sr|Branch|Mobile|Fax|Website|Subject|"
+    r"Birth|Occupation|Relation|Nominee|Proposer|Assured|"
+    r"Relationship|Father|Mother|Husband|Wife|Spouse|Guardian|"
+    r"Duration|Term|Mode|Plan|Table|Period|Frequency|"
+    r"Maturity|Commencement|Revival|Lapse|Paid|Due|"
+    r"Office|Agent|Servicing|Branch|Zone|Region|"
+    r"PAN|Aadhaar|Aadhar|Passport|Voter|Driving|License|"
+    r"First|Last|Middle|Full|Given|Surname|"
+    r"Annual|Monthly|Quarterly|Half|Yearly|"
+    r"Bonus|Rebate|Discount|Penalty|Interest|Rate|"
+    r"Cheque|DD|NEFT|UPI|Payment|Receipt|Slip|"
+    r"Flat|House|Block|Street|Road|Area|Locality|Landmark|"
+    r"Pincode|Postal|PO|PS|District|Taluka|Village"
     r")$",
+    re.IGNORECASE,
+)
+
+# Connector words that may appear inside multi-word labels (e.g. "Date of Birth")
+_LABEL_CONNECTOR_RE = re.compile(
+    r"^(?:of|the|and|or|in|at|to|for|as|by|on|&)$",
     re.IGNORECASE,
 )
 
@@ -93,10 +111,10 @@ _LABEL_KW_RE = re.compile(
 # Spatial thresholds (in image pixels; scale-independent relative to text height)
 # ---------------------------------------------------------------------------
 
-_LINE_THRESH_FACTOR = 0.6   # label box height × factor = vertical tolerance for "same line"
-_BELOW_THRESH_FACTOR = 3.0  # label box height × factor = max vertical gap for "below" match
+_LINE_THRESH_FACTOR = 1.0   # label box height × factor = vertical tolerance for "same line"
+_BELOW_THRESH_FACTOR = 5.0  # label box height × factor = max vertical gap for "below" match
 _RIGHT_MIN_GAP = 2          # minimum horizontal gap (px) to be considered "to the right"
-_MULTI_WORD_LABEL_MAX_GAP = 80  # max horizontal gap (px) between consecutive label words
+_MULTI_WORD_LABEL_MAX_GAP = 120  # max horizontal gap (px) between consecutive label words
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +147,9 @@ def _merge_label_words(words: list[dict]) -> list[dict]:
     gap between them (≤ _MULTI_WORD_LABEL_MAX_GAP).  The merged word keeps the
     combined bounding box and the last word's trailing colon (if any).
 
+    Connector words (``of``, ``the``, ``and``, …) are allowed between label
+    keywords so that phrases like "Date of Birth" merge correctly.
+
     The returned list may contain both single-word and merged-multi-word items.
     Each item is a dict with: text, x, y, width, height, confidence.
     """
@@ -153,7 +174,12 @@ def _merge_label_words(words: list[dict]) -> list[dict]:
         gap = w["x"] - (current["x"] + current["width"])
         close_enough = gap <= _MULTI_WORD_LABEL_MAX_GAP and gap >= -10
 
-        if same_line and close_enough and _is_label_candidate(w["text"]):
+        # Allow the word to be merged if it is a label keyword OR a connector
+        is_mergeable = _is_label_candidate(w["text"]) or _LABEL_CONNECTOR_RE.match(
+            w["text"].strip().rstrip(":")
+        )
+
+        if same_line and close_enough and is_mergeable:
             # Extend current with this word
             right = w["x"] + w["width"]
             top = min(current["y"], w["y"])
@@ -304,15 +330,17 @@ def _pair_labels_values(boxes: list[dict]) -> list[dict]:
         if right_candidates:
             # Pick the nearest to the right (smallest x)
             right_candidates.sort(key=lambda t: t[1]["x"])
-            # Merge consecutive right-side boxes on same line into one value
+            # Merge consecutive right-side boxes on same line into one value.
+            # Skip candidates that are themselves label keywords (they belong to
+            # a different label/value pair, not to this label's value).
             value_parts = []
             value_boxes_used: list[dict] = []
             prev_right_edge = lb_right
             for i, vb in right_candidates:
                 gap = vb["x"] - prev_right_edge
-                if gap > lb_h * 4 and value_parts:
-                    break  # too far; stop here
-                if _is_label_candidate(vb["text"]) and value_parts:
+                if gap > lb_h * 4:
+                    break  # too far; stop here regardless of whether we have parts
+                if _is_label_candidate(vb["text"]):
                     break  # new label starts; stop
                 value_parts.append(vb["text"])
                 value_boxes_used.append(vb)
