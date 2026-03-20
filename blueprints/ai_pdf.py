@@ -101,12 +101,24 @@ def page_image(doc_id: int, page_num: int):
     # Clamp zoom to a safe range to avoid denial-of-service via large images
     zoom = max(0.5, min(zoom, 3.0))
 
-    svc = _get_ai_service()
-    if svc is None:
-        abort(503)
-
     try:
-        png_bytes = svc.render_page(doc.file_path, page_num, zoom=zoom)
+        svc = _get_ai_service()
+        if svc is not None:
+            png_bytes = svc.render_page(doc.file_path, page_num, zoom=zoom)
+        else:
+            # Direct PyMuPDF fallback — works even when the AI service is unavailable
+            _ensure_backend_on_path()
+            import fitz  # type: ignore[import]
+            pdf = fitz.open(doc.file_path)
+            try:
+                if page_num < 1 or page_num > len(pdf):
+                    abort(404)
+                page = pdf[page_num - 1]
+                mat = fitz.Matrix(zoom, zoom)
+                pix = page.get_pixmap(matrix=mat)
+                png_bytes = pix.tobytes("png")
+            finally:
+                pdf.close()
     except ValueError as exc:
         abort(404, str(exc))
     except Exception:
@@ -123,10 +135,10 @@ def page_image(doc_id: int, page_num: int):
 def detect_fields(doc_id: int):
     """Auto-detect label/value field pairs on a single PDF page and return JSON.
 
-    Preferred strategy: use ``extract_dynamic_fields`` to infer label/value pairs
-    from OCR tokens (same heuristic used by the /pdf/<id>/extract route).
-    Fallback: raw word-level extraction via the AI service (returns individual
-    tokens with generic ``field_type`` tags).
+    Returns all OCR text blocks with bounding boxes plus label/value pairs.
+    The ``fields`` list contains paired label→value entries; ``all_blocks``
+    contains every detected text block so the frontend can overlay inputs at
+    the exact OCR positions regardless of whether a label could be matched.
     """
     doc = Document.query.get_or_404(doc_id)
 
@@ -138,107 +150,125 @@ def detect_fields(doc_id: int):
     zoom = float(data.get("zoom", 1.5))
     zoom = max(0.5, min(zoom, 3.0))
 
-    # ── Strategy 1: dynamic label/value extraction ──────────────────────────
     _ensure_backend_on_path()
+
+    def _to_pixel_bbox(raw_bbox):
+        """Convert a {x, y, width, height} PDF-point bbox to pixel coords."""
+        if not raw_bbox:
+            return None
+        x = raw_bbox.get("x", 0) * zoom
+        y = raw_bbox.get("y", 0) * zoom
+        w = raw_bbox.get("width", 0) * zoom
+        h = raw_bbox.get("height", 0) * zoom
+        return {"x": x, "y": y, "width": w, "height": h,
+                "x0": x, "y0": y, "x1": x + w, "y1": y + h}
+
+    # ── Strategy 1: dynamic label/value extraction ───────────────────────────
+    pairs = []
+    raw_boxes: list[dict] = []
+    pairing_mode = "none"
+
     try:
-        from services.dynamic_extraction import extract_dynamic_fields  # type: ignore[import]
+        from services.dynamic_extraction import (  # type: ignore[import]
+            extract_dynamic_fields,
+            _pymupdf_word_boxes,
+            _pdf_has_text,
+        )
 
         pairs = extract_dynamic_fields(doc.file_path, page_index=page_num - 1)
-        if pairs:
-            fields_out = []
 
-            def _to_pixel_bbox(raw_bbox):
-                """Convert a {x, y, width, height} PDF-point bbox to pixel coords."""
-                if not raw_bbox:
-                    return None
-                return {
-                    "x0": raw_bbox.get("x", 0) * zoom,
-                    "y0": raw_bbox.get("y", 0) * zoom,
-                    "x1": (raw_bbox.get("x", 0) + raw_bbox.get("width", 0)) * zoom,
-                    "y1": (raw_bbox.get("y", 0) + raw_bbox.get("height", 0)) * zoom,
-                }
-
-            for pair in pairs:
-                pixel_bbox       = _to_pixel_bbox(pair.get("bbox"))
-                pixel_label_bbox = _to_pixel_bbox(pair.get("label_bbox"))
-                fields_out.append({
-                    "field_name":  pair["label"],
-                    "label":       pair["label"],
-                    "value":       pair.get("value", ""),
-                    "confidence":  pair.get("confidence", 1.0),
-                    "bbox":        pixel_bbox,
-                    "label_bbox":  pixel_label_bbox,
-                    "page":        page_num,
-                })
-            unpaired = sum(1 for f in fields_out if not f["value"])
-            return jsonify({
-                "fields": fields_out,
-                "page": page_num,
-                "pairing_mode": "dynamic",
-                "unpaired_labels_count": unpaired,
-            })
+        # Also retrieve ALL raw word boxes so the frontend can overlay every token.
+        if _pdf_has_text(doc.file_path, page_num - 1):
+            raw_boxes = _pymupdf_word_boxes(doc.file_path, page_num - 1)
+        pairing_mode = "dynamic"
     except Exception as exc:
         current_app.logger.warning(
             "Dynamic extraction in detect_fields failed for doc %s page %s: %s",
             doc_id, page_num, exc,
         )
 
-    # ── Strategy 2: fallback — derive label/value pairs from raw word tokens ─
-    svc = _get_ai_service()
-    if svc is None:
-        return jsonify({"error": "AI service unavailable"}), 503
+    # ── Strategy 2: fallback — raw word-level extraction via AI service ──────
+    if not pairs and not raw_boxes:
+        svc = _get_ai_service()
+        if svc is not None:
+            try:
+                from services.dynamic_extraction import _pair_labels_values  # type: ignore[import]
 
-    try:
-        from services.dynamic_extraction import _pair_labels_values  # type: ignore[import]
+                raw_fields = svc.extract_page_fields(doc.file_path, page_num, zoom=zoom)
 
-        raw_fields = svc.extract_page_fields(doc.file_path, page_num, zoom=zoom)
+                # Convert pixel-coord tokens {x0,y0,x1,y1} → {x,y,width,height}
+                for f in raw_fields:
+                    bb = f.get("bbox") or {}
+                    x0_px = bb.get("x0", 0)
+                    y0_px = bb.get("y0", 0)
+                    x1_px = bb.get("x1", x0_px)
+                    y1_px = bb.get("y1", y0_px)
+                    # Confidence cutoff: skip very low-confidence tokens
+                    conf = f.get("confidence", 0.5)
+                    if conf < 0.40:
+                        continue
+                    raw_boxes.append({
+                        "text":       f.get("text", ""),
+                        "x":          x0_px / zoom,
+                        "y":          y0_px / zoom,
+                        "width":      (x1_px - x0_px) / zoom,
+                        "height":     (y1_px - y0_px) / zoom,
+                        "confidence": conf,
+                    })
 
-        # Convert pixel-coord tokens {x0,y0,x1,y1} → {x,y,width,height} for pairing
-        boxes = []
-        for f in raw_fields:
-            bb = f.get("bbox") or {}
-            x0_px = bb.get("x0", 0)
-            y0_px = bb.get("y0", 0)
-            x1_px = bb.get("x1", x0_px)
-            y1_px = bb.get("y1", y0_px)
-            boxes.append({
-                "text":       f.get("text", ""),
-                "x":          x0_px,
-                "y":          y0_px,
-                "width":      x1_px - x0_px,
-                "height":     y1_px - y0_px,
-                "confidence": f.get("confidence", 0.5),
-            })
+                pairs = _pair_labels_values(raw_boxes)
+                pairing_mode = "fallback"
+            except Exception as exc:
+                current_app.logger.exception(
+                    "Field detection fallback failed for doc %s page %s", doc_id, page_num
+                )
+                return jsonify({
+                    "ok": False,
+                    "fields": [],
+                    "all_blocks": [],
+                    "message": f"Detection failed: {exc}",
+                }), 200
 
-        pairs = _pair_labels_values(boxes)
-        fields_out = []
-        for pair in pairs:
-            fields_out.append({
-                "field_name": pair["label"],
-                "label":      pair["label"],
-                "value":      pair.get("value", ""),
-                "confidence": pair.get("confidence", 0.5),
-                "bbox":       _xywh_to_pixel_bbox(pair.get("bbox")),
-                "label_bbox": _xywh_to_pixel_bbox(pair.get("label_bbox")),
+    # ── Build the response ────────────────────────────────────────────────────
+    fields_out = []
+    for pair in pairs:
+        pixel_bbox       = _to_pixel_bbox(pair.get("bbox"))
+        pixel_label_bbox = _to_pixel_bbox(pair.get("label_bbox"))
+        fields_out.append({
+            "field_name":  pair["label"],
+            "label":       pair["label"],
+            "value":       pair.get("value", ""),
+            "confidence":  pair.get("confidence", 1.0),
+            "bbox":        pixel_bbox,
+            "label_bbox":  pixel_label_bbox,
+            "page":        page_num,
+        })
+
+    # All raw blocks (every OCR token) with pixel bounding boxes for overlay
+    all_blocks_out = []
+    for b in raw_boxes:
+        px = _to_pixel_bbox(b)
+        if px:
+            all_blocks_out.append({
+                "text":       b.get("text", ""),
+                "confidence": b.get("confidence", 1.0),
+                "bbox":       px,
                 "page":       page_num,
             })
 
-        unpaired = sum(1 for f in fields_out if not f["value"])
-        current_app.logger.info(
-            "detect_fields fallback pairing: doc=%s page=%s pairs=%d unpaired=%d",
-            doc_id, page_num, len(fields_out), unpaired,
-        )
-        return jsonify({
-            "fields": fields_out,
-            "page": page_num,
-            "pairing_mode": "fallback",
-            "unpaired_labels_count": unpaired,
-        })
-    except Exception as exc:
-        current_app.logger.exception(
-            "Field detection failed for doc %s page %s", doc_id, page_num
-        )
-        return jsonify({"error": str(exc)}), 500
+    unpaired = sum(1 for f in fields_out if not f["value"])
+    current_app.logger.info(
+        "detect_fields: doc=%s page=%s pairs=%d blocks=%d mode=%s unpaired=%d",
+        doc_id, page_num, len(fields_out), len(all_blocks_out), pairing_mode, unpaired,
+    )
+    return jsonify({
+        "ok": True,
+        "fields": fields_out,
+        "all_blocks": all_blocks_out,
+        "page": page_num,
+        "pairing_mode": pairing_mode,
+        "unpaired_labels_count": unpaired,
+    })
 
 
 @ai_pdf_bp.route("/<int:doc_id>/extract-region", methods=["POST"])
