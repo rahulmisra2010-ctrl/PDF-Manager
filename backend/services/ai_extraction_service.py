@@ -314,6 +314,9 @@ class AIExtractionService:
                 if conf_raw < 0:
                     continue
                 confidence = min(conf_raw / 100.0, 1.0)
+                # Skip very low-confidence tokens (below 40 %)
+                if confidence < 0.40:
+                    continue
                 x, y, w, h = (
                     data["left"][i],
                     data["top"][i],

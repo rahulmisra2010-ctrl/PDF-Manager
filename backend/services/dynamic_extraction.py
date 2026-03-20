@@ -97,6 +97,7 @@ _LINE_THRESH_FACTOR = 0.6   # label box height × factor = vertical tolerance fo
 _BELOW_THRESH_FACTOR = 3.0  # label box height × factor = max vertical gap for "below" match
 _RIGHT_MIN_GAP = 2          # minimum horizontal gap (px) to be considered "to the right"
 _MULTI_WORD_LABEL_MAX_GAP = 80  # max horizontal gap (px) between consecutive label words
+_MIN_OCR_CONF = 0.40        # minimum EasyOCR confidence to include a token
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +454,7 @@ def _ocr_boxes(img_array) -> list[dict]:
         w = max(xs) - x
         h = max(ys) - y
         text_clean = str(text).strip()
-        if text_clean:
+        if text_clean and float(conf) >= _MIN_OCR_CONF:
             boxes.append({
                 "text": text_clean,
                 "x": x,
