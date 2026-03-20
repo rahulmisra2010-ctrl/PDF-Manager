@@ -84,21 +84,42 @@
   }
 
   /* ------------------------------------------------------------------ */
-  /* Field overlays                                                       */
+  /* Field overlays — editable inputs placed directly on the PDF canvas  */
   /* ------------------------------------------------------------------ */
   .field-overlay {
     position: absolute;
-    background: rgba(255, 220, 0, 0.28);
-    border: 2px solid rgba(255, 180, 0, 0.75);
-    border-radius: 3px;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
     box-sizing: border-box;
+    /* label is shown above; give a little top clearance */
+    overflow: visible;
   }
-  .field-overlay:hover,
-  .field-overlay.active {
-    background: rgba(255, 220, 0, 0.55);
+
+  .field-overlay-input {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(255, 220, 0, 0.18);
+    border: 1.5px solid rgba(255, 160, 0, 0.7);
+    border-radius: 2px;
+    color: #111;
+    font-size: 0.78rem;
+    padding: 1px 4px;
+    box-sizing: border-box;
+    cursor: text;
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .field-overlay-input:hover {
+    background: rgba(255, 220, 0, 0.32);
     border-color: #e6a000;
+  }
+  .field-overlay-input:focus {
+    background: rgba(255, 255, 255, 0.88);
+    border-color: #2563eb;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
+    z-index: 10;
+    position: relative;
   }
 
   .field-overlay-label {
@@ -107,43 +128,14 @@
     left: 0;
     background: #e6a000;
     color: #000;
-    font-size: 0.65rem;
+    font-size: 0.62rem;
     font-weight: 700;
     padding: 1px 5px;
     border-radius: 3px 3px 0 0;
     white-space: nowrap;
     pointer-events: none;
     line-height: 1.4;
-  }
-
-  /* ------------------------------------------------------------------ */
-  /* Tooltip / inline edit popup                                          */
-  /* ------------------------------------------------------------------ */
-  #field-popup {
-    display: none;
-    position: absolute;
-    z-index: 100;
-    background: #fff;
-    border: 1px solid #ccc;
-    border-radius: 6px;
-    padding: 0.75rem;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
-    min-width: 240px;
-  }
-  #field-popup h6 {
-    margin: 0 0 0.4rem;
-    font-size: 0.85rem;
-    font-weight: 700;
-    color: #333;
-  }
-  #field-popup input {
-    width: 100%;
-    margin-bottom: 0.4rem;
-  }
-  #field-popup .popup-actions {
-    display: flex;
-    gap: 0.4rem;
-    justify-content: flex-end;
+    z-index: 5;
   }
 
   /* ------------------------------------------------------------------ */
@@ -167,7 +159,7 @@
       <span class="text-muted fw-normal">— {{ doc.filename }}</span>
     </h5>
     <small class="text-muted">
-      Click a highlighted region to edit the field value in-place.
+      Type directly into the highlighted fields overlaid on the PDF. Changes are kept in sync automatically.
     </small>
   </div>
   <div class="d-flex gap-2">
@@ -219,8 +211,12 @@
     <span style="flex:1"></span>
 
     <button id="btn-save-overlay" class="btn-toolbar-pdf"
-            style="background:#2563eb;" title="Save all edited field values">
+            style="background:#2563eb;" title="Save all edited field values to server">
       <i class="bi bi-save me-1"></i>Save Fields
+    </button>
+    <button id="btn-save-sample" class="btn-toolbar-pdf"
+            style="background:#16a34a;" title="Download current field values as JSON">
+      <i class="bi bi-download me-1"></i>Save as Sample
     </button>
   </div>
 
@@ -228,16 +224,7 @@
   <div id="pdf-container">
     <div id="pdf-wrapper">
       <canvas id="pdf-canvas"></canvas>
-      <!-- field overlays are injected here by JS -->
-    </div>
-    <!-- popup editor (shared) -->
-    <div id="field-popup">
-      <h6 id="popup-title">Field Name</h6>
-      <input type="text" id="popup-input" class="form-control form-control-sm">
-      <div class="popup-actions mt-2">
-        <button class="btn btn-sm btn-outline-secondary" id="popup-cancel">Cancel</button>
-        <button class="btn btn-sm btn-primary" id="popup-apply">Apply</button>
-      </div>
+      <!-- Editable field overlays are injected directly here by JS -->
     </div>
   </div>
 
@@ -347,7 +334,6 @@ const canvas    = document.getElementById("pdf-canvas");
 const ctx       = canvas.getContext("2d");
 const wrapper   = document.getElementById("pdf-wrapper");
 const container = document.getElementById("pdf-container");
-const popup     = document.getElementById("field-popup");
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -397,110 +383,91 @@ async function renderPage(num) {
 }
 
 // ---------------------------------------------------------------------------
-// Overlays
+// Overlays — editable inputs placed directly on the rendered PDF canvas
 // ---------------------------------------------------------------------------
 function drawOverlays(page, canvasW, canvasH) {
-  // Remove previous overlay divs
+  // Remove previous overlay elements
   wrapper.querySelectorAll(".field-overlay").forEach(el => el.remove());
-  closePopup();
 
   const pageFields = fieldsOnPage(page);
   if (!pageFields.length) return;
 
   pageFields.forEach(field => {
     const box = getBox(field);
-    const el  = document.createElement("div");
-    el.className    = "field-overlay";
-    el.dataset.fieldId = field.id;
-    el.style.left   = (box.x * canvasW) + "px";
-    el.style.top    = (box.y * canvasH) + "px";
-    el.style.width  = (box.w * canvasW) + "px";
-    el.style.height = (box.h * canvasH) + "px";
 
+    // Support both fractional coords (0..1) and absolute pixel/OCR coords.
+    // Fractions: all four values (x, y, w/width, h/height) are ≤ 1.
+    // Absolute: x or y is > 1 (typical OCR bounding boxes in pixels).
+    let left, top, width, height;
+    // Default fallback dimensions: ~20% wide, ~4% tall of the page
+    const bw = box.w  !== undefined ? box.w  : (box.width  || 0.2);
+    const bh = box.h  !== undefined ? box.h  : (box.height || 0.04);
+
+    if (box.x <= 1 && box.y <= 1 && bw <= 1 && bh <= 1) {
+      // Fractional coords — scale to canvas pixels
+      left   = box.x  * canvasW;
+      top    = box.y  * canvasH;
+      width  = bw     * canvasW;
+      height = bh     * canvasH;
+    } else {
+      // Absolute pixel coords (e.g., from Tesseract OCR bounding boxes)
+      left   = box.x;
+      top    = box.y;
+      width  = bw;
+      height = bh;
+    }
+
+    // Wrapper div (keeps label + input together, positioned on canvas)
+    const el = document.createElement("div");
+    el.className       = "field-overlay";
+    el.dataset.fieldId = field.id;
+    el.style.left      = left   + "px";
+    el.style.top       = top    + "px";
+    el.style.width     = width  + "px";
+    el.style.height    = height + "px";
+
+    // Label tag above the input
     const label = document.createElement("div");
     label.className   = "field-overlay-label";
     label.textContent = field.field_name;
     el.appendChild(label);
 
-    el.addEventListener("click", e => openPopup(e, field, el));
+    // Editable input directly on the PDF
+    const input = document.createElement("input");
+    input.type        = "text";
+    input.className   = "field-overlay-input";
+    input.value       = field.value || "";
+    input.title       = field.field_name;
+    input.placeholder = field.field_name;
+
+    // Auto-sync: keep in-memory FIELDS and backup form in sync as user types
+    input.oninput = () => {
+      field.value = input.value;
+      const formInput = document.getElementById("form-field-" + field.id);
+      if (formInput) formInput.value = input.value;
+    };
+
+    el.appendChild(input);
     wrapper.appendChild(el);
   });
 }
 
 // ---------------------------------------------------------------------------
-// Popup editor
+// Save as Sample — download current in-memory field values as JSON
 // ---------------------------------------------------------------------------
-let activeOverlay = null;
-let activeField   = null;
-
-function openPopup(e, field, overlayEl) {
-  e.stopPropagation();
-  closePopup();
-
-  activeField   = field;
-  activeOverlay = overlayEl;
-  overlayEl.classList.add("active");
-
-  document.getElementById("popup-title").textContent = field.field_name;
-  document.getElementById("popup-input").value = field.value || "";
-
-  // Position popup near overlay, keeping within viewport
-  const wRect = wrapper.getBoundingClientRect();
-  const oRect = overlayEl.getBoundingClientRect();
-  const relTop  = oRect.bottom - wRect.top + 6;
-  const relLeft = oRect.left   - wRect.left;
-
-  popup.style.top  = relTop  + "px";
-  popup.style.left = relLeft + "px";
-  popup.style.display = "block";
-
-  // Adjust if popup overflows container
-  requestAnimationFrame(() => {
-    const pRect = popup.getBoundingClientRect();
-    const cRect = container.getBoundingClientRect();
-    if (pRect.right > cRect.right) {
-      popup.style.left = (relLeft - (pRect.right - cRect.right) - 8) + "px";
-    }
-    if (pRect.bottom > cRect.bottom) {
-      popup.style.top = (relTop - overlayEl.offsetHeight - popup.offsetHeight - 12) + "px";
-    }
+function downloadJSON() {
+  const data = {};
+  FIELDS.forEach(f => {
+    data[f.field_name] = f.value || "";
   });
-
-  document.getElementById("popup-input").focus();
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href     = URL.createObjectURL(blob);
+  link.download = "form_data_sample.json";
+  link.click();
+  // Delay revocation to give the browser time to initiate the download
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
-
-function closePopup() {
-  popup.style.display = "none";
-  if (activeOverlay) activeOverlay.classList.remove("active");
-  activeOverlay = null;
-  activeField   = null;
-}
-
-function applyPopup() {
-  if (!activeField) return;
-  const newVal = document.getElementById("popup-input").value;
-  activeField.value = newVal;
-
-  // Sync to the backup form input
-  const formInput = document.getElementById("form-field-" + activeField.id);
-  if (formInput) formInput.value = newVal;
-
-  closePopup();
-}
-
-document.getElementById("popup-apply").addEventListener("click", applyPopup);
-document.getElementById("popup-cancel").addEventListener("click", closePopup);
-document.getElementById("popup-input").addEventListener("keydown", e => {
-  if (e.key === "Enter")  applyPopup();
-  if (e.key === "Escape") closePopup();
-});
-document.addEventListener("click", e => {
-  if (popup.style.display === "block" &&
-      !popup.contains(e.target) &&
-      !e.target.closest(".field-overlay")) {
-    closePopup();
-  }
-});
 
 // ---------------------------------------------------------------------------
 // Save fields (overlay edit → server via the existing /edit POST route)
@@ -514,6 +481,9 @@ document.getElementById("btn-save-overlay").addEventListener("click", () => {
   const form = document.getElementById("fields-form");
   if (form) form.submit();
 });
+
+// Save as Sample — download current field values as JSON without hitting the server
+document.getElementById("btn-save-sample").addEventListener("click", downloadJSON);
 
 // ---------------------------------------------------------------------------
 // Navigation
