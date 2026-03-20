@@ -107,6 +107,9 @@
         <!-- Highlights overlay (drawn by InteractivePDFViewer) -->
         <canvas id="overlay-canvas" style="position:absolute;top:0;left:0;pointer-events:none"></canvas>
 
+        <!-- Editable field inputs overlaid directly on the PDF -->
+        <div id="field-overlays" style="position:absolute;top:0;left:0;pointer-events:none"></div>
+
         <!-- Selection layer (captures mouse events in select mode) -->
         <canvas id="selection-canvas" style="position:absolute;top:0;left:0"></canvas>
       </div>
@@ -146,6 +149,9 @@
     <div class="fields-panel-footer">
       <button id="btn-save" class="btn btn-primary btn-sm flex-fill">
         <i class="bi bi-save me-1"></i>Save Fields
+      </button>
+      <button id="btn-save-sample" class="btn btn-success btn-sm">
+        <i class="bi bi-download me-1"></i>Save as Sample
       </button>
       <a href="{{ url_for('pdf.export', doc_id=doc.id, fmt='json') }}"
          class="btn btn-outline-secondary btn-sm">
