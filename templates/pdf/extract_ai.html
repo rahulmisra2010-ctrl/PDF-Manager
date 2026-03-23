@@ -123,11 +123,13 @@
     <div class="fields-list" id="fields-list">
       {% if fields %}
         {% for field in fields %}
-        <div class="field-card" data-field-name="{{ field.field_name }}">
+        <div class="field-card" data-field-name="{{ field.field_name }}" data-page="{{ field.page_number or '' }}">
           <div class="field-header">
-            <span class="field-name">{{ field.field_name }}</span>
+            <span class="field-label-tag">{{ field.field_name }}</span>
+            <span class="field-arrow">→</span>
           </div>
           <input class="field-value-input" type="text"
+                 placeholder="(no value)"
                  data-field-name="{{ field.field_name }}"
                  value="{{ field.value or '' }}">
           {% set conf_pct = (field.confidence * 100) | int %}
