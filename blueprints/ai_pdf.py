@@ -183,62 +183,119 @@ def detect_fields(doc_id: int):
             doc_id, page_num, exc,
         )
 
-    # ── Strategy 2: fallback — derive label/value pairs from raw word tokens ─
+    # ── Strategy 2: geometry-based label/value pairing via field_extractor ──
     svc = _get_ai_service()
     if svc is None:
         return jsonify({"error": "AI service unavailable"}), 503
 
     try:
-        from services.dynamic_extraction import _pair_labels_values  # type: ignore[import]
-
         raw_fields = svc.extract_page_fields(doc.file_path, page_num, zoom=zoom)
 
-        # Convert pixel-coord tokens {x0,y0,x1,y1} → {x,y,width,height} for pairing
-        boxes = []
+        # Build raw_boxes in the format expected by extract_labeled_fields
+        raw_boxes = []
         for f in raw_fields:
             bb = f.get("bbox") or {}
-            x0_px = bb.get("x0", 0)
-            y0_px = bb.get("y0", 0)
-            x1_px = bb.get("x1", x0_px)
-            y1_px = bb.get("y1", y0_px)
-            boxes.append({
+            raw_boxes.append({
                 "text":       f.get("text", ""),
-                "x":          x0_px,
-                "y":          y0_px,
-                "width":      x1_px - x0_px,
-                "height":     y1_px - y0_px,
-                "confidence": f.get("confidence", 0.5),
+                "x0":         float(bb.get("x0", 0)),
+                "y0":         float(bb.get("y0", 0)),
+                "x1":         float(bb.get("x1", bb.get("x0", 0))),
+                "y1":         float(bb.get("y1", bb.get("y0", 0))),
+                "confidence": float(f.get("confidence", 0.5)),
+                "page":       int(f.get("page", page_num)),
             })
 
-        pairs = _pair_labels_values(boxes)
-        fields_out = []
-        for pair in pairs:
-            fields_out.append({
-                "field_name": pair["label"],
-                "label":      pair["label"],
-                "value":      pair.get("value", ""),
-                "confidence": pair.get("confidence", 0.5),
-                "bbox":       _xywh_to_pixel_bbox(pair.get("bbox")),
-                "label_bbox": _xywh_to_pixel_bbox(pair.get("label_bbox")),
+        # Try the geometry-based extractor first (handles parenthesised labels
+        # like "(city)", "(state)", "(ZIP)" and merges same-line value tokens)
+        pairs: list[dict] = []
+        pairing_mode = "fallback"
+        try:
+            from services.field_extractor import extract_labeled_fields  # type: ignore[import]
+
+            labeled = extract_labeled_fields(raw_boxes, page=page_num)
+            if labeled:
+                pairs = [
+                    {
+                        "label":      p["label"],
+                        "value":      p.get("value", ""),
+                        "confidence": p.get("confidence", 0.5),
+                        "bbox": {
+                            "x0": p["value_box"]["x0"],
+                            "y0": p["value_box"]["y0"],
+                            "x1": p["value_box"]["x1"],
+                            "y1": p["value_box"]["y1"],
+                        } if p.get("value_box") else None,
+                        "label_bbox": {
+                            "x0": p["label_box"]["x0"],
+                            "y0": p["label_box"]["y0"],
+                            "x1": p["label_box"]["x1"],
+                            "y1": p["label_box"]["y1"],
+                        } if p.get("label_box") else None,
+                    }
+                    for p in labeled
+                ]
+                pairing_mode = "geometry"
+        except Exception as fe_exc:
+            current_app.logger.warning(
+                "field_extractor failed for doc %s page %s: %s",
+                doc_id, page_num, fe_exc,
+            )
+
+        # Fall back to keyword-based pairing if geometry extractor found nothing
+        if not pairs:
+            from services.dynamic_extraction import _pair_labels_values  # type: ignore[import]
+
+            kw_boxes = [
+                {
+                    "text":       b["text"],
+                    "x":          b["x0"],
+                    "y":          b["y0"],
+                    "width":      b["x1"] - b["x0"],
+                    "height":     b["y1"] - b["y0"],
+                    "confidence": b["confidence"],
+                }
+                for b in raw_boxes
+            ]
+            pairs = [
+                {
+                    "label":      kp["label"],
+                    "value":      kp.get("value", ""),
+                    "confidence": kp.get("confidence", 0.5),
+                    "bbox":       _xywh_to_pixel_bbox(kp.get("bbox")),
+                    "label_bbox": _xywh_to_pixel_bbox(kp.get("label_bbox")),
+                }
+                for kp in _pair_labels_values(kw_boxes)
+            ]
+
+        fields_out = [
+            {
+                "field_name": p["label"],
+                "label":      p["label"],
+                "value":      p.get("value", ""),
+                "confidence": p.get("confidence", 0.5),
+                "bbox":       p.get("bbox"),
+                "label_bbox": p.get("label_bbox"),
                 "page":       page_num,
-            })
+            }
+            for p in pairs
+        ]
 
         unpaired = sum(1 for f in fields_out if not f["value"])
         current_app.logger.info(
-            "detect_fields fallback pairing: doc=%s page=%s pairs=%d unpaired=%d",
-            doc_id, page_num, len(fields_out), unpaired,
+            "detect_fields %s pairing: doc=%s page=%s pairs=%d unpaired=%d",
+            pairing_mode, doc_id, page_num, len(fields_out), unpaired,
         )
         return jsonify({
             "fields": fields_out,
             "page": page_num,
-            "pairing_mode": "fallback",
+            "pairing_mode": pairing_mode,
             "unpaired_labels_count": unpaired,
         })
-    except Exception as exc:
+    except Exception:
         current_app.logger.exception(
             "Field detection failed for doc %s page %s", doc_id, page_num
         )
-        return jsonify({"error": str(exc)}), 500
+        return jsonify({"error": "Field detection failed — check server logs for details"}), 500
 
 
 @ai_pdf_bp.route("/<int:doc_id>/extract-region", methods=["POST"])
