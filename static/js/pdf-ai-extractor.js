@@ -45,10 +45,11 @@ const FIELD_TYPE_CLASSES = {
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
-let viewer   = null;   // InteractivePDFViewer instance
-let fields   = [];     // current extracted fields array
-let mode     = 'view'; // 'view' | 'select' | 'detect'
-let selStart = null;   // {x, y} drag start in canvas coords
+let viewer           = null;   // InteractivePDFViewer instance
+let fields           = [];     // current extracted fields array (always tagged with doc_id)
+let mode             = 'view'; // 'view' | 'select'
+let selStart         = null;   // {x, y} drag start in canvas coords
+let filterLabelOnly  = true;   // when true: hide label-only (empty-value) detections
 
 // ---------------------------------------------------------------------------
 // Initialise
@@ -70,15 +71,26 @@ function initAIExtractor() {
     initialPage:     1,
     totalPages:      cfg.totalPages,
     onPageRendered(pageNum) {
-      // Re-draw fields for the new page
-      const pageFields = fields.filter(f => f.page === pageNum || f.page === undefined);
+      // Re-draw only fields that belong to this document and this page
+      const pageFields = _visibleFields().filter(
+        f => f.page === pageNum || f.page === undefined
+      );
       viewer.drawFields(pageFields);
       // Update active page highlight in fields panel
       _filterFieldsPanel(pageNum);
     },
   });
 
-  // Render first page
+  // ---- Initialise fields from server-provided DB data (scoped to this doc) ----
+  if (Array.isArray(cfg.initialFields) && cfg.initialFields.length) {
+    // Ensure every entry is tagged with the current document id
+    fields = cfg.initialFields
+      .filter(f => f.doc_id === cfg.docId)
+      .map(f => ({ ...f, doc_id: cfg.docId }));
+    _renderFieldsPanel(fields);
+  }
+
+  // Render first page (triggers onPageRendered which draws overlays)
   viewer.renderCurrentPage();
 
   // ---- Toolbar button wiring ----
@@ -92,6 +104,25 @@ function initAIExtractor() {
   _wire('btn-save-sample', () => saveSample());
   _wire('btn-mode-view',   () => setMode('view'));
   _wire('btn-mode-select', () => setMode('select'));
+
+  // ---- Filter toggle ----
+  _wire('btn-filter-labels', () => {
+    filterLabelOnly = !filterLabelOnly;
+    const btn = document.getElementById('btn-filter-labels');
+    if (btn) {
+      btn.classList.toggle('active', filterLabelOnly);
+      btn.title = filterLabelOnly
+        ? 'Toggle: hide label-only detections (active — labels hidden)'
+        : 'Toggle: hide label-only detections (inactive — all fields shown)';
+    }
+    // Refresh overlay and sidebar with the new filter state
+    const pageFields = _visibleFields().filter(
+      f => f.page === viewer.currentPage || f.page === undefined
+    );
+    viewer.drawFields(pageFields);
+    _renderFieldsPanel(_visibleFields());
+    _filterFieldsPanel(viewer.currentPage);
+  });
 
   // ---- Drag-to-select on the selection canvas ----
   if (selCanvas) {
@@ -171,19 +202,37 @@ async function detectAllFields() {
     const data = await res.json();
     if (!res.ok) { _setStatus(data.error || 'Detection failed', 'danger'); return; }
 
-    // Merge into global fields, replacing same-page entries
-    fields = fields.filter(f => f.page !== viewer.currentPage);
-    fields = fields.concat(data.fields || []);
+    // Validate that the response belongs to the current document.
+    // The server always returns doc_id; if it doesn't match, discard the result.
+    if (data.doc_id !== undefined && data.doc_id !== cfg.docId) {
+      _setStatus('Ignored detection result: response belongs to a different document.', 'warning');
+      return;
+    }
 
-    viewer.drawFields(fields.filter(f => f.page === viewer.currentPage));
-    _renderFieldsPanel(fields);
+    // Tag every incoming field with the current document id so we can always
+    // distinguish this document's fields from any stale/cached entries.
+    const incoming = (data.fields || []).map(f => ({ ...f, doc_id: cfg.docId }));
 
-    const total   = (data.fields || []).length;
+    // Merge: keep fields from OTHER pages that belong to THIS document only,
+    // then append the freshly detected fields for the current page.
+    fields = fields
+      .filter(f => f.doc_id === cfg.docId && f.page !== viewer.currentPage)
+      .concat(incoming);
+
+    const visiblePageFields = _visibleFields().filter(
+      f => f.page === viewer.currentPage || f.page === undefined
+    );
+    viewer.drawFields(visiblePageFields);
+    _renderFieldsPanel(_visibleFields());
+
+    const total   = incoming.length;
     const paired  = total - (data.unpaired_labels_count || 0);
     const blank   = data.unpaired_labels_count || 0;
-    const msg = blank > 0
-      ? `Detected ${total} field(s) on page ${viewer.currentPage}: ${paired} with values, ${blank} label-only (editable)`
+    const hidden  = total - _visibleFields().filter(f => f.page === viewer.currentPage).length;
+    let msg = blank > 0
+      ? `Detected ${total} field(s) on page ${viewer.currentPage}: ${paired} with values, ${blank} label-only`
       : `Detected ${total} label/value pair(s) on page ${viewer.currentPage}`;
+    if (hidden > 0) msg += ` (${hidden} hidden by filter)`;
     _setStatus(msg, 'success');
   } catch (err) {
     _setStatus(`Error: ${err.message}`, 'danger');
@@ -214,14 +263,23 @@ async function extractRegion(x0, y0, x1, y1) {
       confidence:  data.confidence,
       bbox:        data.bbox,
       page:        viewer.currentPage,
+      doc_id:      cfg.docId,
     };
 
-    // Remove previous field with same label on this page
-    fields = fields.filter(f => (f.label || f.field_name) !== fieldName || f.page !== viewer.currentPage);
+    // Remove the previous field with same label on this page.
+    // Keeps: fields from other documents OR fields with a different label OR fields on a different page.
+    fields = fields.filter(
+      f => f.doc_id !== cfg.docId
+        || (f.label || f.field_name) !== fieldName
+        || f.page !== viewer.currentPage
+    );
     fields.push(newField);
 
-    viewer.drawFields(fields.filter(f => f.page === viewer.currentPage));
-    _renderFieldsPanel(fields);
+    const visiblePageFields = _visibleFields().filter(
+      f => f.page === viewer.currentPage || f.page === undefined
+    );
+    viewer.drawFields(visiblePageFields);
+    _renderFieldsPanel(_visibleFields());
     _setStatus(`Extracted "${data.text}" as ${fieldName}`, 'success');
   } catch (err) {
     _setStatus(`Error: ${err.message}`, 'danger');
@@ -232,8 +290,11 @@ async function saveFields() {
   const cfg = window.AI_CONFIG;
   if (fields.length === 0) { _setStatus('No fields to save.', 'warning'); return; }
 
+  // Only save fields that belong to the currently open document
+  const docFields = fields.filter(f => f.doc_id === cfg.docId || f.doc_id === undefined);
+
   // Collect current values from the input fields
-  const toSave = fields.map(f => {
+  const toSave = docFields.map(f => {
     const label = f.label || f.field_name || '';
     return {
       field_name: label,
@@ -270,9 +331,13 @@ function saveSample() {
     return;
   }
 
+  const cfg = window.AI_CONFIG;
+  // Only export fields belonging to the currently open document
+  const docFields = fields.filter(f => f.doc_id === cfg.docId || f.doc_id === undefined);
+
   // Build { label: value } object — read current input values from the panel
   const sample = {};
-  for (const f of fields) {
+  for (const f of docFields) {
     const label = f.label || f.field_name || '';
     if (!label) continue;
     // Prefer the live input value (user may have edited it) over the original value
@@ -373,7 +438,7 @@ function _makeFieldCard(field) {
     }
   });
   card.addEventListener('mouseleave', () => {
-    const pageFields = fields.filter(f => f.page === viewer.currentPage || !f.page);
+    const pageFields = _visibleFields().filter(f => f.page === viewer.currentPage || !f.page);
     viewer.drawFields(pageFields);
   });
 
@@ -387,8 +452,8 @@ function _makeFieldCard(field) {
   removeBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     fields = fields.filter(f => (f.label || f.field_name) !== label || f.page !== field.page);
-    _renderFieldsPanel(fields);
-    const pageFields = fields.filter(f => f.page === viewer.currentPage || !f.page);
+    _renderFieldsPanel(_visibleFields());
+    const pageFields = _visibleFields().filter(f => f.page === viewer.currentPage || !f.page);
     viewer.drawFields(pageFields);
   });
   card.querySelector('.field-header').prepend(removeBtn);
@@ -399,6 +464,28 @@ function _makeFieldCard(field) {
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
+
+/**
+ * Return the subset of `fields` that should be displayed given the current
+ * filter state and document scope.
+ *
+ * Rules applied (in order):
+ *  1. Only fields whose `doc_id` matches the currently open document are kept.
+ *     Fields that were loaded before doc_id tagging existed (no doc_id set) are
+ *     allowed through so we don't silently drop legacy data.
+ *  2. When `filterLabelOnly` is true, fields with an empty value string are
+ *     hidden — these are printed form labels with no user-entered data.
+ */
+function _visibleFields() {
+  const cfg = window.AI_CONFIG;
+  return fields.filter(f => {
+    // 1. Document scope: reject fields that explicitly belong to another doc
+    if (f.doc_id !== undefined && f.doc_id !== cfg.docId) return false;
+    // 2. Label-only filter: hide fields with no extracted value
+    if (filterLabelOnly && !f.value && !f.text) return false;
+    return true;
+  });
+}
 
 function _post(url, body) {
   const cfg = window.AI_CONFIG;

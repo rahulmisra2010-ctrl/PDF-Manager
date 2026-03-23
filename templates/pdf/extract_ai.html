@@ -88,6 +88,15 @@
         </button>
       </div>
 
+      <div class="toolbar-sep"></div>
+
+      <div class="toolbar-group">
+        <button id="btn-filter-labels" class="btn-toolbar active"
+                title="Toggle: hide label-only detections (fields with no value) that may come from form labels in other PDFs">
+          <i class="bi bi-funnel"></i> Hide Labels
+        </button>
+      </div>
+
       <div class="ms-auto">
         <span id="mode-label" class="mode-indicator">View</span>
       </div>
@@ -176,6 +185,9 @@
     extractRegionUrl:"{{ url_for('ai_pdf.extract_region', doc_id=doc.id) }}",
     saveFieldsUrl:   "{{ url_for('ai_pdf.save_fields', doc_id=doc.id) }}",
     csrfToken:       "{{ csrf_token() }}",
+    // Pre-populated from the database, scoped to this document only.
+    // Each entry carries doc_id so the JS can validate ownership on the fly.
+    initialFields:   {{ fields_json | tojson }},
   };
 </script>
 {% endblock %}
