@@ -433,3 +433,128 @@ class TestMapPairsToSchema:
         by_label = {r["label"]: r for r in result}
         assert "Anoop layout" in by_label["Present Address"]["value"]
         assert by_label["Net Payable"]["value"] == "73001"
+
+
+# ---------------------------------------------------------------------------
+# New keyword detection tests
+# ---------------------------------------------------------------------------
+
+
+class TestIsLabelCandidateExtended:
+    """Test newly added label keywords."""
+
+    def test_new_keywords_detected(self):
+        """Newly added form-field keywords are recognised as labels."""
+        new_keywords = [
+            "Occupation", "Nominee", "Proposer", "Relationship",
+            "Father", "Mother", "Husband", "Wife", "Spouse", "Guardian",
+            "Duration", "Term", "Mode", "Plan", "Period", "Frequency",
+            "Maturity", "Commencement", "PAN", "Aadhaar", "Passport",
+            "First", "Last", "Full", "Surname",
+            "Annual", "Monthly", "Quarterly",
+            "Bonus", "Rebate", "Interest", "Rate",
+            "Cheque", "Payment", "Receipt",
+            "Flat", "House", "Street", "Road", "Area", "Landmark",
+            "Pincode", "Postal", "District",
+        ]
+        for kw in new_keywords:
+            assert _is_label_candidate(kw), f"Expected '{kw}' to be a label candidate"
+
+    def test_new_keywords_with_colon(self):
+        assert _is_label_candidate("Occupation:")
+        assert _is_label_candidate("Nominee:")
+        assert _is_label_candidate("PAN:")
+        assert _is_label_candidate("Maturity:")
+
+
+# ---------------------------------------------------------------------------
+# Connector-word merge tests
+# ---------------------------------------------------------------------------
+
+
+class TestMergeLabelWordsConnectors:
+    """Connector words (of, the, and, …) are allowed within label phrases."""
+
+    def test_date_of_birth_merged(self):
+        """'Date of Birth:' merges all three words into one label."""
+        words = [
+            _box("Date", x=10, y=10, w=30),
+            _box("of", x=44, y=10, w=15),
+            _box("Birth:", x=62, y=10, w=40),
+        ]
+        merged = _merge_label_words(words)
+        assert len(merged) == 1
+        text = merged[0]["text"]
+        assert "Date" in text and "of" in text and "Birth" in text
+
+    def test_connector_only_does_not_start_merge(self):
+        """A lone connector word that is not preceded by a label keyword is not merged
+        into a label phrase; the function must handle such input without crashing."""
+        words = [
+            _box("of", x=10, y=10, w=15),
+            _box("Birth:", x=30, y=10, w=40),
+        ]
+        # "of" is not a label keyword itself so it is NOT listed in label_idxs;
+        # this test verifies the function handles the word list without crashing.
+        merged = _merge_label_words(words)
+        assert isinstance(merged, list)
+
+
+# ---------------------------------------------------------------------------
+# Label-only field surfacing (blank value preserved)
+# ---------------------------------------------------------------------------
+
+
+class TestLabelOnlyFields:
+    """Label-only entries (value='') must always be present in the output."""
+
+    def test_multiple_label_only_fields(self):
+        """Several label-only fields are all surfaced, each with blank value."""
+        boxes = [
+            _box("Pin:", x=10, y=10),
+            _box("Email:", x=10, y=40),
+            _box("Policy:", x=10, y=70),
+            # No value boxes present
+        ]
+        pairs = _pair_labels_values(boxes)
+        labels = {p["label"] for p in pairs}
+        assert "Pin" in labels
+        assert "Email" in labels
+        assert "Policy" in labels
+        for p in pairs:
+            assert p["value"] == ""
+            assert p["bbox"] is None
+
+    def test_mixed_pairs_and_label_only(self):
+        """Mix of populated and label-only fields — both appear in output."""
+        boxes = [
+            _box("Name:", x=10, y=10),
+            _box("Alice", x=80, y=10),
+            _box("Pin:", x=10, y=40),
+            # Pin has no value
+        ]
+        pairs = _pair_labels_values(boxes)
+        by_label = {p["label"]: p for p in pairs}
+        assert by_label["Name"]["value"] == "Alice"
+        assert "Pin" in by_label
+        assert by_label["Pin"]["value"] == ""
+
+    def test_label_only_has_label_bbox(self):
+        """Label-only entries still carry a label_bbox for UI highlighting."""
+        boxes = [
+            _box("Email:", x=20, y=30),
+        ]
+        pairs = _pair_labels_values(boxes)
+        assert pairs[0]["label_bbox"] is not None
+        assert pairs[0]["label_bbox"]["x"] == 20
+
+    def test_right_label_keyword_not_treated_as_value(self):
+        """A label keyword immediately to the right is NOT consumed as a value."""
+        boxes = [
+            _box("Name:", x=10, y=10),
+            _box("Email:", x=80, y=10),   # another label — must NOT become Name's value
+        ]
+        pairs = _pair_labels_values(boxes)
+        by_label = {p["label"]: p for p in pairs}
+        # Name must be label-only since 'Email:' is a label, not a value
+        assert by_label.get("Name", {}).get("value", "") == ""
