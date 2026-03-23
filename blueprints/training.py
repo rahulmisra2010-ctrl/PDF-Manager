@@ -540,10 +540,13 @@ def apply_training_to_document(doc_id: int):
     """
     doc = Document.query.get_or_404(doc_id)
 
-    # Load all training examples from the database
-    all_examples = TrainingExample.query.all()
+    # Load training examples scoped to THIS document only.
+    # Using TrainingExample.query.all() (global) would apply field values from
+    # other PDF templates (e.g. address-book fields) onto unrelated documents,
+    # causing cross-document/template field leakage.
+    all_examples = TrainingExample.query.filter_by(document_id=doc_id).all()
     if not all_examples:
-        return jsonify({"ok": False, "error": "No training examples found in the database."}), 400
+        return jsonify({"ok": False, "error": "No training examples found for this document."}), 400
 
     # Build a mapping: field_name → list of non-blank correct_value strings
     from collections import Counter

@@ -471,16 +471,19 @@ function _makeFieldCard(field) {
  *
  * Rules applied (in order):
  *  1. Only fields whose `doc_id` matches the currently open document are kept.
- *     Fields that were loaded before doc_id tagging existed (no doc_id set) are
- *     allowed through so we don't silently drop legacy data.
+ *     Every field in the array is always tagged with the current doc_id (set
+ *     at initialisation and on every detect/extract call), so this check
+ *     strictly prevents any stale or cross-document entries from appearing.
  *  2. When `filterLabelOnly` is true, fields with an empty value string are
  *     hidden — these are printed form labels with no user-entered data.
  */
 function _visibleFields() {
   const cfg = window.AI_CONFIG;
   return fields.filter(f => {
-    // 1. Document scope: reject fields that explicitly belong to another doc
-    if (f.doc_id !== undefined && f.doc_id !== cfg.docId) return false;
+    // 1. Document scope: reject any field that does not belong to this doc.
+    //    All entries in the array must carry doc_id (set at init and detection
+    //    time), so we can enforce a strict equality check here.
+    if (f.doc_id !== cfg.docId) return false;
     // 2. Label-only filter: hide fields with no extracted value
     if (filterLabelOnly && !f.value && !f.text) return false;
     return true;

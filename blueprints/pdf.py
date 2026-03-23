@@ -272,54 +272,32 @@ def extract(doc_id: int):
         return redirect(url_for("pdf.detail", doc_id=doc_id))
 
     # ------------------------------------------------------------------
-    # 2. Fallback: address-book field mapping (legacy, no schema yet)
+    # 2. No fields found — report gracefully without applying a global schema
     # ------------------------------------------------------------------
-    svc = _get_pdf_service()
-    if svc is None:
-        flash("PDF service is not available — check backend dependencies.", "danger")
-        return redirect(url_for("pdf.detail", doc_id=doc_id))
-
-    try:
-        text, _tables, page_count = svc.extract(doc.file_path)
-        mapped = svc.map_address_book_fields(text)
-
-        # OCR fallback for blank address-book fields
-        try:
-            from services.ocr_utils import fill_missing_fields_with_ocr  # type: ignore[import]
-            fields_dict = {item["field_name"]: item.get("value", "") for item in mapped}
-            fields_dict = fill_missing_fields_with_ocr(fields_dict, doc.file_path, page_index=0)
-            for item in mapped:
-                item["value"] = fields_dict.get(item["field_name"], item.get("value", ""))
-        except Exception as _exc:
-            current_app.logger.warning("OCR fallback failed (non-fatal): %s", _exc)
-
-        ExtractedField.query.filter_by(document_id=doc_id).delete()
-
-        for item in mapped:
-            field = ExtractedField(
-                document_id=doc_id,
-                field_name=item["field_name"],
-                value=item["value"],
-                confidence=item.get("confidence", 1.0),
-            )
-            db.session.add(field)
-
-        doc.status = "extracted"
-        doc.page_count = page_count
-        _log(current_user.id, "extract", "document", str(doc_id), "address-book")
-        db.session.commit()
-        flash("Extraction complete (address-book schema).", "success")
-    except (OSError, RuntimeError, ValueError) as exc:
-        db.session.rollback()
-        flash(f"Extraction failed: {exc}", "danger")
-    except ImportError as exc:
-        db.session.rollback()
-        flash(f"Extraction failed — missing dependency: {exc}", "danger")
-    except Exception as exc:
-        db.session.rollback()
-        current_app.logger.exception("Unexpected error during extraction for doc %s", doc_id)
-        flash(f"Extraction failed (unexpected error): {exc}", "danger")
-
+    # The previous behaviour fell back to an address-book field mapper here,
+    # which silently wrote generic field names (Name, Street Address, Cell
+    # Phone, etc.) into the ExtractedField table for ANY document type.  That
+    # caused cross-document/template leakage: opening a non-address-book PDF
+    # in the AI view would show address-book fields that never belonged to it.
+    #
+    # The correct fix is document/template isolation: only store fields that
+    # were actually discovered in THIS document's content.  If dynamic
+    # extraction found nothing, we keep any existing fields and tell the user.
+    # Address-book PDFs have their own dedicated blueprint and extraction flow
+    # (blueprints/address_book.py) which is the right place for that mapping.
+    msg = "No fields could be discovered in this document"
+    if dyn_exc_msg:
+        msg += f" ({dyn_exc_msg})"
+    flash(
+        f"{msg}. Open the AI Extraction view (the \u201cAI Extract\u201d button on the document page) "
+        "to annotate fields manually.",
+        "info",
+    )
+    current_app.logger.info(
+        "extract: doc=%s — dynamic extraction found no pairs; "
+        "skipping address-book fallback to prevent cross-template field leakage.",
+        doc_id,
+    )
     return redirect(url_for("pdf.detail", doc_id=doc_id))
 
 

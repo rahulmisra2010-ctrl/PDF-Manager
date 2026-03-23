@@ -1891,6 +1891,62 @@ class TestApplyTrainingToDocument:
             ).first()
         assert field.value == "Asansol"
 
+    def test_cross_document_training_not_applied(self, client, app):
+        """Training examples from Document A must NOT affect Document B.
+
+        This is the core cross-PDF/template leakage regression test:
+        applying training to doc_b should only use doc_b's own training data,
+        even when doc_a has training examples for the same field names.
+        """
+        from models import Document, ExtractedField, TrainingExample
+        # Doc A: address-book PDF with its own training data
+        with app.app_context():
+            doc_a = Document(filename="address_book.pdf",
+                             file_path="/tmp/addr.pdf", status="extracted")
+            db.session.add(doc_a)
+            db.session.flush()
+            db.session.add(ExtractedField(
+                document_id=doc_a.id, field_name="Name",
+                value="Alice Smith", confidence=1.0,
+            ))
+            db.session.add(TrainingExample(
+                document_id=doc_a.id,
+                field_name="Name",
+                correct_value="Alice Smith",
+            ))
+            db.session.commit()
+            doc_a_id = doc_a.id
+
+        # Confirm doc_a's training example was actually persisted before
+        # applying training to an unrelated document.
+        with app.app_context():
+            doc_a_training = TrainingExample.query.filter_by(
+                document_id=doc_a_id, field_name="Name"
+            ).first()
+        assert doc_a_training is not None, (
+            "Precondition: doc_a must have a TrainingExample for 'Name'"
+        )
+
+        # Doc B: withdrawal form — has a "Name" field but NO training data
+        doc_b_id = self._create_doc(app, [("Name", "Original Name", 0.5)])
+
+        _login(client, app)
+        resp = client.post(f"/api/v1/training/apply/{doc_b_id}")
+        # Must return 400: there is no training data scoped to doc_b
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert data["ok"] is False
+
+        # Verify doc_b's field was NOT overwritten with doc_a's training value
+        with app.app_context():
+            field = ExtractedField.query.filter_by(
+                document_id=doc_b_id, field_name="Name"
+            ).first()
+        assert field.value == "Original Name", (
+            "Training data from a different document must not overwrite "
+            "fields of the current document"
+        )
+
     def test_sets_document_status_edited(self, client, app):
         """Applying training data must set the document status to 'edited'."""
         doc_id = self._create_doc(app, [("Name", "Old", 0.5)])
