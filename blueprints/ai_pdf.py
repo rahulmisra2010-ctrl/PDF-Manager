@@ -80,10 +80,36 @@ def view(doc_id: int):
     fields = ExtractedField.query.filter_by(document_id=doc_id).all()
     svc = _get_ai_service()
     engines = svc.get_available_engines() if svc else ["PyMuPDF"]
+
+    # Build a JSON-serialisable list of field dicts scoped to this document.
+    # These are injected into window.AI_CONFIG.initialFields so the JavaScript
+    # overlay and sidebar start in sync with the DB state without any
+    # cross-document contamination.
+    fields_json = [
+        {
+            "id": f.id,
+            "field_name": f.field_name,
+            "label": f.field_name,
+            "value": f.value or "",
+            "confidence": float(f.confidence) if f.confidence is not None else 1.0,
+            "page": f.page_number or 1,
+            "doc_id": doc_id,
+            "bbox": {
+                "x0": f.bbox_x,
+                "y0": f.bbox_y,
+                "x1": (f.bbox_x + f.bbox_width) if (f.bbox_x is not None and f.bbox_width is not None) else None,
+                "y1": (f.bbox_y + f.bbox_height) if (f.bbox_y is not None and f.bbox_height is not None) else None,
+            } if f.bbox_x is not None else None,
+            "label_bbox": None,
+        }
+        for f in fields
+    ]
+
     return render_template(
         "pdf/extract_ai.html",
         doc=doc,
         fields=fields,
+        fields_json=fields_json,
         engines=engines,
     )
 
@@ -169,11 +195,13 @@ def detect_fields(doc_id: int):
                     "bbox":        pixel_bbox,
                     "label_bbox":  pixel_label_bbox,
                     "page":        page_num,
+                    "doc_id":      doc_id,
                 })
             unpaired = sum(1 for f in fields_out if not f["value"])
             return jsonify({
                 "fields": fields_out,
                 "page": page_num,
+                "doc_id": doc_id,
                 "pairing_mode": "dynamic",
                 "unpaired_labels_count": unpaired,
             })
@@ -276,6 +304,7 @@ def detect_fields(doc_id: int):
                 "bbox":       p.get("bbox"),
                 "label_bbox": p.get("label_bbox"),
                 "page":       page_num,
+                "doc_id":     doc_id,
             }
             for p in pairs
         ]
@@ -288,6 +317,7 @@ def detect_fields(doc_id: int):
         return jsonify({
             "fields": fields_out,
             "page": page_num,
+            "doc_id": doc_id,
             "pairing_mode": pairing_mode,
             "unpaired_labels_count": unpaired,
         })
