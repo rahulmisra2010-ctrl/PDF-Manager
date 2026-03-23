@@ -29,7 +29,7 @@ from flask import (
 )
 from flask_login import current_user, login_required
 
-from models import AuditLog, Document, ExtractedField, FieldEditHistory, db
+from models import AuditLog, Document, DocumentSchema, ExtractedField, FieldEditHistory, db
 
 pdf_editor_bp = Blueprint(
     "pdf_editor",
@@ -207,48 +207,126 @@ def save(doc_id: int):
 @pdf_editor_bp.route("/<int:doc_id>/extract", methods=["POST"])
 @login_required
 def extract(doc_id: int):
-    """Re-run OCR and field mapping for the document."""
-    doc = Document.query.get_or_404(doc_id)
-    svc = _get_pdf_service()
+    """Re-run field extraction for the document using dynamic label discovery.
 
-    if svc is None:
-        flash("PDF service unavailable — check backend dependencies.", "danger")
+    Uses the same document-scoped dynamic extraction as the main PDF blueprint
+    so that only labels actually present in this document are stored.  The
+    previous address-book fallback (``map_address_book_fields``) applied a
+    fixed set of labels (Name, Street Address, Cell Phone, etc.) to every
+    document regardless of content, causing cross-template field leakage when
+    non-address-book PDFs were opened in this editor.
+    """
+    doc = Document.query.get_or_404(doc_id)
+
+    if not os.path.exists(doc.file_path):
+        flash("Extraction failed: uploaded file not found on disk.", "danger")
         return redirect(url_for("pdf_editor.editor", doc_id=doc_id))
 
     try:
-        if not os.path.exists(doc.file_path):
-            flash("Extraction failed: uploaded file not found on disk.", "danger")
-            return redirect(url_for("pdf_editor.editor", doc_id=doc_id))
-
-        text, _tables, page_count = svc.extract(doc.file_path)
-        mapped = svc.map_address_book_fields(text)
-
-        ExtractedField.query.filter_by(document_id=doc_id).delete()
-
-        for item in mapped:
-            field = ExtractedField(
-                document_id=doc_id,
-                field_name=item["field_name"],
-                value=item["value"],
-                # Confidence is set to 1.0 as a placeholder; the standard
-                # PDFService.map_address_book_fields() does not return a
-                # per-field confidence score (unlike OCR engines).
-                confidence=1.0,
-            )
-            db.session.add(field)
-
-        doc.status = "extracted"
-        doc.page_count = page_count
-        _log(current_user.id, "extract", "document", str(doc_id))
-        db.session.commit()
-        flash("Field extraction complete.", "success")
-    except Exception as exc:
-        db.session.rollback()
+        from services.dynamic_extraction import (  # type: ignore[import]
+            create_schema_from_pairs,
+            extract_dynamic_fields,
+            map_pairs_to_schema,
+        )
+    except Exception as imp_exc:
         current_app.logger.exception(
-            "Extraction failed for doc %s: %s", doc_id, exc
+            "Could not import dynamic_extraction for doc %s: %s", doc_id, imp_exc
+        )
+        flash("Extraction service unavailable — check backend dependencies.", "danger")
+        return redirect(url_for("pdf_editor.editor", doc_id=doc_id))
+
+    try:
+        dynamic_pairs = extract_dynamic_fields(doc.file_path, page_index=0)
+    except Exception as exc:
+        current_app.logger.exception(
+            "Dynamic extraction failed for doc %s: %s", doc_id, exc
         )
         flash(f"Extraction failed: {exc}", "danger")
+        return redirect(url_for("pdf_editor.editor", doc_id=doc_id))
 
+    if dynamic_pairs:
+        try:
+            # Load or create the per-document schema so re-extractions keep
+            # a stable, document-specific field list.
+            schema = DocumentSchema.query.filter_by(document_id=doc_id).first()
+            if schema is None:
+                schema = DocumentSchema(document_id=doc_id)
+                schema.labels = create_schema_from_pairs(dynamic_pairs)
+                db.session.add(schema)
+                pairs_to_save = dynamic_pairs
+                current_app.logger.info(
+                    "Created new schema for doc %s: %d labels", doc_id, len(schema.labels)
+                )
+            else:
+                pairs_to_save = map_pairs_to_schema(dynamic_pairs, schema.labels)
+                current_app.logger.info(
+                    "Mapped %d pair(s) to schema (%d labels) for doc %s",
+                    len(dynamic_pairs), len(schema.labels), doc_id,
+                )
+
+            ExtractedField.query.filter_by(document_id=doc_id).delete()
+
+            for pair in pairs_to_save:
+                label = pair.get("label") or pair.get("field_name", "")
+                bbox = pair.get("bbox") or {}
+                field = ExtractedField(
+                    document_id=doc_id,
+                    field_name=label,
+                    value=pair.get("value", ""),
+                    confidence=pair.get("confidence", 1.0),
+                    page_number=pair.get("page_number", 1),
+                    bbox_x=bbox.get("x"),
+                    bbox_y=bbox.get("y"),
+                    bbox_width=bbox.get("width"),
+                    bbox_height=bbox.get("height"),
+                )
+                db.session.add(field)
+
+            # Update page count
+            try:
+                import fitz  # type: ignore[import]
+                with fitz.open(doc.file_path) as _fitz_doc:
+                    doc.page_count = len(_fitz_doc)
+            except Exception as fitz_exc:
+                current_app.logger.debug(
+                    "Could not determine page count for doc %s: %s", doc_id, fitz_exc
+                )
+
+            doc.status = "extracted"
+            _log(current_user.id, "extract", "document", str(doc_id))
+            db.session.commit()
+            flash(
+                f"Extraction complete — {len(pairs_to_save)} field(s) found.",
+                "success",
+            )
+        except Exception as exc:
+            db.session.rollback()
+            current_app.logger.exception(
+                "Error saving extracted fields for doc %s: %s", doc_id, exc
+            )
+            flash(f"Extraction failed while saving fields: {exc}", "danger")
+
+        return redirect(url_for("pdf_editor.editor", doc_id=doc_id))
+
+    # No pairs found — if this document already has a schema, keep existing fields.
+    existing_schema = DocumentSchema.query.filter_by(document_id=doc_id).first()
+    if existing_schema is not None:
+        flash("No new fields discovered — keeping existing extracted fields.", "info")
+        return redirect(url_for("pdf_editor.editor", doc_id=doc_id))
+
+    # Nothing found and no prior schema: report gracefully.  Do NOT apply the
+    # address-book field template here — that would write labels (Name, Street
+    # Address, Cell Phone, etc.) that do not belong to this document.
+    current_app.logger.info(
+        "extract (live editor): doc=%s — no pairs found; "
+        "skipping address-book fallback to prevent cross-template field leakage.",
+        doc_id,
+    )
+    flash(
+        "No fields could be discovered in this document. "
+        "Use the AI Extract view to annotate fields manually.",
+        "info",
+    )
     return redirect(url_for("pdf_editor.editor", doc_id=doc_id))
 
 
