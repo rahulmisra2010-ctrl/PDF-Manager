@@ -439,25 +439,25 @@ function _makeFieldCard(field) {
         viewer.drawLabeledHighlight(
           combinedX0, combinedY0, combinedX1, combinedY1,
           fieldLabel, fieldValue,
-          { fillColor: 'rgba(139, 69, 19, 0.25)', strokeColor: '#A0522D' }
+          { fillColor: 'rgba(255, 220, 0, 0.35)', strokeColor: '#e6a000' }
         );
       }
     }
-    // Draw value bbox with brown highlight
+    // Draw value bbox with yellow highlight
     else if (field.bbox) {
       const { x0, y0, x1, y1 } = field.bbox;
       if (x0 !== undefined) {
         viewer.drawLabeledHighlight(x0, y0, x1, y1, fieldLabel, fieldValue,
-          { fillColor: 'rgba(139, 69, 19, 0.25)', strokeColor: '#A0522D' }
+          { fillColor: 'rgba(255, 220, 0, 0.35)', strokeColor: '#e6a000' }
         );
       }
     }
-    // Draw label bbox with brown highlight (label-only)
+    // Draw label bbox with yellow highlight (label-only)
     else if (field.label_bbox) {
       const { x0, y0, x1, y1 } = field.label_bbox;
       if (x0 !== undefined) {
         viewer.drawLabeledHighlight(x0, y0, x1, y1, fieldLabel, '',
-          { fillColor: 'rgba(139, 69, 19, 0.25)', strokeColor: '#A0522D' }
+          { fillColor: 'rgba(255, 220, 0, 0.35)', strokeColor: '#e6a000' }
         );
       }
     }
