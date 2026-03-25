@@ -418,22 +418,47 @@ function _makeFieldCard(field) {
     <div class="confidence-label">Confidence: ${confStr}</div>
   `;
 
-  // Highlight bounding boxes on card hover: label in pink, value in green
+  // Highlight bounding boxes on card hover: use brown labeled highlights
   card.addEventListener('mouseenter', () => {
     if (field.page && field.page !== viewer.currentPage) return;
     viewer.clearOverlay();
-    // Highlight label bbox in pink
-    if (field.label_bbox) {
-      const { x0, y0, x1, y1 } = field.label_bbox;
-      if (x0 !== undefined) {
-        viewer.drawHighlight(x0, y0, x1, y1, 'rgba(255,99,132,0.35)', '#e0497a');
+
+    const fieldLabel = field.label || field.field_name || '';
+    const fieldValue = (field.value !== undefined) ? field.value : (field.text || '');
+
+    // If field has both label_bbox and bbox, draw combined highlighted section
+    if (field.label_bbox && field.bbox) {
+      const lbox = field.label_bbox;
+      const vbox = field.bbox;
+      const combinedX0 = Math.min(lbox.x0 || 0, vbox.x0 || 0);
+      const combinedY0 = Math.min(lbox.y0 || 0, vbox.y0 || 0);
+      const combinedX1 = Math.max(lbox.x1 || 0, vbox.x1 || 0);
+      const combinedY1 = Math.max(lbox.y1 || 0, vbox.y1 || 0);
+
+      if (combinedX0 !== undefined && combinedX0 < combinedX1) {
+        viewer.drawLabeledHighlight(
+          combinedX0, combinedY0, combinedX1, combinedY1,
+          fieldLabel, fieldValue,
+          { fillColor: 'rgba(139, 69, 19, 0.25)', strokeColor: '#A0522D' }
+        );
       }
     }
-    // Highlight value bbox in green/orange
-    if (field.bbox) {
+    // Draw value bbox with brown highlight
+    else if (field.bbox) {
       const { x0, y0, x1, y1 } = field.bbox;
       if (x0 !== undefined) {
-        viewer.drawHighlight(x0, y0, x1, y1, 'rgba(40,167,69,0.30)', '#28a745');
+        viewer.drawLabeledHighlight(x0, y0, x1, y1, fieldLabel, fieldValue,
+          { fillColor: 'rgba(139, 69, 19, 0.25)', strokeColor: '#A0522D' }
+        );
+      }
+    }
+    // Draw label bbox with brown highlight (label-only)
+    else if (field.label_bbox) {
+      const { x0, y0, x1, y1 } = field.label_bbox;
+      if (x0 !== undefined) {
+        viewer.drawLabeledHighlight(x0, y0, x1, y1, fieldLabel, '',
+          { fillColor: 'rgba(139, 69, 19, 0.25)', strokeColor: '#A0522D' }
+        );
       }
     }
   });
