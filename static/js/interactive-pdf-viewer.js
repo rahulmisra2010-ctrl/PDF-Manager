@@ -149,7 +149,12 @@ class InteractivePDFViewer {
       const labelWidth = labelMetrics.width + 8;
       const labelHeight = labelFontSize + 4;
       const labelX = x0;
-      const labelY = y0 - labelHeight - 2;
+      // Position label above the rectangle, but ensure it stays within canvas bounds
+      let labelY = y0 - labelHeight - 2;
+      if (labelY < 0) {
+        // If label would be above canvas, position it inside the rectangle at the top
+        labelY = y0 + 2;
+      }
 
       // Label background
       ctx.fillStyle = labelBgColor;
