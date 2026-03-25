@@ -108,6 +108,83 @@ class InteractivePDFViewer {
     this._octx.restore();
   }
 
+  /**
+   * Draw a highlighted rectangle with label and value text displayed.
+   * This creates a brown-colored rectangle with the field label shown above
+   * and the value shown inside the rectangle.
+   *
+   * @param {number} x0 - Left x coordinate
+   * @param {number} y0 - Top y coordinate
+   * @param {number} x1 - Right x coordinate
+   * @param {number} y1 - Bottom y coordinate
+   * @param {string} label - Field label to display above the rectangle
+   * @param {string} value - Field value to display inside the rectangle
+   * @param {object} options - Additional options (fillColor, strokeColor)
+   */
+  drawLabeledHighlight(x0, y0, x1, y1, label = '', value = '', options = {}) {
+    if (!this._octx) return;
+    const ctx = this._octx;
+    const width  = x1 - x0;
+    const height = y1 - y0;
+
+    // Brown color scheme as shown in the reference image
+    const fillColor   = options.fillColor   || 'rgba(139, 69, 19, 0.15)';
+    const strokeColor = options.strokeColor || '#8B4513';
+    const labelBgColor = options.labelBgColor || '#8B4513';
+
+    ctx.save();
+
+    // Draw rectangle with brown border
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth   = 2;
+    ctx.fillStyle   = fillColor;
+    ctx.fillRect(x0, y0, width, height);
+    ctx.strokeRect(x0, y0, width, height);
+
+    // Draw label above the rectangle if provided
+    if (label) {
+      const labelFontSize = Math.max(10, Math.min(14, height * 0.3));
+      ctx.font = `bold ${labelFontSize}px Arial, sans-serif`;
+      const labelMetrics = ctx.measureText(label);
+      const labelWidth = labelMetrics.width + 8;
+      const labelHeight = labelFontSize + 4;
+      const labelX = x0;
+      const labelY = y0 - labelHeight - 2;
+
+      // Label background
+      ctx.fillStyle = labelBgColor;
+      ctx.fillRect(labelX, labelY, labelWidth, labelHeight);
+
+      // Label text (white)
+      ctx.fillStyle = '#FFFFFF';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, labelX + 4, labelY + labelHeight / 2);
+    }
+
+    // Draw value inside the rectangle if provided
+    if (value) {
+      const valueFontSize = Math.max(10, Math.min(16, height * 0.5));
+      ctx.font = `${valueFontSize}px Arial, sans-serif`;
+      ctx.fillStyle = '#333333';
+      ctx.textBaseline = 'middle';
+
+      // Calculate text position (centered in box)
+      const valueMetrics = ctx.measureText(value);
+      const textX = x0 + (width - valueMetrics.width) / 2;
+      const textY = y0 + height / 2;
+
+      // Draw value text (clipped to box width)
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x0 + 2, y0 + 2, width - 4, height - 4);
+      ctx.clip();
+      ctx.fillText(value, Math.max(x0 + 4, textX), textY);
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
   /** Clear the overlay canvas. */
   clearOverlay() {
     if (this._octx && this._overlay) {
@@ -115,28 +192,48 @@ class InteractivePDFViewer {
     }
   }
 
-  /** Draw all field bounding boxes at once with confidence-based colours.
+  /** Draw all field bounding boxes at once with brown-colored highlights.
    *
-   * For fields that have a ``label_bbox`` the label box is drawn in pink and
-   * the value box (``bbox``) in the normal confidence colour.  Fields that
-   * have only a ``label_bbox`` (label-only, no value found) are drawn in pink.
+   * Fields are drawn with their label shown above the rectangle and
+   * the value shown inside the rectangle, using a brown color scheme.
+   * This provides clear visual identification of extracted field sections.
    */
   drawFields(fields) {
     this.clearOverlay();
     for (const f of fields) {
-      // Draw label bbox in pink when present
-      if (f.label_bbox) {
-        const { x0, y0, x1, y1 } = f.label_bbox;
-        if (x0 !== undefined) {
-          this.drawHighlight(x0, y0, x1, y1, 'rgba(255,99,132,0.25)', '#e0497a');
+      const label = f.label || f.field_name || '';
+      const value = f.value || f.text || '';
+
+      // If field has both label_bbox and bbox, draw them as a combined section
+      // with the label shown above the combined bounding box
+      if (f.label_bbox && f.bbox) {
+        // Calculate combined bounding box that spans both label and value
+        const lbox = f.label_bbox;
+        const vbox = f.bbox;
+        const combinedX0 = Math.min(lbox.x0 || 0, vbox.x0 || 0);
+        const combinedY0 = Math.min(lbox.y0 || 0, vbox.y0 || 0);
+        const combinedX1 = Math.max(lbox.x1 || 0, vbox.x1 || 0);
+        const combinedY1 = Math.max(lbox.y1 || 0, vbox.y1 || 0);
+
+        if (combinedX0 !== undefined && combinedX0 < combinedX1) {
+          this.drawLabeledHighlight(
+            combinedX0, combinedY0, combinedX1, combinedY1,
+            label, value
+          );
         }
       }
-      // Draw value bbox in confidence colour when present
-      if (f.bbox) {
+      // If only value bbox is present
+      else if (f.bbox) {
         const { x0, y0, x1, y1 } = f.bbox;
         if (x0 !== undefined) {
-          const { fill, stroke } = this._confColor(f.confidence || 0.5);
-          this.drawHighlight(x0, y0, x1, y1, fill, stroke);
+          this.drawLabeledHighlight(x0, y0, x1, y1, label, value);
+        }
+      }
+      // If only label bbox is present (label-only field)
+      else if (f.label_bbox) {
+        const { x0, y0, x1, y1 } = f.label_bbox;
+        if (x0 !== undefined) {
+          this.drawLabeledHighlight(x0, y0, x1, y1, label, '');
         }
       }
     }
