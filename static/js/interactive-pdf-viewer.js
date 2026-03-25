@@ -127,14 +127,14 @@ class InteractivePDFViewer {
     const width  = x1 - x0;
     const height = y1 - y0;
 
-    // Brown color scheme as shown in the reference image
-    const fillColor   = options.fillColor   || 'rgba(139, 69, 19, 0.15)';
-    const strokeColor = options.strokeColor || '#8B4513';
-    const labelBgColor = options.labelBgColor || '#8B4513';
+    // Yellow color scheme for field highlights
+    const fillColor   = options.fillColor   || 'rgba(255, 220, 0, 0.28)';
+    const strokeColor = options.strokeColor || 'rgba(255, 180, 0, 0.85)';
+    const labelBgColor = options.labelBgColor || '#e6a000';
 
     ctx.save();
 
-    // Draw rectangle with brown border
+    // Draw rectangle with yellow border
     ctx.strokeStyle = strokeColor;
     ctx.lineWidth   = 2;
     ctx.fillStyle   = fillColor;
@@ -197,10 +197,10 @@ class InteractivePDFViewer {
     }
   }
 
-  /** Draw all field bounding boxes at once with brown-colored highlights.
+  /** Draw all field bounding boxes at once with yellow-colored highlights.
    *
    * Fields are drawn with their label shown above the rectangle and
-   * the value shown inside the rectangle, using a brown color scheme.
+   * the value shown inside the rectangle, using a yellow color scheme.
    * This provides clear visual identification of extracted field sections.
    */
   drawFields(fields) {
