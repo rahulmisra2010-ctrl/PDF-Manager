@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Form Bot — PDF Manager{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-2 mb-4">
+  <i class="bi bi-robot fs-2 text-primary"></i>
+  <div>
+    <h2 class="mb-0">Form Bot</h2>
+    <small class="text-muted">Upload a form image → get a fillable PDF</small>
+  </div>
+</div>
+
+<!-- How it works -->
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-xl-3">
+    <div class="card h-100 border-0 shadow-sm">
+      <div class="card-body text-center py-3">
+        <i class="bi bi-image fs-2 text-info mb-2 d-block"></i>
+        <strong>1. Upload</strong>
+        <p class="text-muted small mb-0">Scanned form or photo</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
+    <div class="card h-100 border-0 shadow-sm">
+      <div class="card-body text-center py-3">
+        <i class="bi bi-eye fs-2 text-warning mb-2 d-block"></i>
+        <strong>2. OCR</strong>
+        <p class="text-muted small mb-0">Extract machine-readable text</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
+    <div class="card h-100 border-0 shadow-sm">
+      <div class="card-body text-center py-3">
+        <i class="bi bi-diagram-3 fs-2 text-success mb-2 d-block"></i>
+        <strong>3. NLP</strong>
+        <p class="text-muted small mb-0">Identify labels &amp; values</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
+    <div class="card h-100 border-0 shadow-sm">
+      <div class="card-body text-center py-3">
+        <i class="bi bi-file-earmark-check fs-2 text-primary mb-2 d-block"></i>
+        <strong>4. Fillable PDF</strong>
+        <p class="text-muted small mb-0">Editable form output</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Upload card -->
+<div class="card shadow-sm" style="max-width:560px">
+  <div class="card-header fw-semibold">
+    <i class="bi bi-cloud-upload me-2"></i>Upload Form Image
+  </div>
+  <div class="card-body">
+    <form method="POST" action="{{ url_for('bot.process') }}"
+          enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <div class="mb-3">
+        <label for="form_image" class="form-label">
+          Select image <span class="text-muted">(PNG, JPG, TIFF, BMP, WebP&hellip;)</span>
+        </label>
+        <input class="form-control" type="file" id="form_image" name="form_image"
+               accept="image/*" required>
+      </div>
+
+      <div id="preview-wrap" class="mb-3 d-none">
+        <p class="small text-muted mb-1">Preview:</p>
+        <img id="img-preview" src="#" alt="Preview"
+             class="img-thumbnail" style="max-height:200px">
+      </div>
+
+      <button type="submit" class="btn btn-primary w-100">
+        <i class="bi bi-robot me-2"></i>Generate Fillable PDF
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  document.getElementById('form_image').addEventListener('change', function () {
+    const file = this.files[0];
+    if (!file) return;
+    const wrap = document.getElementById('preview-wrap');
+    const img  = document.getElementById('img-preview');
+    img.src = URL.createObjectURL(file);
+    wrap.classList.remove('d-none');
+  });
+</script>
+{% endblock %}

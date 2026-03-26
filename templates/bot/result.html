@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Bot Result — PDF Manager{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-2 mb-4">
+  <i class="bi bi-robot fs-2 text-primary"></i>
+  <div>
+    <h2 class="mb-0">Bot Result</h2>
+    <small class="text-muted">{{ field_count }} field(s) extracted</small>
+  </div>
+</div>
+
+<!-- Download banner -->
+<div class="alert alert-success d-flex align-items-center gap-3 mb-4">
+  <i class="bi bi-check-circle-fill fs-3"></i>
+  <div>
+    <strong>Fillable PDF generated!</strong>
+    <p class="mb-0 small">All fields are editable. Pre-filled values can be overwritten.</p>
+  </div>
+  <a href="{{ url_for('bot.download', token=token) }}"
+     class="btn btn-success ms-auto">
+    <i class="bi bi-download me-2"></i>Download PDF
+  </a>
+</div>
+
+<!-- Field preview table -->
+{% if fields %}
+<div class="card shadow-sm mb-4">
+  <div class="card-header fw-semibold">
+    <i class="bi bi-table me-2"></i>Extracted Fields Preview
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>#</th>
+          <th>Label</th>
+          <th>Pre-filled Value</th>
+          <th>Type</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for field in fields %}
+        <tr>
+          <td class="text-muted small">{{ loop.index }}</td>
+          <td><strong>{{ field.label }}</strong></td>
+          <td>
+            {% if field.value %}
+              <span class="badge bg-info text-dark">{{ field.value }}</span>
+            {% else %}
+              <span class="text-muted fst-italic small">blank</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if field.type == 'checkbox' %}
+              <span class="badge bg-secondary">
+                <i class="bi bi-check2-square me-1"></i>Checkbox
+              </span>
+            {% elif field.type == 'signature' %}
+              <span class="badge bg-warning text-dark">
+                <i class="bi bi-pen me-1"></i>Signature
+              </span>
+            {% elif field.type == 'date' %}
+              <span class="badge bg-primary">
+                <i class="bi bi-calendar me-1"></i>Date
+              </span>
+            {% else %}
+              <span class="badge bg-light text-dark border">
+                <i class="bi bi-input-cursor me-1"></i>Text
+              </span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="alert alert-info">
+  <i class="bi bi-info-circle me-2"></i>
+  No fields could be extracted from the image — a demo fillable PDF with
+  common withdrawal-form fields has been generated instead.
+</div>
+{% endif %}
+
+{% if withdrawal_reasons %}
+<div class="card shadow-sm mb-4">
+  <div class="card-header fw-semibold">
+    <i class="bi bi-check2-all me-2"></i>Withdrawal Reasons Detected
+  </div>
+  <div class="card-body d-flex flex-wrap gap-2">
+    {% for reason in withdrawal_reasons %}
+      <span class="badge bg-danger">{{ reason }}</span>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<a href="{{ url_for('bot.index') }}" class="btn btn-outline-secondary">
+  <i class="bi bi-arrow-left me-2"></i>Process Another Image
+</a>
+{% endblock %}
