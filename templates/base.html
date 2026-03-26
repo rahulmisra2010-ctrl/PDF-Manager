@@ -74,6 +74,12 @@
             {% endif %}
           </a>
         </li>
+        <li class="nav-item">
+          <a class="nav-link {% if request.blueprint == 'bot' %}active{% endif %}"
+             href="{{ url_for('bot.index') }}">
+            <i class="bi bi-robot me-2"></i>Bot
+          </a>
+        </li>
         {% if current_user.role == 'Admin' %}
         <li class="nav-item">
           <a class="nav-link {% if request.blueprint == 'users' %}active{% endif %}"
