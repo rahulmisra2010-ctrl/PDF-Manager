@@ -6,7 +6,7 @@
   <i class="bi bi-robot fs-2 text-primary"></i>
   <div>
     <h2 class="mb-0">Form Bot</h2>
-    <small class="text-muted">Upload a form image → get a fillable PDF</small>
+    <small class="text-muted">Upload a form image or PDF → view &amp; edit fields → export fillable PDF</small>
   </div>
 </div>
 
@@ -15,36 +15,36 @@
   <div class="col-sm-6 col-xl-3">
     <div class="card h-100 border-0 shadow-sm">
       <div class="card-body text-center py-3">
-        <i class="bi bi-image fs-2 text-info mb-2 d-block"></i>
+        <i class="bi bi-file-earmark-arrow-up fs-2 text-info mb-2 d-block"></i>
         <strong>1. Upload</strong>
-        <p class="text-muted small mb-0">Scanned form or photo</p>
+        <p class="text-muted small mb-0">Image or PDF form</p>
       </div>
     </div>
   </div>
   <div class="col-sm-6 col-xl-3">
     <div class="card h-100 border-0 shadow-sm">
       <div class="card-body text-center py-3">
-        <i class="bi bi-eye fs-2 text-warning mb-2 d-block"></i>
-        <strong>2. OCR</strong>
-        <p class="text-muted small mb-0">Extract machine-readable text</p>
+        <i class="bi bi-search fs-2 text-warning mb-2 d-block"></i>
+        <strong>2. Detect Fields</strong>
+        <p class="text-muted small mb-0">OCR &amp; field extraction</p>
       </div>
     </div>
   </div>
   <div class="col-sm-6 col-xl-3">
     <div class="card h-100 border-0 shadow-sm">
       <div class="card-body text-center py-3">
-        <i class="bi bi-diagram-3 fs-2 text-success mb-2 d-block"></i>
-        <strong>3. NLP</strong>
-        <p class="text-muted small mb-0">Identify labels &amp; values</p>
+        <i class="bi bi-pencil-square fs-2 text-success mb-2 d-block"></i>
+        <strong>3. Edit</strong>
+        <p class="text-muted small mb-0">View PDF &amp; edit fields</p>
       </div>
     </div>
   </div>
   <div class="col-sm-6 col-xl-3">
     <div class="card h-100 border-0 shadow-sm">
       <div class="card-body text-center py-3">
-        <i class="bi bi-file-earmark-check fs-2 text-primary mb-2 d-block"></i>
-        <strong>4. Fillable PDF</strong>
-        <p class="text-muted small mb-0">Editable form output</p>
+        <i class="bi bi-download fs-2 text-primary mb-2 d-block"></i>
+        <strong>4. Export</strong>
+        <p class="text-muted small mb-0">Save fillable PDF</p>
       </div>
     </div>
   </div>
@@ -53,7 +53,7 @@
 <!-- Upload card -->
 <div class="card shadow-sm" style="max-width:560px">
   <div class="card-header fw-semibold">
-    <i class="bi bi-cloud-upload me-2"></i>Upload Form Image
+    <i class="bi bi-cloud-upload me-2"></i>Upload Form
   </div>
   <div class="card-body">
     <form method="POST" action="{{ url_for('bot.process') }}"
@@ -62,22 +62,46 @@
 
       <div class="mb-3">
         <label for="form_image" class="form-label">
-          Select image <span class="text-muted">(PNG, JPG, TIFF, BMP, WebP&hellip;)</span>
+          Select file <span class="text-muted">(PDF, PNG, JPG, TIFF, BMP, WebP&hellip;)</span>
         </label>
         <input class="form-control" type="file" id="form_image" name="form_image"
-               accept="image/*" required>
+               accept=".pdf,image/*" required>
+        <div class="form-text">
+          <i class="bi bi-info-circle me-1"></i>
+          Supports both image files (scanned forms) and PDF files (digital forms with fields like A, B, etc.)
+        </div>
       </div>
 
       <div id="preview-wrap" class="mb-3 d-none">
         <p class="small text-muted mb-1">Preview:</p>
         <img id="img-preview" src="#" alt="Preview"
              class="img-thumbnail" style="max-height:200px">
+        <div id="pdf-preview" class="d-none alert alert-info py-2 mb-0">
+          <i class="bi bi-file-earmark-pdf me-2"></i>
+          <span id="pdf-filename">PDF file selected</span>
+        </div>
       </div>
 
       <button type="submit" class="btn btn-primary w-100">
-        <i class="bi bi-robot me-2"></i>Generate Fillable PDF
+        <i class="bi bi-robot me-2"></i>Process &amp; Open Viewer
       </button>
     </form>
+  </div>
+</div>
+
+<!-- Features card -->
+<div class="card shadow-sm mt-4" style="max-width:560px">
+  <div class="card-header fw-semibold">
+    <i class="bi bi-stars me-2"></i>Features
+  </div>
+  <div class="card-body">
+    <ul class="mb-0">
+      <li><strong>Field Detection:</strong> Automatically detects fields labeled A, B, or any other labels</li>
+      <li><strong>PDF Viewer:</strong> View the document in an interactive PDF viewer</li>
+      <li><strong>Editable Fields:</strong> Edit text inputs, checkboxes, signature, and date fields</li>
+      <li><strong>Pre-filled Support:</strong> Works with both blank and pre-filled forms</li>
+      <li><strong>Export:</strong> Save or download the edited fillable PDF</li>
+    </ul>
   </div>
 </div>
 {% endblock %}
@@ -87,9 +111,26 @@
   document.getElementById('form_image').addEventListener('change', function () {
     const file = this.files[0];
     if (!file) return;
+    
     const wrap = document.getElementById('preview-wrap');
-    const img  = document.getElementById('img-preview');
-    img.src = URL.createObjectURL(file);
+    const img = document.getElementById('img-preview');
+    const pdfPreview = document.getElementById('pdf-preview');
+    const pdfFilename = document.getElementById('pdf-filename');
+    
+    const isPDF = file.name.toLowerCase().endsWith('.pdf');
+    
+    if (isPDF) {
+      // Show PDF indicator
+      img.classList.add('d-none');
+      pdfPreview.classList.remove('d-none');
+      pdfFilename.textContent = file.name;
+    } else {
+      // Show image preview
+      img.src = URL.createObjectURL(file);
+      img.classList.remove('d-none');
+      pdfPreview.classList.add('d-none');
+    }
+    
     wrap.classList.remove('d-none');
   });
 </script>
