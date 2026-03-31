@@ -385,6 +385,7 @@ def extract_text_from_pdf(pdf_path: str | Path) -> str:
 
     # Try PyMuPDF first
     try:
+        # fitz is the PyMuPDF library - install via: pip install pymupdf
         import fitz  # type: ignore
         doc = fitz.open(pdf_path)
         text_parts = []
@@ -428,6 +429,7 @@ def extract_form_fields_from_pdf(pdf_path: str | Path) -> list[dict[str, Any]]:
     fields: list[dict[str, Any]] = []
 
     try:
+        # fitz is the PyMuPDF library - install via: pip install pymupdf
         import fitz  # type: ignore
         doc = fitz.open(pdf_path)
 
