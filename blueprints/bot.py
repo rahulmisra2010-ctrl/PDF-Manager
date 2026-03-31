@@ -3,12 +3,12 @@ blueprints/bot.py — Form-image/PDF-to-fillable-PDF bot blueprint.
 
 Routes
 ------
-GET  /bot/                      — upload page
-POST /bot/process               — run OCR → NLP → PDF pipeline, show preview
-GET  /bot/viewer/<token>        — interactive PDF viewer with editable fields
-POST /bot/save/<token>          — save edited field values and regenerate PDF
-GET  /bot/serve-pdf/<token>     — serve the raw PDF for PDF.js
-GET  /bot/download/<token>      — download the generated fillable PDF
+GET  /bot/                     — upload page (accepts images and PDFs)
+POST /bot/process              — run OCR → NLP → PDF pipeline, redirect to viewer
+GET  /bot/viewer/<token>       — interactive PDF viewer with editable fields
+GET  /bot/serve-pdf/<token>    — serve raw PDF for PDF.js viewer
+POST /bot/save/<token>         — save edited fields and regenerate PDF
+GET  /bot/download/<token>     — download the generated fillable PDF
 """
 
 from __future__ import annotations
@@ -34,7 +34,6 @@ from flask import (
     render_template,
     request,
     send_file,
-    session,
     url_for,
 )
 from flask_login import login_required
@@ -44,17 +43,25 @@ logger = logging.getLogger(__name__)
 
 bot_bp = Blueprint("bot", __name__, template_folder="../templates/bot")
 
-# Allowed file extensions (images + PDF)
+# Allowed image extensions
 _ALLOWED_IMAGE_EXTENSIONS = frozenset(
     {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp"}
 )
 _ALLOWED_PDF_EXTENSION = "pdf"
 _ALLOWED_EXTENSIONS = _ALLOWED_IMAGE_EXTENSIONS | {_ALLOWED_PDF_EXTENSION}
 
-# In-memory store for generated PDFs and field data keyed by a one-time token.
-# This is intentionally simple — tokens expire when the server restarts.
-# Structure: {token: {"pdf_bytes": bytes, "fields": list, "withdrawal_reasons": list}}
+# Allowed PDF extension
+_ALLOWED_PDF_EXTENSION = "pdf"
+
+# All allowed extensions
+_ALLOWED_EXTENSIONS = _ALLOWED_IMAGE_EXTENSIONS | {_ALLOWED_PDF_EXTENSION}
+
+# In-memory store for generated PDFs keyed by a one-time token.
+# Each entry stores: {"pdf_bytes": bytes, "fields": list, "structured": dict}
 _pdf_store: dict[str, dict[str, Any]] = {}
+
+# Precompiled token validation regex
+_TOKEN_RE = re.compile(r'^[A-Za-z0-9_-]{43}$')
 
 
 def _allowed(filename: str) -> bool:
@@ -73,6 +80,14 @@ def _is_pdf(filename: str) -> bool:
     )
 
 
+def _is_image(filename: str) -> bool:
+    """Check if the filename is an image."""
+    return (
+        "." in filename
+        and filename.rsplit(".", 1)[1].lower() in _ALLOWED_IMAGE_EXTENSIONS
+    )
+
+
 def _backend_service():
     """Lazily import the bot service (keeps import errors isolated)."""
     import sys
@@ -82,13 +97,22 @@ def _backend_service():
     if str(_backend) not in sys.path:
         sys.path.insert(0, str(_backend))
 
-    from services.bot_service import file_to_fillable_pdf, generate_fillable_pdf
-    return file_to_fillable_pdf, generate_fillable_pdf
+    from services.bot_service import (  # type: ignore
+        image_to_fillable_pdf,
+        pdf_to_fillable_pdf,
+        generate_fillable_pdf,
+        structure_text,
+    )
+    return {
+        "image_to_fillable_pdf": image_to_fillable_pdf,
+        "pdf_to_fillable_pdf": pdf_to_fillable_pdf,
+        "generate_fillable_pdf": generate_fillable_pdf,
+        "structure_text": structure_text,
+    }
 
 
 def _validate_token(token: str) -> bool:
-    """Validate that the token matches the expected format."""
-    _TOKEN_RE = re.compile(r'^[A-Za-z0-9_-]{43}$')
+    """Validate that the token matches expected format."""
     return bool(token and _TOKEN_RE.fullmatch(token))
 
 
@@ -107,8 +131,8 @@ def index():
 @login_required
 def process():
     """
-    Accept an uploaded form image or PDF, run the full pipeline, and show
-    a preview of extracted fields plus links to view/edit and download.
+    Accept an uploaded form image or PDF, run the processing pipeline,
+    and redirect to the interactive viewer.
     """
     if "form_file" not in request.files:
         flash("No file part in the request.", "danger")
@@ -121,7 +145,7 @@ def process():
 
     if not _allowed(file.filename):
         flash(
-            "Unsupported file type. Please upload a PDF, PNG, JPG, TIFF, or similar image.",
+            "Unsupported file type. Please upload a PNG, JPG, TIFF, PDF, or similar file.",
             "danger",
         )
         return redirect(url_for("bot.index"))
@@ -133,8 +157,15 @@ def process():
         tmp_path = tmp.name
 
     try:
-        file_to_fillable_pdf, _ = _backend_service()
-        pdf_bytes, structured = file_to_fillable_pdf(tmp_path)
+        services = _backend_service()
+        
+        if _is_pdf(file.filename):
+            # Process PDF file
+            pdf_bytes, structured = services["pdf_to_fillable_pdf"](tmp_path)
+        else:
+            # Process image file
+            pdf_bytes, structured = services["image_to_fillable_pdf"](tmp_path)
+            
     except Exception as exc:  # noqa: BLE001
         logger.exception("Bot pipeline failed")
         flash(f"Processing failed: {exc}", "danger")
@@ -145,24 +176,17 @@ def process():
         except OSError:
             pass
 
-    # Store PDF and field data under a one-time token
+    # Store PDF and field data under a token
     token = secrets.token_urlsafe(32)
+    fields = structured.get("fields", [])
     _pdf_store[token] = {
         "pdf_bytes": pdf_bytes,
-        "fields": structured.get("fields", []),
-        "withdrawal_reasons": structured.get("withdrawal_reasons", []),
+        "fields": fields,
+        "structured": structured,
     }
 
-    fields = structured.get("fields", [])
-    withdrawal_reasons = structured.get("withdrawal_reasons", [])
-
-    return render_template(
-        "bot/result.html",
-        fields=fields,
-        withdrawal_reasons=withdrawal_reasons,
-        token=token,
-        field_count=len(fields),
-    )
+    # Redirect to the interactive viewer
+    return redirect(url_for("bot.viewer", token=token))
 
 
 @bot_bp.route("/viewer/<token>")
@@ -171,16 +195,17 @@ def viewer(token: str):
     """
     Render the interactive PDF viewer with editable fields.
     
-    All fields can be edited directly in the viewer overlay or in the
-    side panel form. Changes can be saved and exported.
+    The viewer displays the PDF with form field overlays and a side panel
+    for editing field values. Users can edit fields directly on the PDF
+    or in the side panel, and save/export the result.
     """
     if not _validate_token(token):
-        flash("Invalid token.", "danger")
+        flash("Invalid viewer link.", "danger")
         return redirect(url_for("bot.index"))
 
     data = _pdf_store.get(token)
     if data is None:
-        flash("Session has expired. Please upload a new file.", "warning")
+        flash("Viewer link has expired or is invalid.", "warning")
         return redirect(url_for("bot.index"))
 
     fields = data.get("fields", [])
@@ -188,73 +213,96 @@ def viewer(token: str):
 
     return render_template(
         "bot/viewer.html",
-        token=token,
         fields=fields,
-        fields_json=json.dumps(fields),
-        pdf_url=pdf_url,
         field_count=len(fields),
+        token=token,
+        pdf_url=pdf_url,
     )
 
 
 @bot_bp.route("/serve-pdf/<token>")
 @login_required
 def serve_pdf(token: str):
-    """Serve the raw PDF file so PDF.js can load it in the browser."""
+    """Serve the raw PDF for the PDF.js viewer."""
     if not _validate_token(token):
         return Response("Invalid token.", status=400)
 
     data = _pdf_store.get(token)
     if data is None:
-        return Response("PDF not found or session expired.", status=404)
+        return Response("PDF not found or expired.", status=404)
+
+    pdf_bytes = data.get("pdf_bytes")
+    if not pdf_bytes:
+        return Response("PDF data not available.", status=404)
 
     return send_file(
-        io.BytesIO(data["pdf_bytes"]),
+        io.BytesIO(pdf_bytes),
         mimetype="application/pdf",
+        as_attachment=False,
+        download_name="form.pdf",
     )
 
 
 @bot_bp.route("/save/<token>", methods=["POST"])
 @login_required
-def save_fields(token: str):
+def save_edited(token: str):
     """
     Save edited field values and regenerate the fillable PDF.
     
-    Accepts JSON: {"fields": [...]}
-    Returns JSON: {"success": true, "message": "..."}
+    Accepts JSON field data from the viewer, regenerates the PDF with
+    updated values, and redirects to download the new PDF.
     """
     if not _validate_token(token):
-        return jsonify({"success": False, "error": "Invalid token."}), 400
+        flash("Invalid save link.", "danger")
+        return redirect(url_for("bot.index"))
 
     data = _pdf_store.get(token)
     if data is None:
-        return jsonify({"success": False, "error": "Session expired."}), 404
+        flash("Session has expired. Please upload the form again.", "warning")
+        return redirect(url_for("bot.index"))
 
+    # Parse the updated fields from the form
+    fields_json = request.form.get("fields_json", "[]")
     try:
-        payload = request.get_json()
-        if not payload or "fields" not in payload:
-            return jsonify({"success": False, "error": "Missing fields data."}), 400
+        updated_fields = json.loads(fields_json)
+    except json.JSONDecodeError:
+        flash("Invalid field data received.", "danger")
+        return redirect(url_for("bot.viewer", token=token))
 
-        new_fields = payload["fields"]
-        
-        # Update stored fields
-        data["fields"] = new_fields
-        
-        # Regenerate PDF with updated values
-        _, generate_fillable_pdf = _backend_service()
-        structured = {
-            "fields": new_fields,
-            "withdrawal_reasons": data.get("withdrawal_reasons", []),
-        }
-        data["pdf_bytes"] = generate_fillable_pdf(structured)
-        
-        return jsonify({
-            "success": True,
-            "message": f"Saved {len(new_fields)} field(s) successfully.",
+    # Validate and sanitize field data
+    sanitized_fields = []
+    for f in updated_fields:
+        if not isinstance(f, dict):
+            continue
+        sanitized_fields.append({
+            "label": str(f.get("label", ""))[:200],
+            "value": str(f.get("value", ""))[:2000],
+            "type": str(f.get("type", "text"))[:20],
         })
 
-    except Exception:
-        logger.exception("Failed to save fields")
-        return jsonify({"success": False, "error": "An error occurred while saving fields."}), 500
+    # Regenerate the PDF with updated field values
+    try:
+        services = _backend_service()
+        structured = {"fields": sanitized_fields}
+        new_pdf_bytes = services["generate_fillable_pdf"](structured)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to regenerate PDF")
+        flash(f"Failed to save: {exc}", "danger")
+        return redirect(url_for("bot.viewer", token=token))
+
+    # Create a new token for the updated PDF download
+    new_token = secrets.token_urlsafe(32)
+    _pdf_store[new_token] = {
+        "pdf_bytes": new_pdf_bytes,
+        "fields": sanitized_fields,
+        "structured": structured,
+    }
+
+    # Clean up old token to prevent memory bloat
+    _pdf_store.pop(token, None)
+
+    flash("PDF saved successfully! Your download should start automatically.", "success")
+    return redirect(url_for("bot.download", token=new_token))
 
 
 @bot_bp.route("/download/<token>")
@@ -269,6 +317,12 @@ def download(token: str):
         flash("Download link has expired or is invalid.", "warning")
         return redirect(url_for("bot.index"))
 
+    pdf_bytes = data.get("pdf_bytes")
+    if not pdf_bytes:
+        flash("PDF data not available.", "danger")
+        return redirect(url_for("bot.index"))
+
+    # Don't pop the data yet — allow multiple downloads and continued viewing
     return send_file(
         io.BytesIO(data["pdf_bytes"]),
         mimetype="application/pdf",

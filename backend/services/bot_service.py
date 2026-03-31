@@ -1,19 +1,28 @@
 """
-backend/services/bot_service.py — Form-image-to-fillable-PDF bot service.
+backend/services/bot_service.py — Form-image/PDF-to-fillable-PDF bot service.
 
 Workflow
 --------
-Image → OCR → NLP → PDF Generator → Fillable PDF Output
+Image/PDF → OCR/Text Extraction → NLP → PDF Generator → Fillable PDF Output
 
 This service:
-1. Accepts an uploaded image of a form (scanned or photographed).
-2. Applies OCR (Tesseract via pytesseract, with a text fallback) to extract
-   machine-readable text.
+1. Accepts an uploaded image OR PDF form (scanned, photographed, or digital).
+2. For images: applies OCR (Tesseract via pytesseract) to extract text.
+   For PDFs: first tries to extract existing form fields, then falls back
+   to text extraction using PyMuPDF or pdfplumber.
 3. Uses rule-based NLP to identify label/value pairs, checkboxes, and
-   special fields (signature, date).
+   special fields (signature, date) — e.g., fields labeled "A" and "B".
 4. Generates a fillable PDF (AcroForm) with ReportLab where every field is
    editable — pre-filled values can be overwritten and blank fields can be
    typed into.
+
+The generated PDF supports:
+- Text input fields
+- Checkbox fields
+- Signature fields (styled text input)
+- Date fields (styled text input)
+
+All fields are editable directly in the PDF viewer or in standard PDF readers.
 """
 
 from __future__ import annotations
@@ -352,123 +361,116 @@ def _demo_fields() -> dict[str, Any]:
     return {"fields": fields, "withdrawal_reasons": []}
 
 
+def _demo_ab_fields() -> dict[str, Any]:
+    """Return a sample A/B form structure per the problem statement."""
+    fields = [
+        {"label": "A", "value": "", "type": "text"},
+        {"label": "B", "value": "", "type": "text"},
+    ]
+    return {"fields": fields, "withdrawal_reasons": []}
+
+
 # ---------------------------------------------------------------------------
-# PDF input pipeline
+# PDF extraction and conversion
 # ---------------------------------------------------------------------------
 
-# Default DPI for rendering PDF pages as images for OCR.
-# Can be overridden via OCR_DPI environment variable.
-_OCR_DPI = int(os.environ.get("OCR_DPI", "200"))
-
-
-def extract_text_from_pdf(pdf_path: str | Path, ocr_dpi: int | None = None) -> str:
+def extract_text_from_pdf(pdf_path: str | Path) -> str:
     """
     Extract text from a PDF file.
-    
-    Uses PyMuPDF for native text extraction, with OCR fallback if no text
-    is found (for scanned/image-based PDFs).
-    
-    Args:
-        pdf_path: Path to the PDF file.
-        ocr_dpi: DPI for rendering pages for OCR. Defaults to _OCR_DPI (200).
-                 Higher values improve OCR quality but increase processing time.
+
+    Tries PyMuPDF (fitz) first, then falls back to pdfplumber, then to empty
+    text if neither works.
     """
     pdf_path = Path(pdf_path)
-    dpi = ocr_dpi if ocr_dpi is not None else _OCR_DPI
-    
+
+    # Try PyMuPDF first
     try:
-        import fitz  # PyMuPDF
-        
+        # fitz is the PyMuPDF library - install via: pip install pymupdf
+        import fitz  # type: ignore
         doc = fitz.open(pdf_path)
-        full_text_parts: list[str] = []
-        
+        text_parts = []
         for page in doc:
-            text = page.get_text("text")
-            if text.strip():
-                full_text_parts.append(text)
-            else:
-                # Page has no extractable text — try OCR
-                logger.info("Page %d has no text, attempting OCR at %d DPI", page.number + 1, dpi)
-                pix = page.get_pixmap(dpi=dpi)
-                img_bytes = pix.tobytes("png")
-                
-                # Save to temp file for OCR
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-                    tmp.write(img_bytes)
-                    tmp_path = tmp.name
-                
-                try:
-                    ocr_text = extract_text_from_image(tmp_path)
-                    if ocr_text.strip():
-                        full_text_parts.append(ocr_text)
-                finally:
-                    try:
-                        os.unlink(tmp_path)
-                    except OSError:
-                        pass
-        
+            text_parts.append(page.get_text())
         doc.close()
-        return "\n\n".join(full_text_parts)
-    
-    except Exception as exc:
-        logger.warning("PDF text extraction failed (%s) — returning empty text", exc)
-        return ""
+        text = "\n".join(text_parts)
+        if text.strip():
+            logger.info("PyMuPDF extracted %d characters from %s", len(text), pdf_path.name)
+            return text
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("PyMuPDF failed (%s), trying pdfplumber", exc)
+
+    # Try pdfplumber
+    try:
+        import pdfplumber  # type: ignore
+        text_parts = []
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text_parts.append(page_text)
+        text = "\n".join(text_parts)
+        if text.strip():
+            logger.info("pdfplumber extracted %d characters from %s", len(text), pdf_path.name)
+            return text
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("pdfplumber failed (%s)", exc)
+
+    logger.warning("Could not extract text from PDF %s", pdf_path.name)
+    return ""
 
 
-def extract_fields_from_pdf(pdf_path: str | Path) -> list[dict[str, Any]]:
+def extract_form_fields_from_pdf(pdf_path: str | Path) -> list[dict[str, Any]]:
     """
-    Extract existing form fields from a PDF's AcroForm.
-    
-    Returns a list of field dicts with keys: label, value, type, bbox, page.
+    Extract existing form fields from a PDF using PyMuPDF.
+
+    Returns a list of field dictionaries with label, value, and type.
     """
     pdf_path = Path(pdf_path)
     fields: list[dict[str, Any]] = []
-    
+
     try:
-        import fitz  # PyMuPDF
-        
+        # fitz is the PyMuPDF library - install via: pip install pymupdf
+        import fitz  # type: ignore
         doc = fitz.open(pdf_path)
-        
+
         for page_num, page in enumerate(doc, start=1):
-            # Get widget annotations (form fields)
-            for widget in page.widgets():
-                field_type = "text"  # default
-                
-                # Map PDF field types to our types
-                if widget.field_type == fitz.PDF_WIDGET_TYPE_CHECKBOX:
-                    field_type = "checkbox"
-                elif widget.field_type == fitz.PDF_WIDGET_TYPE_RADIOBUTTON:
-                    field_type = "checkbox"  # treat as checkbox
-                elif widget.field_type == fitz.PDF_WIDGET_TYPE_SIGNATURE:
-                    field_type = "signature"
-                elif widget.field_type == fitz.PDF_WIDGET_TYPE_TEXT:
-                    # Check if label suggests date/signature
-                    label_lower = (widget.field_name or "").lower()
-                    if any(kw in label_lower for kw in _DATE_KEYWORDS):
-                        field_type = "date"
-                    elif any(kw in label_lower for kw in _SIGNATURE_KEYWORDS):
-                        field_type = "signature"
-                
-                rect = widget.rect
+            widgets = page.widgets()
+            if widgets is None:
+                continue
+
+            for widget in widgets:
+                field_name = widget.field_name or f"Field_{page_num}_{len(fields)}"
+                field_value = widget.field_value or ""
+                field_type_int = widget.field_type
+
+                # Map fitz field types to our types
+                # 0=unknown, 1=PushButton, 2=CheckBox, 3=RadioButton,
+                # 4=Choice, 5=Text, 6=Signature
+                if field_type_int == 2:  # Checkbox
+                    ftype = "checkbox"
+                    field_value = "Yes" if field_value in ("Yes", "On", True) else ""
+                elif field_type_int == 3:  # RadioButton
+                    ftype = "checkbox"  # treat as checkbox
+                elif field_type_int == 6:  # Signature
+                    ftype = "signature"
+                else:  # Text, Choice, Unknown
+                    ftype = _classify_label(field_name)
+                    if ftype == "text" and field_type_int == 4:
+                        ftype = "text"  # Choice fields become text
+
                 fields.append({
-                    "label": widget.field_name or f"Field_{len(fields) + 1}",
-                    "value": widget.field_value or "",
-                    "type": field_type,
-                    "page": page_num,
-                    "bbox": {
-                        "x": rect.x0,
-                        "y": rect.y0,
-                        "width": rect.width,
-                        "height": rect.height,
-                    },
+                    "label": field_name,
+                    "value": str(field_value) if field_value else "",
+                    "type": ftype,
                 })
-        
+
         doc.close()
-        return fields
-    
-    except Exception as exc:
-        logger.warning("PDF form field extraction failed (%s)", exc)
-        return []
+        logger.info("Extracted %d form fields from %s", len(fields), pdf_path.name)
+
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Form field extraction failed (%s)", exc)
+
+    return fields
 
 
 def pdf_to_fillable_pdf(
@@ -476,48 +478,34 @@ def pdf_to_fillable_pdf(
     output_path: str | Path | None = None,
 ) -> tuple[bytes, dict[str, Any]]:
     """
-    Process a PDF: extract fields or detect via OCR, then generate fillable PDF.
-    
-    Returns ``(pdf_bytes, structured)`` where *structured* contains the fields.
+    Process a PDF file and generate a fillable PDF with detected fields.
+
+    1. First tries to extract existing form fields from the PDF.
+    2. If no form fields, extracts text and uses NLP to detect fields.
+    3. If no text/fields detected, falls back to demo fields (A and B).
+
+    Returns ``(pdf_bytes, structured)`` where *structured* is the extracted
+    field data (useful for previewing in the UI).
     """
     pdf_path = Path(pdf_path)
-    
-    # First, try to extract existing form fields
-    existing_fields = extract_fields_from_pdf(pdf_path)
-    
+
+    # Step 1: Try to extract existing form fields
+    existing_fields = extract_form_fields_from_pdf(pdf_path)
     if existing_fields:
-        # PDF already has form fields — use them
-        logger.info("PDF has %d existing form fields", len(existing_fields))
         structured = {"fields": existing_fields, "withdrawal_reasons": []}
-    else:
-        # No form fields — extract text and detect fields via NLP
-        logger.info("No form fields found — extracting text for NLP")
-        raw_text = extract_text_from_pdf(pdf_path)
+        pdf_bytes = generate_fillable_pdf(structured, output_path=output_path)
+        return pdf_bytes, structured
+
+    # Step 2: Extract text and use NLP to detect fields
+    raw_text = extract_text_from_pdf(pdf_path)
+    if raw_text.strip():
         structured = structure_text(raw_text)
-        
-        if not structured["fields"]:
-            logger.info("No fields detected — injecting demo fields")
-            structured = _demo_fields()
-    
+        if structured["fields"]:
+            pdf_bytes = generate_fillable_pdf(structured, output_path=output_path)
+            return pdf_bytes, structured
+
+    # Step 3: Fall back to demo A/B fields
+    logger.info("No fields detected in PDF — injecting demo A/B fields")
+    structured = _demo_ab_fields()
     pdf_bytes = generate_fillable_pdf(structured, output_path=output_path)
     return pdf_bytes, structured
-
-
-def file_to_fillable_pdf(
-    file_path: str | Path,
-    output_path: str | Path | None = None,
-) -> tuple[bytes, dict[str, Any]]:
-    """
-    Process either an image or PDF file and generate a fillable PDF.
-    
-    Automatically detects file type and uses the appropriate pipeline.
-    
-    Returns ``(pdf_bytes, structured)`` where *structured* contains the fields.
-    """
-    file_path = Path(file_path)
-    suffix = file_path.suffix.lower()
-    
-    if suffix == ".pdf":
-        return pdf_to_fillable_pdf(file_path, output_path)
-    else:
-        return image_to_fillable_pdf(file_path, output_path)
