@@ -2451,3 +2451,181 @@ class TestFillMissingFieldsWithOCRCellPhone:
         fields = {"Street Address": "123 Main St", "Cell Phone": "9876543210"}
         result = mod.fill_missing_fields_with_ocr(fields, str(tmp_path / "dummy.pdf"))
         assert result["Cell Phone"] == "9876543210"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Bot Service Tests
+# ─────────────────────────────────────────────────────────────────────────
+
+def _import_bot_service():
+    """Import bot_service module."""
+    repo_root = os.path.dirname(os.path.abspath(__file__))
+    backend_dir = os.path.join(repo_root, "backend")
+    if backend_dir not in sys.path:
+        sys.path.insert(0, backend_dir)
+    import services.bot_service as bot_service
+    return bot_service
+
+
+class TestBotServiceStructureText:
+    """Unit tests for bot_service text structuring."""
+
+    def test_structure_text_colon_pair(self):
+        """Test parsing of label: value pairs."""
+        svc = _import_bot_service()
+        text = "Name: John Doe\nEmail: john@example.com"
+        result = svc.structure_text(text)
+        assert len(result["fields"]) == 2
+        assert result["fields"][0]["label"] == "Name"
+        assert result["fields"][0]["value"] == "John Doe"
+        assert result["fields"][0]["type"] == "text"
+        assert result["fields"][1]["label"] == "Email"
+
+    def test_structure_text_checkbox(self):
+        """Test parsing of checkbox lines."""
+        svc = _import_bot_service()
+        text = "[ ] Employment\n[x] Financial"
+        result = svc.structure_text(text)
+        # Should detect at least one checkbox
+        checkboxes = [f for f in result["fields"] if f["type"] == "checkbox"]
+        assert len(checkboxes) >= 1
+
+    def test_structure_text_signature_field(self):
+        """Test detection of signature fields."""
+        svc = _import_bot_service()
+        text = "Signature: _______\nDate: 2024-01-15"
+        result = svc.structure_text(text)
+        sig_fields = [f for f in result["fields"] if f["type"] == "signature"]
+        date_fields = [f for f in result["fields"] if f["type"] == "date"]
+        assert len(sig_fields) >= 1
+        assert len(date_fields) >= 1
+
+    def test_structure_text_blank_field(self):
+        """Test detection of blank fields with underscores."""
+        svc = _import_bot_service()
+        text = "Address _________\nCity ............"
+        result = svc.structure_text(text)
+        # Should detect blank field patterns
+        assert len(result["fields"]) >= 1
+
+    def test_demo_fields_structure(self):
+        """Test that demo fields have correct structure."""
+        svc = _import_bot_service()
+        demo = svc._demo_fields()
+        assert "fields" in demo
+        assert "withdrawal_reasons" in demo
+        # Should have multiple field types
+        types = {f["type"] for f in demo["fields"]}
+        assert "text" in types
+        assert "checkbox" in types
+        assert "signature" in types
+
+
+class TestBotBlueprint:
+    """Integration tests for bot blueprint routes."""
+
+    def test_bot_index_requires_login(self, client):
+        """Test that bot index page requires authentication."""
+        response = client.get("/bot/")
+        # Should redirect to login
+        assert response.status_code == 302
+        assert "login" in response.location.lower() or response.status_code == 401
+
+    def test_bot_index_after_login(self, client, app):
+        """Test that bot index page loads after login."""
+        _login(client, app)
+        response = client.get("/bot/")
+        assert response.status_code == 200
+        assert b"Form Bot" in response.data or b"Upload" in response.data
+
+    def test_bot_process_no_file(self, client, app):
+        """Test process endpoint without file upload."""
+        _login(client, app)
+        response = client.post("/bot/process", data={})
+        # Should redirect with flash message
+        assert response.status_code == 302
+
+    def test_bot_process_empty_filename(self, client, app):
+        """Test process endpoint with empty filename."""
+        _login(client, app)
+        from io import BytesIO
+        response = client.post(
+            "/bot/process",
+            data={"form_file": (BytesIO(b""), "")},
+            content_type="multipart/form-data",
+        )
+        assert response.status_code == 302
+
+    def test_bot_download_invalid_token(self, client, app):
+        """Test download with invalid token."""
+        _login(client, app)
+        response = client.get("/bot/download/invalid-token")
+        assert response.status_code == 400
+
+    def test_bot_export_json_invalid_token(self, client, app):
+        """Test export JSON with invalid token."""
+        _login(client, app)
+        response = client.get("/bot/export/invalid-token/json")
+        assert response.status_code == 400
+
+    def test_bot_export_csv_invalid_token(self, client, app):
+        """Test export CSV with invalid token."""
+        _login(client, app)
+        response = client.get("/bot/export/invalid-token/csv")
+        assert response.status_code == 400
+
+
+class TestBotServicePDFGeneration:
+    """Tests for bot service PDF generation."""
+
+    def test_generate_fillable_pdf_basic(self):
+        """Test basic PDF generation."""
+        svc = _import_bot_service()
+        structured = {
+            "fields": [
+                {"label": "A", "value": "Value A", "type": "text"},
+                {"label": "B", "value": "Value B", "type": "text"},
+            ],
+            "withdrawal_reasons": [],
+        }
+        pdf_bytes = svc.generate_fillable_pdf(structured)
+        assert pdf_bytes is not None
+        assert len(pdf_bytes) > 0
+        # PDF should start with PDF header
+        assert pdf_bytes[:4] == b"%PDF"
+
+    def test_generate_fillable_pdf_with_checkbox(self):
+        """Test PDF generation with checkbox field."""
+        svc = _import_bot_service()
+        structured = {
+            "fields": [
+                {"label": "Option A", "value": "", "type": "checkbox"},
+                {"label": "Option B", "value": "", "type": "checkbox"},
+            ],
+            "withdrawal_reasons": [],
+        }
+        pdf_bytes = svc.generate_fillable_pdf(structured)
+        assert pdf_bytes is not None
+        assert pdf_bytes[:4] == b"%PDF"
+
+    def test_generate_fillable_pdf_with_signature(self):
+        """Test PDF generation with signature field."""
+        svc = _import_bot_service()
+        structured = {
+            "fields": [
+                {"label": "Signature", "value": "", "type": "signature"},
+                {"label": "Date", "value": "2024-01-15", "type": "date"},
+            ],
+            "withdrawal_reasons": [],
+        }
+        pdf_bytes = svc.generate_fillable_pdf(structured)
+        assert pdf_bytes is not None
+        assert pdf_bytes[:4] == b"%PDF"
+
+    def test_generate_fillable_pdf_empty_fields(self):
+        """Test PDF generation with empty fields list."""
+        svc = _import_bot_service()
+        structured = {"fields": [], "withdrawal_reasons": []}
+        pdf_bytes = svc.generate_fillable_pdf(structured)
+        assert pdf_bytes is not None
+        assert pdf_bytes[:4] == b"%PDF"

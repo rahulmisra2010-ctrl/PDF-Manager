@@ -13,6 +13,7 @@ GET  /bot/download/<token>     — download the generated fillable PDF
 
 from __future__ import annotations
 
+import csv
 import io
 import json
 import logging
@@ -28,6 +29,7 @@ from flask import (
     Response,
     current_app,
     flash,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -45,6 +47,8 @@ bot_bp = Blueprint("bot", __name__, template_folder="../templates/bot")
 _ALLOWED_IMAGE_EXTENSIONS = frozenset(
     {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "webp"}
 )
+_ALLOWED_PDF_EXTENSION = "pdf"
+_ALLOWED_EXTENSIONS = _ALLOWED_IMAGE_EXTENSIONS | {_ALLOWED_PDF_EXTENSION}
 
 # Allowed PDF extension
 _ALLOWED_PDF_EXTENSION = "pdf"
@@ -130,11 +134,11 @@ def process():
     Accept an uploaded form image or PDF, run the processing pipeline,
     and redirect to the interactive viewer.
     """
-    if "form_image" not in request.files:
+    if "form_file" not in request.files:
         flash("No file part in the request.", "danger")
         return redirect(url_for("bot.index"))
 
-    file = request.files["form_image"]
+    file = request.files["form_file"]
     if file.filename == "":
         flash("No file selected.", "danger")
         return redirect(url_for("bot.index"))
@@ -320,8 +324,47 @@ def download(token: str):
 
     # Don't pop the data yet — allow multiple downloads and continued viewing
     return send_file(
-        io.BytesIO(pdf_bytes),
+        io.BytesIO(data["pdf_bytes"]),
         mimetype="application/pdf",
         as_attachment=True,
         download_name="fillable_form.pdf",
     )
+
+
+@bot_bp.route("/export/<token>/<fmt>")
+@login_required
+def export_fields(token: str, fmt: str):
+    """Export field data in various formats (json, csv)."""
+    if not _validate_token(token):
+        return Response("Invalid token.", status=400)
+
+    data = _pdf_store.get(token)
+    if data is None:
+        return Response("Session expired.", status=404)
+
+    fields = data.get("fields", [])
+
+    if fmt == "json":
+        return Response(
+            json.dumps(fields, indent=2),
+            mimetype="application/json",
+            headers={"Content-Disposition": "attachment; filename=fields.json"},
+        )
+    elif fmt == "csv":
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Label", "Value", "Type"])
+        for field in fields:
+            writer.writerow([
+                field.get("label", ""),
+                field.get("value", ""),
+                field.get("type", "text"),
+            ])
+        
+        return Response(
+            output.getvalue(),
+            mimetype="text/csv",
+            headers={"Content-Disposition": "attachment; filename=fields.csv"},
+        )
+    else:
+        return Response("Unsupported format. Use 'json' or 'csv'.", status=400)

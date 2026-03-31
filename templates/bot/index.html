@@ -108,7 +108,7 @@
 
 {% block extra_scripts %}
 <script>
-  document.getElementById('form_image').addEventListener('change', function () {
+  document.getElementById('form_file').addEventListener('change', function () {
     const file = this.files[0];
     if (!file) return;
     
@@ -132,6 +132,18 @@
     }
     
     wrap.classList.remove('d-none');
+    
+    if (file.type === 'application/pdf') {
+      // PDF file
+      img.classList.add('d-none');
+      pdfPreview.classList.remove('d-none');
+      pdfFilename.textContent = file.name;
+    } else {
+      // Image file
+      pdfPreview.classList.add('d-none');
+      img.classList.remove('d-none');
+      img.src = URL.createObjectURL(file);
+    }
   });
 </script>
 {% endblock %}
