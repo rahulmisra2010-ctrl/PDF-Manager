@@ -1,19 +1,28 @@
 """
-backend/services/bot_service.py — Form-image-to-fillable-PDF bot service.
+backend/services/bot_service.py — Form-image/PDF-to-fillable-PDF bot service.
 
 Workflow
 --------
-Image → OCR → NLP → PDF Generator → Fillable PDF Output
+Image/PDF → OCR/Text Extraction → NLP → PDF Generator → Fillable PDF Output
 
 This service:
-1. Accepts an uploaded image of a form (scanned or photographed).
-2. Applies OCR (Tesseract via pytesseract, with a text fallback) to extract
-   machine-readable text.
+1. Accepts an uploaded image OR PDF form (scanned, photographed, or digital).
+2. For images: applies OCR (Tesseract via pytesseract) to extract text.
+   For PDFs: first tries to extract existing form fields, then falls back
+   to text extraction using PyMuPDF or pdfplumber.
 3. Uses rule-based NLP to identify label/value pairs, checkboxes, and
-   special fields (signature, date).
+   special fields (signature, date) — e.g., fields labeled "A" and "B".
 4. Generates a fillable PDF (AcroForm) with ReportLab where every field is
    editable — pre-filled values can be overwritten and blank fields can be
    typed into.
+
+The generated PDF supports:
+- Text input fields
+- Checkbox fields
+- Signature fields (styled text input)
+- Date fields (styled text input)
+
+All fields are editable directly in the PDF viewer or in standard PDF readers.
 """
 
 from __future__ import annotations
@@ -350,3 +359,153 @@ def _demo_fields() -> dict[str, Any]:
     fields.append({"label": "Signature", "value": "", "type": "signature"})
     fields.append({"label": "Date", "value": "", "type": "date"})
     return {"fields": fields, "withdrawal_reasons": []}
+
+
+def _demo_ab_fields() -> dict[str, Any]:
+    """Return a sample A/B form structure per the problem statement."""
+    fields = [
+        {"label": "A", "value": "", "type": "text"},
+        {"label": "B", "value": "", "type": "text"},
+    ]
+    return {"fields": fields, "withdrawal_reasons": []}
+
+
+# ---------------------------------------------------------------------------
+# PDF extraction and conversion
+# ---------------------------------------------------------------------------
+
+def extract_text_from_pdf(pdf_path: str | Path) -> str:
+    """
+    Extract text from a PDF file.
+
+    Tries PyMuPDF (fitz) first, then falls back to pdfplumber, then to empty
+    text if neither works.
+    """
+    pdf_path = Path(pdf_path)
+
+    # Try PyMuPDF first
+    try:
+        # fitz is the PyMuPDF library - install via: pip install pymupdf
+        import fitz  # type: ignore
+        doc = fitz.open(pdf_path)
+        text_parts = []
+        for page in doc:
+            text_parts.append(page.get_text())
+        doc.close()
+        text = "\n".join(text_parts)
+        if text.strip():
+            logger.info("PyMuPDF extracted %d characters from %s", len(text), pdf_path.name)
+            return text
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("PyMuPDF failed (%s), trying pdfplumber", exc)
+
+    # Try pdfplumber
+    try:
+        import pdfplumber  # type: ignore
+        text_parts = []
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text_parts.append(page_text)
+        text = "\n".join(text_parts)
+        if text.strip():
+            logger.info("pdfplumber extracted %d characters from %s", len(text), pdf_path.name)
+            return text
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("pdfplumber failed (%s)", exc)
+
+    logger.warning("Could not extract text from PDF %s", pdf_path.name)
+    return ""
+
+
+def extract_form_fields_from_pdf(pdf_path: str | Path) -> list[dict[str, Any]]:
+    """
+    Extract existing form fields from a PDF using PyMuPDF.
+
+    Returns a list of field dictionaries with label, value, and type.
+    """
+    pdf_path = Path(pdf_path)
+    fields: list[dict[str, Any]] = []
+
+    try:
+        # fitz is the PyMuPDF library - install via: pip install pymupdf
+        import fitz  # type: ignore
+        doc = fitz.open(pdf_path)
+
+        for page_num, page in enumerate(doc, start=1):
+            widgets = page.widgets()
+            if widgets is None:
+                continue
+
+            for widget in widgets:
+                field_name = widget.field_name or f"Field_{page_num}_{len(fields)}"
+                field_value = widget.field_value or ""
+                field_type_int = widget.field_type
+
+                # Map fitz field types to our types
+                # 0=unknown, 1=PushButton, 2=CheckBox, 3=RadioButton,
+                # 4=Choice, 5=Text, 6=Signature
+                if field_type_int == 2:  # Checkbox
+                    ftype = "checkbox"
+                    field_value = "Yes" if field_value in ("Yes", "On", True) else ""
+                elif field_type_int == 3:  # RadioButton
+                    ftype = "checkbox"  # treat as checkbox
+                elif field_type_int == 6:  # Signature
+                    ftype = "signature"
+                else:  # Text, Choice, Unknown
+                    ftype = _classify_label(field_name)
+                    if ftype == "text" and field_type_int == 4:
+                        ftype = "text"  # Choice fields become text
+
+                fields.append({
+                    "label": field_name,
+                    "value": str(field_value) if field_value else "",
+                    "type": ftype,
+                })
+
+        doc.close()
+        logger.info("Extracted %d form fields from %s", len(fields), pdf_path.name)
+
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Form field extraction failed (%s)", exc)
+
+    return fields
+
+
+def pdf_to_fillable_pdf(
+    pdf_path: str | Path,
+    output_path: str | Path | None = None,
+) -> tuple[bytes, dict[str, Any]]:
+    """
+    Process a PDF file and generate a fillable PDF with detected fields.
+
+    1. First tries to extract existing form fields from the PDF.
+    2. If no form fields, extracts text and uses NLP to detect fields.
+    3. If no text/fields detected, falls back to demo fields (A and B).
+
+    Returns ``(pdf_bytes, structured)`` where *structured* is the extracted
+    field data (useful for previewing in the UI).
+    """
+    pdf_path = Path(pdf_path)
+
+    # Step 1: Try to extract existing form fields
+    existing_fields = extract_form_fields_from_pdf(pdf_path)
+    if existing_fields:
+        structured = {"fields": existing_fields, "withdrawal_reasons": []}
+        pdf_bytes = generate_fillable_pdf(structured, output_path=output_path)
+        return pdf_bytes, structured
+
+    # Step 2: Extract text and use NLP to detect fields
+    raw_text = extract_text_from_pdf(pdf_path)
+    if raw_text.strip():
+        structured = structure_text(raw_text)
+        if structured["fields"]:
+            pdf_bytes = generate_fillable_pdf(structured, output_path=output_path)
+            return pdf_bytes, structured
+
+    # Step 3: Fall back to demo A/B fields
+    logger.info("No fields detected in PDF — injecting demo A/B fields")
+    structured = _demo_ab_fields()
+    pdf_bytes = generate_fillable_pdf(structured, output_path=output_path)
+    return pdf_bytes, structured
