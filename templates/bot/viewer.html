@@ -1,0 +1,752 @@
+{% extends "base.html" %}
+{% block title %}PDF Viewer — Edit Fields{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* ------------------------------------------------------------------ */
+  /* Layout: Split view with PDF on left, fields panel on right         */
+  /* ------------------------------------------------------------------ */
+  .bot-viewer-container {
+    display: flex;
+    gap: 1rem;
+    height: calc(100vh - 180px);
+    min-height: 500px;
+  }
+
+  .bot-pdf-section {
+    flex: 2;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .bot-fields-section {
+    flex: 1;
+    min-width: 320px;
+    max-width: 400px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* PDF Toolbar                                                          */
+  /* ------------------------------------------------------------------ */
+  .bot-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: #1a1a1a;
+    border-radius: 0.5rem 0.5rem 0 0;
+    flex-wrap: wrap;
+  }
+
+  .bot-toolbar label {
+    color: #ccc;
+    font-size: 0.85rem;
+    margin-bottom: 0;
+  }
+
+  .bot-toolbar input[type="number"] {
+    width: 64px;
+    text-align: center;
+    background: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 2px 4px;
+    font-size: 0.85rem;
+  }
+
+  .bot-btn {
+    background: #444;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+  .bot-btn:hover { background: #555; }
+  .bot-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .bot-btn-primary { background: #0d6efd; }
+  .bot-btn-primary:hover { background: #0b5ed7; }
+  .bot-btn-success { background: #198754; }
+  .bot-btn-success:hover { background: #157347; }
+
+  /* ------------------------------------------------------------------ */
+  /* Scrollable PDF container                                             */
+  /* ------------------------------------------------------------------ */
+  .bot-pdf-scroll {
+    background: #525659;
+    border-radius: 0 0 0.5rem 0.5rem;
+    overflow-y: auto;
+    flex: 1;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Per-page wrapper                                                     */
+  /* ------------------------------------------------------------------ */
+  .bot-page-wrap {
+    position: relative;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+    display: inline-block;
+  }
+
+  .bot-page-wrap canvas {
+    display: block;
+  }
+
+  .bot-page-loading {
+    background: #3a3a3a;
+    color: #aaa;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    width: 600px;
+    height: 200px;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Widget / form-field overlays on PDF                                  */
+  /* ------------------------------------------------------------------ */
+  .bot-widget-input {
+    position: absolute;
+    box-sizing: border-box;
+    background: rgba(255, 255, 200, 0.85);
+    border: 2px solid rgba(200, 140, 0, 0.9);
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-size: 0.85rem;
+    font-family: inherit;
+    color: #222;
+    outline: none;
+    resize: none;
+    overflow: hidden;
+    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  }
+  .bot-widget-input:focus {
+    background: rgba(255, 255, 180, 0.95);
+    border-color: #e6a000;
+    box-shadow: 0 0 0 2px rgba(230,160,0,0.35);
+    z-index: 10;
+  }
+
+  .bot-widget-check {
+    position: absolute;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    background: rgba(255, 220, 0, 0.25);
+    border: 2px solid rgba(255, 180, 0, 0.8);
+    border-radius: 3px;
+  }
+  .bot-widget-check input {
+    cursor: pointer;
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    accent-color: #e6a000;
+  }
+
+  .bot-page-badge {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    background: rgba(0,0,0,0.55);
+    color: #fff;
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: 3px;
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Fields Panel                                                         */
+  /* ------------------------------------------------------------------ */
+  .bot-fields-panel {
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+
+  .bot-fields-header {
+    padding: 0.75rem 1rem;
+    background: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+    border-radius: 0.5rem 0.5rem 0 0;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .bot-fields-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.75rem;
+  }
+
+  .bot-field-card {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 0.375rem;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .bot-field-card:hover {
+    border-color: #c8c9ca;
+  }
+  .bot-field-card.active {
+    border-color: #e6a000;
+    box-shadow: 0 0 0 2px rgba(230,160,0,0.2);
+  }
+
+  .bot-field-label {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: #333;
+    margin-bottom: 0.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .bot-field-type {
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: #e9ecef;
+    color: #666;
+  }
+  .bot-field-type.checkbox { background: #d1e7dd; color: #0f5132; }
+  .bot-field-type.signature { background: #fff3cd; color: #664d03; }
+  .bot-field-type.date { background: #cfe2ff; color: #084298; }
+
+  .bot-field-input {
+    width: 100%;
+    border: 1px solid #ced4da;
+    border-radius: 0.25rem;
+    padding: 0.375rem 0.5rem;
+    font-size: 0.875rem;
+    transition: border-color 0.15s;
+  }
+  .bot-field-input:focus {
+    outline: none;
+    border-color: #e6a000;
+    box-shadow: 0 0 0 2px rgba(230,160,0,0.2);
+  }
+
+  .bot-field-checkbox-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .bot-field-checkbox-wrap input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    accent-color: #e6a000;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Footer actions                                                       */
+  /* ------------------------------------------------------------------ */
+  .bot-fields-footer {
+    padding: 0.75rem 1rem;
+    background: #f8f9fa;
+    border-top: 1px solid #dee2e6;
+    border-radius: 0 0 0.5rem 0.5rem;
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Status bar                                                           */
+  /* ------------------------------------------------------------------ */
+  .bot-status {
+    color: #ccc;
+    font-size: 0.8rem;
+    padding: 0.25rem 1rem;
+    background: #1a1a1a;
+    margin-top: -1px;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Toast notifications                                                  */
+  /* ------------------------------------------------------------------ */
+  .bot-toast {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    padding: 0.75rem 1.25rem;
+    border-radius: 0.375rem;
+    color: #fff;
+    font-size: 0.9rem;
+    z-index: 9999;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.3s, transform 0.3s;
+  }
+  .bot-toast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .bot-toast.success { background: #198754; }
+  .bot-toast.error { background: #dc3545; }
+  .bot-toast.info { background: #0dcaf0; color: #000; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- ================================================================== -->
+<!-- Header                                                              -->
+<!-- ================================================================== -->
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <i class="bi bi-robot fs-3 text-primary"></i>
+    <div>
+      <h5 class="mb-0">PDF Viewer &amp; Editor</h5>
+      <small class="text-muted">{{ field_count }} editable field(s)</small>
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('bot.download', token=token) }}" class="btn btn-success btn-sm">
+      <i class="bi bi-download me-1"></i>Download PDF
+    </a>
+    <a href="{{ url_for('bot.index') }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-arrow-left me-1"></i>Upload New
+    </a>
+  </div>
+</div>
+
+<!-- ================================================================== -->
+<!-- Main container: PDF viewer + Fields panel                           -->
+<!-- ================================================================== -->
+<div class="bot-viewer-container">
+  <!-- PDF Section -->
+  <div class="bot-pdf-section">
+    <!-- Toolbar -->
+    <div class="bot-toolbar">
+      <label style="display:flex;align-items:center;gap:4px;">
+        Zoom
+        <input id="zoom-input" type="number" value="100" min="25" max="400"> %
+      </label>
+      <button id="btn-zoom-in" class="bot-btn">+</button>
+      <button id="btn-zoom-out" class="bot-btn">−</button>
+      <button id="btn-zoom-fit" class="bot-btn" title="Fit width">
+        <i class="bi bi-arrows-expand"></i>
+      </button>
+      <span style="flex:1"></span>
+      <span id="page-count" style="color:#ccc;font-size:0.85rem;"></span>
+    </div>
+
+    <!-- PDF pages -->
+    <div id="pdf-scroll" class="bot-pdf-scroll"></div>
+    <div id="pdf-status" class="bot-status">Loading PDF…</div>
+  </div>
+
+  <!-- Fields Panel -->
+  <div class="bot-fields-section">
+    <div class="bot-fields-panel">
+      <div class="bot-fields-header">
+        <span><i class="bi bi-pencil-square me-2"></i>Editable Fields</span>
+        <span class="badge bg-primary">{{ field_count }}</span>
+      </div>
+      <div id="fields-list" class="bot-fields-list">
+        <!-- Fields will be rendered by JavaScript -->
+      </div>
+      <div class="bot-fields-footer">
+        <button id="btn-save" class="bot-btn bot-btn-success flex-grow-1">
+          <i class="bi bi-check-lg me-1"></i>Save Changes
+        </button>
+        <div class="btn-group">
+          <a href="{{ url_for('bot.export_fields', token=token, fmt='json') }}" 
+             class="bot-btn" title="Export JSON">
+            <i class="bi bi-filetype-json"></i>
+          </a>
+          <a href="{{ url_for('bot.export_fields', token=token, fmt='csv') }}" 
+             class="bot-btn" title="Export CSV">
+            <i class="bi bi-filetype-csv"></i>
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+"use strict";
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+const PDF_URL    = {{ pdf_url | tojson }};
+const TOKEN      = {{ token | tojson }};
+const CSRF_TOKEN = {{ csrf_token() | tojson }};
+const SAVE_URL   = "{{ url_for('bot.save_fields', token=token) }}";
+
+// Initial fields data from server
+let FIELDS = {{ fields_json | safe }};
+
+// PDF.js worker
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let pdfDoc = null;
+let scale  = 1.0;
+const MIN_SCALE = 0.25;
+const MAX_SCALE = 4.0;
+
+const scrollEl   = document.getElementById("pdf-scroll");
+const statusEl   = document.getElementById("pdf-status");
+const zoomInput  = document.getElementById("zoom-input");
+const pageCount  = document.getElementById("page-count");
+const fieldsList = document.getElementById("fields-list");
+
+// ---------------------------------------------------------------------------
+// Toast notifications
+// ---------------------------------------------------------------------------
+function showToast(message, type = "info") {
+  const toast = document.createElement("div");
+  toast.className = `bot-toast ${type}`;
+  toast.textContent = message;
+  document.getElementById("toast-container").appendChild(toast);
+  
+  requestAnimationFrame(() => toast.classList.add("show"));
+  
+  setTimeout(() => {
+    toast.classList.remove("show");
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+}
+
+// ---------------------------------------------------------------------------
+// Render fields panel
+// ---------------------------------------------------------------------------
+function renderFieldsPanel() {
+  fieldsList.innerHTML = "";
+  
+  FIELDS.forEach((field, idx) => {
+    const card = document.createElement("div");
+    card.className = "bot-field-card";
+    card.dataset.fieldIndex = idx;
+    
+    const typeClass = field.type || "text";
+    
+    let inputHtml;
+    if (field.type === "checkbox") {
+      const checked = field.value && field.value !== "Off" && field.value !== "";
+      inputHtml = `
+        <div class="bot-field-checkbox-wrap">
+          <input type="checkbox" id="field-${idx}" data-index="${idx}" ${checked ? "checked" : ""}>
+          <label for="field-${idx}">Checked</label>
+        </div>
+      `;
+    } else {
+      const placeholder = field.type === "signature" ? "Enter signature…" :
+                          field.type === "date" ? "Enter date…" : "Enter value…";
+      inputHtml = `
+        <input type="text" class="bot-field-input" id="field-${idx}" 
+               data-index="${idx}" value="${escapeHtml(field.value || "")}"
+               placeholder="${placeholder}">
+      `;
+    }
+    
+    card.innerHTML = `
+      <div class="bot-field-label">
+        ${escapeHtml(field.label)}
+        <span class="bot-field-type ${typeClass}">${field.type || "text"}</span>
+      </div>
+      ${inputHtml}
+    `;
+    
+    // Sync changes to FIELDS array
+    const input = card.querySelector("input");
+    input.addEventListener("input", (e) => {
+      if (field.type === "checkbox") {
+        FIELDS[idx].value = e.target.checked ? "Yes" : "";
+      } else {
+        FIELDS[idx].value = e.target.value;
+      }
+      syncOverlayFromPanel(idx);
+    });
+    
+    input.addEventListener("focus", () => {
+      card.classList.add("active");
+    });
+    
+    input.addEventListener("blur", () => {
+      card.classList.remove("active");
+    });
+    
+    fieldsList.appendChild(card);
+  });
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ---------------------------------------------------------------------------
+// Sync overlay inputs with panel
+// ---------------------------------------------------------------------------
+function syncOverlayFromPanel(idx) {
+  const overlayInputs = document.querySelectorAll(`[data-field-overlay="${idx}"]`);
+  const field = FIELDS[idx];
+  
+  overlayInputs.forEach(input => {
+    if (field.type === "checkbox") {
+      input.checked = field.value && field.value !== "Off" && field.value !== "";
+    } else {
+      input.value = field.value || "";
+    }
+  });
+}
+
+function syncPanelFromOverlay(idx) {
+  const panelInput = document.getElementById(`field-${idx}`);
+  const field = FIELDS[idx];
+  
+  if (panelInput) {
+    if (field.type === "checkbox") {
+      panelInput.checked = field.value && field.value !== "Off" && field.value !== "";
+    } else {
+      panelInput.value = field.value || "";
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PDF rendering with editable overlays
+// ---------------------------------------------------------------------------
+async function renderPageIntoWrapper(pageObj, wrapEl) {
+  const viewport = pageObj.getViewport({ scale });
+  
+  wrapEl.style.width  = viewport.width  + "px";
+  wrapEl.style.height = viewport.height + "px";
+  wrapEl.innerHTML = "";
+
+  // Page badge
+  const badge = document.createElement("div");
+  badge.className   = "bot-page-badge";
+  badge.textContent = "Page " + pageObj.pageNumber;
+  wrapEl.appendChild(badge);
+
+  // Canvas
+  const canvas = document.createElement("canvas");
+  canvas.width  = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  wrapEl.appendChild(canvas);
+
+  // Render PDF content
+  await pageObj.render({
+    canvasContext: canvas.getContext("2d"),
+    viewport,
+  }).promise;
+
+  // Render editable field overlays
+  renderFieldOverlays(wrapEl, pageObj.pageNumber, viewport);
+}
+
+function renderFieldOverlays(wrapEl, pageNum, viewport) {
+  // Create overlays for fields on this page
+  // Since we generated fields, they don't have page-specific positions
+  // We'll show all fields if they have bbox or just rely on the side panel
+  
+  FIELDS.forEach((field, idx) => {
+    // Only show if field has bbox for this page or if it's a multi-page field
+    if (field.bbox && field.page === pageNum) {
+      const bbox = field.bbox;
+      
+      // Convert PDF coordinates to viewport coordinates
+      const x = bbox.x * scale;
+      const y = bbox.y * scale;
+      const width = bbox.width * scale;
+      const height = bbox.height * scale;
+      
+      if (field.type === "checkbox") {
+        const wrap = document.createElement("div");
+        wrap.className = "bot-widget-check";
+        Object.assign(wrap.style, {
+          left: x + "px",
+          top: y + "px",
+          width: Math.max(width, 24) + "px",
+          height: Math.max(height, 24) + "px",
+        });
+        
+        const ck = document.createElement("input");
+        ck.type = "checkbox";
+        ck.dataset.fieldOverlay = idx;
+        ck.checked = field.value && field.value !== "Off" && field.value !== "";
+        ck.addEventListener("change", (e) => {
+          FIELDS[idx].value = e.target.checked ? "Yes" : "";
+          syncPanelFromOverlay(idx);
+        });
+        
+        wrap.appendChild(ck);
+        wrapEl.appendChild(wrap);
+      } else {
+        const inp = document.createElement("input");
+        inp.type = "text";
+        inp.className = "bot-widget-input";
+        inp.dataset.fieldOverlay = idx;
+        inp.value = field.value || "";
+        inp.placeholder = field.label;
+        inp.title = field.label;
+        Object.assign(inp.style, {
+          left: x + "px",
+          top: y + "px",
+          width: Math.max(width, 100) + "px",
+          height: Math.max(height, 22) + "px",
+          lineHeight: Math.max(height, 22) + "px",
+        });
+        
+        inp.addEventListener("input", (e) => {
+          FIELDS[idx].value = e.target.value;
+          syncPanelFromOverlay(idx);
+        });
+        
+        wrapEl.appendChild(inp);
+      }
+    }
+  });
+}
+
+async function renderAllPages() {
+  statusEl.textContent = "Rendering pages…";
+  scrollEl.innerHTML   = "";
+
+  const numPages = pdfDoc.numPages;
+  pageCount.textContent = numPages + " page" + (numPages !== 1 ? "s" : "");
+
+  const wrappers = [];
+  for (let i = 1; i <= numPages; i++) {
+    const wrap = document.createElement("div");
+    wrap.className = "bot-page-wrap bot-page-loading";
+    wrap.innerHTML = '<i class="bi bi-hourglass-split"></i> Rendering page ' + i + '…';
+    scrollEl.appendChild(wrap);
+    wrappers.push(wrap);
+  }
+
+  for (let i = 1; i <= numPages; i++) {
+    const wrap = wrappers[i - 1];
+    wrap.classList.remove("bot-page-loading");
+    try {
+      const pageObj = await pdfDoc.getPage(i);
+      await renderPageIntoWrapper(pageObj, wrap);
+    } catch (err) {
+      wrap.innerHTML = '<span style="color:#f88;padding:1rem;">Page ' + i + ' failed: ' + err.message + '</span>';
+    }
+    statusEl.textContent = "Rendered " + i + " / " + numPages + " pages…";
+  }
+
+  statusEl.textContent = "All " + numPages + " page(s) rendered. Edit fields in the panel or overlays.";
+}
+
+async function fitWidth() {
+  if (!pdfDoc) return;
+  const page = await pdfDoc.getPage(1);
+  const vp   = page.getViewport({ scale: 1 });
+  const availW = scrollEl.clientWidth - 32;
+  scale = Math.max(MIN_SCALE, availW / vp.width);
+  zoomInput.value = Math.round(scale * 100);
+  await renderAllPages();
+}
+
+function setZoom(newScale) {
+  scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, newScale));
+  zoomInput.value = Math.round(scale * 100);
+  renderAllPages();
+}
+
+// ---------------------------------------------------------------------------
+// Save fields
+// ---------------------------------------------------------------------------
+async function saveFields() {
+  const btn = document.getElementById("btn-save");
+  const originalText = btn.innerHTML;
+  btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Saving…';
+  btn.disabled = true;
+  
+  try {
+    const response = await fetch(SAVE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": CSRF_TOKEN,
+      },
+      body: JSON.stringify({ fields: FIELDS }),
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      showToast(result.message, "success");
+    } else {
+      showToast("Save failed: " + (result.error || "Unknown error"), "error");
+    }
+  } catch (err) {
+    showToast("Save failed: " + err.message, "error");
+  } finally {
+    btn.innerHTML = originalText;
+    btn.disabled = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Event listeners
+// ---------------------------------------------------------------------------
+zoomInput.addEventListener("change", () => {
+  const n = parseInt(zoomInput.value, 10);
+  if (!isNaN(n)) setZoom(n / 100);
+});
+
+document.getElementById("btn-zoom-in").addEventListener("click", () => setZoom(scale + 0.25));
+document.getElementById("btn-zoom-out").addEventListener("click", () => setZoom(scale - 0.25));
+document.getElementById("btn-zoom-fit").addEventListener("click", fitWidth);
+document.getElementById("btn-save").addEventListener("click", saveFields);
+
+// ---------------------------------------------------------------------------
+// Initialize
+// ---------------------------------------------------------------------------
+renderFieldsPanel();
+
+pdfjsLib.getDocument(PDF_URL).promise.then(async pdf => {
+  pdfDoc = pdf;
+  await fitWidth();
+}).catch(err => {
+  statusEl.textContent = "Failed to load PDF: " + err.message;
+  statusEl.style.color = "#f88";
+  console.error("PDF.js error:", err);
+});
+</script>
+{% endblock %}

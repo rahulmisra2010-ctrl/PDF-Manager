@@ -350,3 +350,162 @@ def _demo_fields() -> dict[str, Any]:
     fields.append({"label": "Signature", "value": "", "type": "signature"})
     fields.append({"label": "Date", "value": "", "type": "date"})
     return {"fields": fields, "withdrawal_reasons": []}
+
+
+# ---------------------------------------------------------------------------
+# PDF input pipeline
+# ---------------------------------------------------------------------------
+
+def extract_text_from_pdf(pdf_path: str | Path) -> str:
+    """
+    Extract text from a PDF file.
+    
+    Uses PyMuPDF for native text extraction, with OCR fallback if no text
+    is found (for scanned/image-based PDFs).
+    """
+    pdf_path = Path(pdf_path)
+    try:
+        import fitz  # PyMuPDF
+        
+        doc = fitz.open(pdf_path)
+        full_text_parts: list[str] = []
+        
+        for page in doc:
+            text = page.get_text("text")
+            if text.strip():
+                full_text_parts.append(text)
+            else:
+                # Page has no extractable text — try OCR
+                logger.info("Page %d has no text, attempting OCR", page.number + 1)
+                pix = page.get_pixmap(dpi=200)
+                img_bytes = pix.tobytes("png")
+                
+                # Save to temp file for OCR
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                    tmp.write(img_bytes)
+                    tmp_path = tmp.name
+                
+                try:
+                    ocr_text = extract_text_from_image(tmp_path)
+                    if ocr_text.strip():
+                        full_text_parts.append(ocr_text)
+                finally:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+        
+        doc.close()
+        return "\n\n".join(full_text_parts)
+    
+    except Exception as exc:
+        logger.warning("PDF text extraction failed (%s) — returning empty text", exc)
+        return ""
+
+
+def extract_fields_from_pdf(pdf_path: str | Path) -> list[dict[str, Any]]:
+    """
+    Extract existing form fields from a PDF's AcroForm.
+    
+    Returns a list of field dicts with keys: label, value, type, bbox, page.
+    """
+    pdf_path = Path(pdf_path)
+    fields: list[dict[str, Any]] = []
+    
+    try:
+        import fitz  # PyMuPDF
+        
+        doc = fitz.open(pdf_path)
+        
+        for page_num, page in enumerate(doc, start=1):
+            # Get widget annotations (form fields)
+            for widget in page.widgets():
+                field_type = "text"  # default
+                
+                # Map PDF field types to our types
+                if widget.field_type == fitz.PDF_WIDGET_TYPE_CHECKBOX:
+                    field_type = "checkbox"
+                elif widget.field_type == fitz.PDF_WIDGET_TYPE_RADIOBUTTON:
+                    field_type = "checkbox"  # treat as checkbox
+                elif widget.field_type == fitz.PDF_WIDGET_TYPE_SIGNATURE:
+                    field_type = "signature"
+                elif widget.field_type == fitz.PDF_WIDGET_TYPE_TEXT:
+                    # Check if label suggests date/signature
+                    label_lower = (widget.field_name or "").lower()
+                    if any(kw in label_lower for kw in _DATE_KEYWORDS):
+                        field_type = "date"
+                    elif any(kw in label_lower for kw in _SIGNATURE_KEYWORDS):
+                        field_type = "signature"
+                
+                rect = widget.rect
+                fields.append({
+                    "label": widget.field_name or f"Field_{len(fields) + 1}",
+                    "value": widget.field_value or "",
+                    "type": field_type,
+                    "page": page_num,
+                    "bbox": {
+                        "x": rect.x0,
+                        "y": rect.y0,
+                        "width": rect.width,
+                        "height": rect.height,
+                    },
+                })
+        
+        doc.close()
+        return fields
+    
+    except Exception as exc:
+        logger.warning("PDF form field extraction failed (%s)", exc)
+        return []
+
+
+def pdf_to_fillable_pdf(
+    pdf_path: str | Path,
+    output_path: str | Path | None = None,
+) -> tuple[bytes, dict[str, Any]]:
+    """
+    Process a PDF: extract fields or detect via OCR, then generate fillable PDF.
+    
+    Returns ``(pdf_bytes, structured)`` where *structured* contains the fields.
+    """
+    pdf_path = Path(pdf_path)
+    
+    # First, try to extract existing form fields
+    existing_fields = extract_fields_from_pdf(pdf_path)
+    
+    if existing_fields:
+        # PDF already has form fields — use them
+        logger.info("PDF has %d existing form fields", len(existing_fields))
+        structured = {"fields": existing_fields, "withdrawal_reasons": []}
+    else:
+        # No form fields — extract text and detect fields via NLP
+        logger.info("No form fields found — extracting text for NLP")
+        raw_text = extract_text_from_pdf(pdf_path)
+        structured = structure_text(raw_text)
+        
+        if not structured["fields"]:
+            logger.info("No fields detected — injecting demo fields")
+            structured = _demo_fields()
+    
+    pdf_bytes = generate_fillable_pdf(structured, output_path=output_path)
+    return pdf_bytes, structured
+
+
+def file_to_fillable_pdf(
+    file_path: str | Path,
+    output_path: str | Path | None = None,
+) -> tuple[bytes, dict[str, Any]]:
+    """
+    Process either an image or PDF file and generate a fillable PDF.
+    
+    Automatically detects file type and uses the appropriate pipeline.
+    
+    Returns ``(pdf_bytes, structured)`` where *structured* contains the fields.
+    """
+    file_path = Path(file_path)
+    suffix = file_path.suffix.lower()
+    
+    if suffix == ".pdf":
+        return pdf_to_fillable_pdf(file_path, output_path)
+    else:
+        return image_to_fillable_pdf(file_path, output_path)

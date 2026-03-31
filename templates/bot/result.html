@@ -10,24 +10,40 @@
   </div>
 </div>
 
-<!-- Download banner -->
-<div class="alert alert-success d-flex align-items-center gap-3 mb-4">
+<!-- Action banner -->
+<div class="alert alert-success d-flex flex-wrap align-items-center gap-3 mb-4">
   <i class="bi bi-check-circle-fill fs-3"></i>
-  <div>
+  <div class="flex-grow-1">
     <strong>Fillable PDF generated!</strong>
-    <p class="mb-0 small">All fields are editable. Pre-filled values can be overwritten.</p>
+    <p class="mb-0 small">All fields are editable. You can edit in the viewer or download directly.</p>
   </div>
-  <a href="{{ url_for('bot.download', token=token) }}"
-     class="btn btn-success ms-auto">
-    <i class="bi bi-download me-2"></i>Download PDF
-  </a>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{{ url_for('bot.viewer', token=token) }}"
+       class="btn btn-primary">
+      <i class="bi bi-pencil-square me-2"></i>Open Viewer &amp; Edit
+    </a>
+    <a href="{{ url_for('bot.download', token=token) }}"
+       class="btn btn-success">
+      <i class="bi bi-download me-2"></i>Download PDF
+    </a>
+  </div>
 </div>
 
 <!-- Field preview table -->
 {% if fields %}
 <div class="card shadow-sm mb-4">
-  <div class="card-header fw-semibold">
-    <i class="bi bi-table me-2"></i>Extracted Fields Preview
+  <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-table me-2"></i>Extracted Fields Preview</span>
+    <div class="btn-group btn-group-sm">
+      <a href="{{ url_for('bot.export_fields', token=token, fmt='json') }}" 
+         class="btn btn-outline-secondary" title="Export as JSON">
+        <i class="bi bi-filetype-json"></i>
+      </a>
+      <a href="{{ url_for('bot.export_fields', token=token, fmt='csv') }}" 
+         class="btn btn-outline-secondary" title="Export as CSV">
+        <i class="bi bi-filetype-csv"></i>
+      </a>
+    </div>
   </div>
   <div class="table-responsive">
     <table class="table table-hover mb-0 align-middle">
@@ -79,7 +95,7 @@
 {% else %}
 <div class="alert alert-info">
   <i class="bi bi-info-circle me-2"></i>
-  No fields could be extracted from the image — a demo fillable PDF with
+  No fields could be extracted from the file — a demo fillable PDF with
   common withdrawal-form fields has been generated instead.
 </div>
 {% endif %}
@@ -98,6 +114,6 @@
 {% endif %}
 
 <a href="{{ url_for('bot.index') }}" class="btn btn-outline-secondary">
-  <i class="bi bi-arrow-left me-2"></i>Process Another Image
+  <i class="bi bi-arrow-left me-2"></i>Process Another File
 </a>
 {% endblock %}

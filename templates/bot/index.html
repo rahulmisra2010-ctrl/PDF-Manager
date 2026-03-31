@@ -6,7 +6,7 @@
   <i class="bi bi-robot fs-2 text-primary"></i>
   <div>
     <h2 class="mb-0">Form Bot</h2>
-    <small class="text-muted">Upload a form image → get a fillable PDF</small>
+    <small class="text-muted">Upload a form image or PDF → get a fillable PDF with editable fields</small>
   </div>
 </div>
 
@@ -15,9 +15,9 @@
   <div class="col-sm-6 col-xl-3">
     <div class="card h-100 border-0 shadow-sm">
       <div class="card-body text-center py-3">
-        <i class="bi bi-image fs-2 text-info mb-2 d-block"></i>
+        <i class="bi bi-file-earmark-arrow-up fs-2 text-info mb-2 d-block"></i>
         <strong>1. Upload</strong>
-        <p class="text-muted small mb-0">Scanned form or photo</p>
+        <p class="text-muted small mb-0">Scanned form, photo, or PDF</p>
       </div>
     </div>
   </div>
@@ -25,17 +25,17 @@
     <div class="card h-100 border-0 shadow-sm">
       <div class="card-body text-center py-3">
         <i class="bi bi-eye fs-2 text-warning mb-2 d-block"></i>
-        <strong>2. OCR</strong>
-        <p class="text-muted small mb-0">Extract machine-readable text</p>
+        <strong>2. Extract</strong>
+        <p class="text-muted small mb-0">Detect fields via OCR/NLP</p>
       </div>
     </div>
   </div>
   <div class="col-sm-6 col-xl-3">
     <div class="card h-100 border-0 shadow-sm">
       <div class="card-body text-center py-3">
-        <i class="bi bi-diagram-3 fs-2 text-success mb-2 d-block"></i>
-        <strong>3. NLP</strong>
-        <p class="text-muted small mb-0">Identify labels &amp; values</p>
+        <i class="bi bi-pencil-square fs-2 text-success mb-2 d-block"></i>
+        <strong>3. Edit</strong>
+        <p class="text-muted small mb-0">Fill fields in PDF viewer</p>
       </div>
     </div>
   </div>
@@ -43,8 +43,8 @@
     <div class="card h-100 border-0 shadow-sm">
       <div class="card-body text-center py-3">
         <i class="bi bi-file-earmark-check fs-2 text-primary mb-2 d-block"></i>
-        <strong>4. Fillable PDF</strong>
-        <p class="text-muted small mb-0">Editable form output</p>
+        <strong>4. Export</strong>
+        <p class="text-muted small mb-0">Download fillable PDF</p>
       </div>
     </div>
   </div>
@@ -53,7 +53,7 @@
 <!-- Upload card -->
 <div class="card shadow-sm" style="max-width:560px">
   <div class="card-header fw-semibold">
-    <i class="bi bi-cloud-upload me-2"></i>Upload Form Image
+    <i class="bi bi-cloud-upload me-2"></i>Upload Form
   </div>
   <div class="card-body">
     <form method="POST" action="{{ url_for('bot.process') }}"
@@ -61,17 +61,25 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
       <div class="mb-3">
-        <label for="form_image" class="form-label">
-          Select image <span class="text-muted">(PNG, JPG, TIFF, BMP, WebP&hellip;)</span>
+        <label for="form_file" class="form-label">
+          Select file <span class="text-muted">(PDF, PNG, JPG, TIFF, BMP, WebP&hellip;)</span>
         </label>
-        <input class="form-control" type="file" id="form_image" name="form_image"
-               accept="image/*" required>
+        <input class="form-control" type="file" id="form_file" name="form_file"
+               accept=".pdf,image/*" required>
+        <div class="form-text">
+          Upload a PDF form or an image of a form. The bot will detect fields and create
+          an editable PDF you can fill out in your browser.
+        </div>
       </div>
 
       <div id="preview-wrap" class="mb-3 d-none">
         <p class="small text-muted mb-1">Preview:</p>
         <img id="img-preview" src="#" alt="Preview"
              class="img-thumbnail" style="max-height:200px">
+        <div id="pdf-preview" class="d-none">
+          <i class="bi bi-file-earmark-pdf text-danger fs-1"></i>
+          <span class="ms-2 fw-semibold" id="pdf-filename"></span>
+        </div>
       </div>
 
       <button type="submit" class="btn btn-primary w-100">
@@ -84,13 +92,28 @@
 
 {% block extra_scripts %}
 <script>
-  document.getElementById('form_image').addEventListener('change', function () {
+  document.getElementById('form_file').addEventListener('change', function () {
     const file = this.files[0];
     if (!file) return;
+    
     const wrap = document.getElementById('preview-wrap');
     const img  = document.getElementById('img-preview');
-    img.src = URL.createObjectURL(file);
+    const pdfPreview = document.getElementById('pdf-preview');
+    const pdfFilename = document.getElementById('pdf-filename');
+    
     wrap.classList.remove('d-none');
+    
+    if (file.type === 'application/pdf') {
+      // PDF file
+      img.classList.add('d-none');
+      pdfPreview.classList.remove('d-none');
+      pdfFilename.textContent = file.name;
+    } else {
+      // Image file
+      pdfPreview.classList.add('d-none');
+      img.classList.remove('d-none');
+      img.src = URL.createObjectURL(file);
+    }
   });
 </script>
 {% endblock %}
