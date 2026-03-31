@@ -13,6 +13,7 @@ GET  /bot/download/<token>      — download the generated fillable PDF
 
 from __future__ import annotations
 
+import csv
 import io
 import json
 import logging
@@ -251,9 +252,9 @@ def save_fields(token: str):
             "message": f"Saved {len(new_fields)} field(s) successfully.",
         })
 
-    except Exception as exc:
+    except Exception:
         logger.exception("Failed to save fields")
-        return jsonify({"success": False, "error": str(exc)}), 500
+        return jsonify({"success": False, "error": "An error occurred while saving fields."}), 500
 
 
 @bot_bp.route("/download/<token>")
@@ -296,10 +297,7 @@ def export_fields(token: str, fmt: str):
             headers={"Content-Disposition": "attachment; filename=fields.json"},
         )
     elif fmt == "csv":
-        import csv
-        import io as csv_io
-        
-        output = csv_io.StringIO()
+        output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(["Label", "Value", "Type"])
         for field in fields:

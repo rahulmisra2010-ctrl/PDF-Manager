@@ -356,14 +356,26 @@ def _demo_fields() -> dict[str, Any]:
 # PDF input pipeline
 # ---------------------------------------------------------------------------
 
-def extract_text_from_pdf(pdf_path: str | Path) -> str:
+# Default DPI for rendering PDF pages as images for OCR.
+# Can be overridden via OCR_DPI environment variable.
+_OCR_DPI = int(os.environ.get("OCR_DPI", "200"))
+
+
+def extract_text_from_pdf(pdf_path: str | Path, ocr_dpi: int | None = None) -> str:
     """
     Extract text from a PDF file.
     
     Uses PyMuPDF for native text extraction, with OCR fallback if no text
     is found (for scanned/image-based PDFs).
+    
+    Args:
+        pdf_path: Path to the PDF file.
+        ocr_dpi: DPI for rendering pages for OCR. Defaults to _OCR_DPI (200).
+                 Higher values improve OCR quality but increase processing time.
     """
     pdf_path = Path(pdf_path)
+    dpi = ocr_dpi if ocr_dpi is not None else _OCR_DPI
+    
     try:
         import fitz  # PyMuPDF
         
@@ -376,8 +388,8 @@ def extract_text_from_pdf(pdf_path: str | Path) -> str:
                 full_text_parts.append(text)
             else:
                 # Page has no extractable text — try OCR
-                logger.info("Page %d has no text, attempting OCR", page.number + 1)
-                pix = page.get_pixmap(dpi=200)
+                logger.info("Page %d has no text, attempting OCR at %d DPI", page.number + 1, dpi)
+                pix = page.get_pixmap(dpi=dpi)
                 img_bytes = pix.tobytes("png")
                 
                 # Save to temp file for OCR
