@@ -14,6 +14,7 @@
 - 🖊️ **Inline Editing** – split layout: PDF viewer on left, editable fields on right
 - ⬇️ **Export** – JSON or CSV with full metadata and confidence scores
 - 📜 **Edit History** – all field edits are versioned and audited
+- 🗂️ **PDF Header Extractor** – CLI tool that prints metadata, bookmarks, and top-of-page text from any PDF
 
 ---
 
@@ -109,10 +110,39 @@ PDF-Manager/
 ├── docs/
 │   ├── API.md
 │   ├── ARCHITECTURE.md
+│   ├── EXTRACT_PDF_HEADERS.md (PDF header extractor guide)
 │   └── SETUP.md
+├── samples/
+│   ├── Official_withdrawal_form.pdf
+│   └── ...
+├── tools/
+│   └── extract_pdf_headers.py (PDF header/metadata CLI)
 ├── docker-compose.yml
 └── README.md
 ```
+
+---
+
+## PDF Header Extractor (CLI)
+
+Quickly inspect any PDF's metadata, bookmarks and top-of-page text:
+
+```bash
+# Install dependencies (once)
+pip install -r requirements.txt
+
+# Run against the bundled sample
+python tools/extract_pdf_headers.py samples/Official_withdrawal_form.pdf
+
+# Your own PDF (paths with spaces work fine with quotes)
+python tools/extract_pdf_headers.py "C:\Users\RAHUL MISRA\sample_pdfs\Official withdrawal form.pdf"
+
+# Limit to first 3 pages
+python tools/extract_pdf_headers.py samples/Official_withdrawal_form.pdf --pages 3
+```
+
+See **[docs/EXTRACT_PDF_HEADERS.md](docs/EXTRACT_PDF_HEADERS.md)** for full
+step-by-step instructions (Windows PowerShell and macOS/Linux).
 
 ---
 
