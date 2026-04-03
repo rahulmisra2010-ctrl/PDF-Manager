@@ -399,9 +399,13 @@ function _makeFieldCard(field) {
   // ── Heading fields: distinct card style ───────────────────────────────
   if (field.is_heading) {
     card.className = 'field-card field-card-heading';
+    const level = field.heading_level || 3;
+    const levelBadge = `<span class="badge heading-level-badge heading-level-${level}" title="Heading level ${level}">H${level}</span>`;
+    const sizeStr = field.font_size ? ` <span class="heading-font-size text-muted">${field.font_size.toFixed(1)}pt</span>` : '';
     card.innerHTML = `
       <div class="field-header">
-        <span class="field-heading-tag"><i class="bi bi-type-h1 me-1"></i>${_esc(label)}</span>
+        <span class="field-heading-tag">${levelBadge}<i class="bi bi-type-h1 me-1 ms-1"></i>${_esc(label)}</span>
+        ${sizeStr}
         ${field.page ? `<span class="badge bg-primary" style="font-size:0.6rem">p${field.page}</span>` : ''}
       </div>
     `;

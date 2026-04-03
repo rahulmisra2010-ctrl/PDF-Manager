@@ -404,3 +404,24 @@
   letter-spacing: 0.03em;
   flex: 1;
 }
+
+/* Heading level badges (H1, H2, H3) */
+.heading-level-badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  border-radius: 3px;
+  padding: 0.05rem 0.3rem;
+  line-height: 1.4;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.heading-level-1 { background: #0d6efd; color: #fff; }
+.heading-level-2 { background: #6ea8fe; color: #fff; }
+.heading-level-3 { background: #b6d4fe; color: #084298; }
+
+.heading-font-size {
+  font-size: 0.65rem;
+  margin-left: auto;
+  white-space: nowrap;
+}

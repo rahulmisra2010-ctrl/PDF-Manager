@@ -199,6 +199,8 @@ def extract_headings_with_bbox(
                 "y1": float,       # bottom edge of the line
             },
             "page": int,           # 1-based page number
+            "font_size": float,    # dominant font size of the line (pts); 0.0 if unknown
+            "heading_level": int,  # inferred heading level: 1 (largest) … 3 (smallest)
         }
 
     An empty list of headings is returned for pages where no text is found in
@@ -220,6 +222,29 @@ def extract_headings_with_bbox(
             crop_height = page.height * header_fraction
             top_region = page.within_bbox((0, 0, page.width, crop_height))
             words = top_region.extract_words() or []
+
+            # Build a char-level lookup: map each word's top-coordinate band
+            # to the maximum font size of characters within that band.  This
+            # lets us annotate each heading line with font-size metadata.
+            chars = top_region.chars or []
+            # Map line_top_key → max font size seen on that line
+            _char_line_sizes: dict[float, float] = {}
+            for ch in chars:
+                ch_top = float(ch.get("top", 0))
+                ch_size = float(ch.get("size", 0) or 0)
+                # Round to nearest int to merge minor per-glyph variations
+                key = round(ch_top)
+                if ch_size > _char_line_sizes.get(key, 0):
+                    _char_line_sizes[key] = ch_size
+
+            def _font_size_for_y(y_top: float) -> float:
+                """Return the largest font size seen near *y_top*."""
+                key = round(y_top)
+                # Check key ±1 to tolerate rounding differences
+                for k in (key, key - 1, key + 1):
+                    if k in _char_line_sizes:
+                        return _char_line_sizes[k]
+                return 0.0
 
             # Group words into lines by their ``top`` y-coordinate
             lines: list[list[dict]] = []
@@ -246,11 +271,22 @@ def extract_headings_with_bbox(
                 y0 = min(w["top"] for w in line)
                 x1 = max(w["x1"] for w in line)
                 y1 = max(w["bottom"] for w in line)
+                font_size = _font_size_for_y(y0)
                 headings.append({
                     "text": text,
                     "bbox": {"x0": x0, "y0": y0, "x1": x1, "y1": y1},
                     "page": page_num,
+                    "font_size": font_size,
+                    # heading_level is assigned below once all sizes are known
                 })
+
+            # Assign heading levels based on relative font sizes within this page.
+            # Largest font → level 1, next → level 2, others → level 3.
+            if headings:
+                sizes = sorted({h["font_size"] for h in headings if h["font_size"] > 0}, reverse=True)
+                size_to_level = {s: min(i + 1, 3) for i, s in enumerate(sizes)}
+                for h in headings:
+                    h["heading_level"] = size_to_level.get(h["font_size"], 3) if h["font_size"] > 0 else 3
 
             results.append((page_num, headings))
 
@@ -264,9 +300,10 @@ def print_headings_with_bbox(heading_results: list) -> None:
         if headings:
             for h in headings:
                 bb = h["bbox"]
+                size_str = f"  {h['font_size']:.1f}pt (H{h['heading_level']})" if h.get("font_size") else ""
                 print(
                     f"  [{bb['x0']:.1f},{bb['y0']:.1f} → {bb['x1']:.1f},{bb['y1']:.1f}]"
-                    f"  {h['text']}"
+                    f"{size_str}  {h['text']}"
                 )
         else:
             print("  (no heading text found in top region)")

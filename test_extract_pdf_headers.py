@@ -125,13 +125,15 @@ def test_headings_with_bbox_non_empty(sample_pdf):
 
 
 def test_headings_with_bbox_dict_keys(sample_pdf):
-    """Each heading entry must have 'text', 'bbox', and 'page' keys."""
+    """Each heading entry must have 'text', 'bbox', 'page', 'font_size', and 'heading_level' keys."""
     results = extract_headings_with_bbox(sample_pdf, max_pages=1)
     _, headings = results[0]
     for h in headings:
         assert "text" in h
         assert "bbox" in h
         assert "page" in h
+        assert "font_size" in h, "heading entry must include font_size"
+        assert "heading_level" in h, "heading entry must include heading_level"
         assert set(h["bbox"].keys()) == {"x0", "y0", "x1", "y1"}
 
 
@@ -179,6 +181,42 @@ def test_headings_with_bbox_custom_fraction(sample_pdf):
     _, headings_small = results_small[0]
     _, headings_large = results_large[0]
     assert len(headings_large) >= len(headings_small)
+
+
+def test_headings_with_bbox_font_size_non_negative(sample_pdf):
+    """font_size must be a non-negative float."""
+    results = extract_headings_with_bbox(sample_pdf, max_pages=1)
+    _, headings = results[0]
+    for h in headings:
+        assert isinstance(h["font_size"], (int, float)), "font_size must be numeric"
+        assert h["font_size"] >= 0, f"font_size must be non-negative, got {h['font_size']}"
+
+
+def test_headings_with_bbox_heading_level_valid(sample_pdf):
+    """heading_level must be an integer in the range 1–3."""
+    results = extract_headings_with_bbox(sample_pdf, max_pages=1)
+    _, headings = results[0]
+    for h in headings:
+        assert isinstance(h["heading_level"], int), "heading_level must be an int"
+        assert 1 <= h["heading_level"] <= 3, (
+            f"heading_level must be 1-3, got {h['heading_level']}"
+        )
+
+
+def test_headings_with_bbox_largest_font_is_level_1(sample_pdf):
+    """The heading with the largest font_size on a page should be heading_level 1."""
+    results = extract_headings_with_bbox(sample_pdf, max_pages=1)
+    _, headings = results[0]
+    # Only run assertion when font_size data is available
+    sized = [h for h in headings if h["font_size"] > 0]
+    if len(sized) < 2:
+        pytest.skip("Not enough sized headings on page 1 to test level ordering")
+    max_size = max(h["font_size"] for h in sized)
+    level_1_headings = [h for h in sized if h["font_size"] == max_size]
+    for h in level_1_headings:
+        assert h["heading_level"] == 1, (
+            f"Largest-font heading should be level 1, got {h['heading_level']}"
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────────

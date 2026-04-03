@@ -116,20 +116,22 @@ def _extract_headings_as_fields(
         for h in headings:
             bb = h["bbox"]
             heading_fields.append({
-                "field_name":  h["text"],
-                "label":       h["text"],
-                "value":       "",
-                "confidence":  1.0,
-                "bbox":        None,
+                "field_name":    h["text"],
+                "label":         h["text"],
+                "value":         "",
+                "confidence":    1.0,
+                "bbox":          None,
                 "label_bbox": {
                     "x0": bb["x0"] * zoom,
                     "y0": bb["y0"] * zoom,
                     "x1": bb["x1"] * zoom,
                     "y1": bb["y1"] * zoom,
                 },
-                "page":        page_num,
-                "doc_id":      doc_id,
-                "is_heading":  True,
+                "page":          page_num,
+                "doc_id":        doc_id,
+                "is_heading":    True,
+                "font_size":     h.get("font_size", 0.0),
+                "heading_level": h.get("heading_level", 3),
             })
         return heading_fields
     except Exception as exc:
