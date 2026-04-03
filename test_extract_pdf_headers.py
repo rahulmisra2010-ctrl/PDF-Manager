@@ -1,7 +1,7 @@
 """
 Smoke tests for tools/extract_pdf_headers.py
 
-These tests verify the three extraction functions work correctly against the
+These tests verify the four extraction functions work correctly against the
 bundled sample PDF (samples/Official_withdrawal_form.pdf).
 
 Run with:
@@ -16,6 +16,7 @@ import pytest
 # Make the tools/ package importable when running from repo root
 sys.path.insert(0, str(Path(__file__).parent / "tools"))
 from extract_pdf_headers import (  # noqa: E402
+    extract_headings_with_bbox,
     extract_metadata,
     extract_outline,
     extract_page_headers,
@@ -100,12 +101,93 @@ def test_page_headers_all_pages(sample_pdf):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Heading lines with bounding boxes tests
+# ──────────────────────────────────────────────────────────────────────────────
+
+def test_headings_with_bbox_returns_list(sample_pdf):
+    results = extract_headings_with_bbox(sample_pdf, max_pages=1)
+    assert isinstance(results, list)
+    assert len(results) == 1
+
+
+def test_headings_with_bbox_tuple_structure(sample_pdf):
+    results = extract_headings_with_bbox(sample_pdf, max_pages=1)
+    page_num, headings = results[0]
+    assert page_num == 1
+    assert isinstance(headings, list)
+
+
+def test_headings_with_bbox_non_empty(sample_pdf):
+    """The sample PDF should have at least one heading in the top 15%."""
+    results = extract_headings_with_bbox(sample_pdf, max_pages=1)
+    _, headings = results[0]
+    assert len(headings) >= 1
+
+
+def test_headings_with_bbox_dict_keys(sample_pdf):
+    """Each heading entry must have 'text', 'bbox', and 'page' keys."""
+    results = extract_headings_with_bbox(sample_pdf, max_pages=1)
+    _, headings = results[0]
+    for h in headings:
+        assert "text" in h
+        assert "bbox" in h
+        assert "page" in h
+        assert set(h["bbox"].keys()) == {"x0", "y0", "x1", "y1"}
+
+
+def test_headings_with_bbox_coordinates_sane(sample_pdf):
+    """Bounding box coordinates must be non-negative and well-ordered."""
+    results = extract_headings_with_bbox(sample_pdf, max_pages=1)
+    _, headings = results[0]
+    for h in headings:
+        bb = h["bbox"]
+        assert bb["x0"] >= 0
+        assert bb["y0"] >= 0
+        assert bb["x1"] > bb["x0"], f"x1 ({bb['x1']}) must be > x0 ({bb['x0']})"
+        assert bb["y1"] > bb["y0"], f"y1 ({bb['y1']}) must be > y0 ({bb['y0']})"
+
+
+def test_headings_with_bbox_contains_expected_text(sample_pdf):
+    """The sample PDF heading should contain 'Withdrawal' or 'Official'."""
+    results = extract_headings_with_bbox(sample_pdf, max_pages=1)
+    _, headings = results[0]
+    all_text = " ".join(h["text"] for h in headings)
+    assert "Withdrawal" in all_text or "Official" in all_text, (
+        f"Expected heading text not found; got: {all_text!r}"
+    )
+
+
+def test_headings_with_bbox_page_numbers(sample_pdf):
+    """Each heading entry's 'page' field must match the tuple's page number."""
+    results = extract_headings_with_bbox(sample_pdf, max_pages=1)
+    page_num, headings = results[0]
+    for h in headings:
+        assert h["page"] == page_num
+
+
+def test_headings_with_bbox_all_pages(sample_pdf):
+    """When max_pages=0 all pages are processed."""
+    results_all = extract_headings_with_bbox(sample_pdf, max_pages=0)
+    results_one = extract_headings_with_bbox(sample_pdf, max_pages=1)
+    assert len(results_all) >= len(results_one)
+
+
+def test_headings_with_bbox_custom_fraction(sample_pdf):
+    """A larger header_fraction should capture at least as many headings."""
+    results_small = extract_headings_with_bbox(sample_pdf, max_pages=1, header_fraction=0.05)
+    results_large = extract_headings_with_bbox(sample_pdf, max_pages=1, header_fraction=0.30)
+    _, headings_small = results_small[0]
+    _, headings_large = results_large[0]
+    assert len(headings_large) >= len(headings_small)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Smoke-check integration test
 # ──────────────────────────────────────────────────────────────────────────────
 
 def test_smoke_check_returns_all_keys(sample_pdf):
     result = smoke_check(sample_pdf, max_pages=1)
-    assert set(result.keys()) == {"metadata", "outline", "page_headers"}
+    assert set(result.keys()) == {"metadata", "outline", "page_headers", "headings_with_bbox"}
 
 
 def test_smoke_check_file_not_found():
@@ -125,6 +207,7 @@ def test_cli_main_success(sample_pdf, capsys):
     assert "PDF METADATA" in captured.out
     assert "OUTLINE" in captured.out
     assert "TOP-OF-PAGE" in captured.out
+    assert "BOUNDING BOXES" in captured.out
 
 def test_cli_main_missing_file(capsys):
     from extract_pdf_headers import main

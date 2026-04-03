@@ -392,11 +392,56 @@ function _filterFieldsPanel(pageNum) {
 
 function _makeFieldCard(field) {
   const card = document.createElement('div');
-  card.className = 'field-card';
-  // Use label as the stable identifier; fall back to field_name for legacy entries
   const label = field.label || field.field_name || '';
   card.dataset.fieldName = label;
   card.dataset.page      = field.page || '';
+
+  // ── Heading fields: distinct card style ───────────────────────────────
+  if (field.is_heading) {
+    card.className = 'field-card field-card-heading';
+    card.innerHTML = `
+      <div class="field-header">
+        <span class="field-heading-tag"><i class="bi bi-type-h1 me-1"></i>${_esc(label)}</span>
+        ${field.page ? `<span class="badge bg-primary" style="font-size:0.6rem">p${field.page}</span>` : ''}
+      </div>
+    `;
+
+    // Heading hover: show blue banner on canvas
+    card.addEventListener('mouseenter', () => {
+      if (field.page && field.page !== viewer.currentPage) return;
+      viewer.clearOverlay();
+      const bb = field.label_bbox || field.bbox;
+      if (bb && bb.x0 !== undefined) {
+        viewer.drawHeadingHighlight(bb.x0, bb.y0, bb.x1, bb.y1, label);
+      }
+    });
+    card.addEventListener('mouseleave', () => {
+      const pageFields = _visibleFields().filter(f => f.page === viewer.currentPage || !f.page);
+      viewer.drawFields(pageFields);
+    });
+
+    // Remove button
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'btn btn-sm btn-link text-danger p-0 float-end';
+    removeBtn.style.fontSize = '0.7rem';
+    removeBtn.title = 'Remove heading';
+    removeBtn.textContent = '✕';
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      fields = fields.filter(f => (f.label || f.field_name) !== label || f.page !== field.page);
+      _renderFieldsPanel(_visibleFields());
+      const pageFields = _visibleFields().filter(f => f.page === viewer.currentPage || !f.page);
+      viewer.drawFields(pageFields);
+    });
+    card.querySelector('.field-header').prepend(removeBtn);
+    return card;
+  }
+
+  // ── Regular field card ─────────────────────────────────────────────────
+  card.className = 'field-card';
+  // Use label as the stable identifier; fall back to field_name for legacy entries
+  card.dataset.fieldName = label;
 
   const conf    = Math.round((field.confidence || 0.5) * 100);
   const confStr = `${conf}%`;
@@ -501,6 +546,8 @@ function _makeFieldCard(field) {
  *     strictly prevents any stale or cross-document entries from appearing.
  *  2. When `filterLabelOnly` is true, fields with an empty value string are
  *     hidden — these are printed form labels with no user-entered data.
+ *     Heading fields (is_heading=true) are exempt from this filter and are
+ *     always shown so section titles remain visible.
  */
 function _visibleFields() {
   const cfg = window.AI_CONFIG;
@@ -509,8 +556,9 @@ function _visibleFields() {
     //    All entries in the array must carry doc_id (set at init and detection
     //    time), so we can enforce a strict equality check here.
     if (f.doc_id !== cfg.docId) return false;
-    // 2. Label-only filter: hide fields with no extracted value
-    if (filterLabelOnly && !f.value && !f.text) return false;
+    // 2. Label-only filter: hide fields with no extracted value.
+    //    Headings are always shown regardless of this filter.
+    if (filterLabelOnly && !f.value && !f.text && !f.is_heading) return false;
     return true;
   });
 }

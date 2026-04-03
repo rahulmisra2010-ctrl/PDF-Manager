@@ -368,3 +368,39 @@
     height: 55vh;
   }
 }
+
+/* =========================================================================
+   Heading field cards — section titles extracted from the top of each page
+   ========================================================================= */
+
+.field-card-heading {
+  border: 1.5px solid rgba(13, 110, 253, 0.45);
+  background: rgba(13, 110, 253, 0.06);
+  padding: 0.4rem 0.75rem;
+  margin-bottom: 0.4rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.field-card-heading:hover {
+  border-color: #0d6efd;
+  box-shadow: 0 0 0 2px rgba(13,110,253,0.20);
+}
+
+.field-card-heading .field-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.field-card-heading .field-heading-tag {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #0d4fad;
+  background: rgba(13,110,253,0.12);
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+  letter-spacing: 0.03em;
+  flex: 1;
+}
