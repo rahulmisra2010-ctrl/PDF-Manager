@@ -45,6 +45,11 @@ def _ensure_tools_on_path() -> None:
     if _tools not in sys.path:
         sys.path.insert(0, _tools)
 
+
+def _count_unpaired(fields_out: list) -> int:
+    """Count fields that have no extracted value and are not headings."""
+    return sum(1 for f in fields_out if not f.get("value") and not f.get("is_heading"))
+
 ai_pdf_bp = Blueprint("ai_pdf", __name__, template_folder="../templates/pdf")
 
 
@@ -270,7 +275,7 @@ def detect_fields(doc_id: int):
                 doc.file_path, page_num, zoom, doc_id
             )
             fields_out = heading_fields + fields_out
-            unpaired = sum(1 for f in fields_out if not f.get("value") and not f.get("is_heading"))
+            unpaired = _count_unpaired(fields_out)
             return jsonify({
                 "fields": fields_out,
                 "page": page_num,
@@ -388,7 +393,7 @@ def detect_fields(doc_id: int):
         )
         fields_out = heading_fields + fields_out
 
-        unpaired = sum(1 for f in fields_out if not f.get("value") and not f.get("is_heading"))
+        unpaired = _count_unpaired(fields_out)
         current_app.logger.info(
             "detect_fields %s pairing: doc=%s page=%s pairs=%d unpaired=%d",
             pairing_mode, doc_id, page_num, len(fields_out), unpaired,
