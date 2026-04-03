@@ -37,6 +37,14 @@ def _ensure_backend_on_path() -> None:
     if _backend not in sys.path:
         sys.path.insert(0, _backend)
 
+
+def _ensure_tools_on_path() -> None:
+    """Add tools/ directory to sys.path if not already present."""
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _tools = os.path.abspath(os.path.join(_here, "..", "tools"))
+    if _tools not in sys.path:
+        sys.path.insert(0, _tools)
+
 ai_pdf_bp = Blueprint("ai_pdf", __name__, template_folder="../templates/pdf")
 
 
@@ -66,6 +74,65 @@ def _get_ai_service():
     except Exception:
         current_app.logger.exception("Failed to initialise AIExtractionService")
         return None
+
+
+# ---------------------------------------------------------------------------
+# Heading extraction helper
+# ---------------------------------------------------------------------------
+
+def _extract_headings_as_fields(
+    file_path: str,
+    page_num: int,
+    zoom: float,
+    doc_id: int,
+) -> list[dict]:
+    """Return heading lines from the top of *page_num* as field dicts.
+
+    Bounding boxes are scaled from PDF points to pixel coordinates using
+    *zoom* so they align with the rendered page image.  Each heading is
+    returned with ``is_heading=True`` so the frontend can render it with a
+    distinct colour.
+
+    Returns an empty list on any error so callers never have to handle
+    exceptions from this helper.
+    """
+    _ensure_tools_on_path()
+    try:
+        from pathlib import Path
+        from extract_pdf_headers import extract_headings_with_bbox  # type: ignore[import]
+
+        results = extract_headings_with_bbox(Path(file_path), max_pages=page_num)
+        # results is [(page_num, [heading_dict, …]), …]; pick the target page
+        if not results or len(results) < page_num:
+            return []
+        _, headings = results[page_num - 1]
+
+        heading_fields = []
+        for h in headings:
+            bb = h["bbox"]
+            heading_fields.append({
+                "field_name":  h["text"],
+                "label":       h["text"],
+                "value":       "",
+                "confidence":  1.0,
+                "bbox":        None,
+                "label_bbox": {
+                    "x0": bb["x0"] * zoom,
+                    "y0": bb["y0"] * zoom,
+                    "x1": bb["x1"] * zoom,
+                    "y1": bb["y1"] * zoom,
+                },
+                "page":        page_num,
+                "doc_id":      doc_id,
+                "is_heading":  True,
+            })
+        return heading_fields
+    except Exception as exc:
+        current_app.logger.warning(
+            "Heading extraction failed for doc %s page %s: %s",
+            doc_id, page_num, exc,
+        )
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +264,13 @@ def detect_fields(doc_id: int):
                     "page":        page_num,
                     "doc_id":      doc_id,
                 })
-            unpaired = sum(1 for f in fields_out if not f["value"])
+            # Prepend heading fields (from the top of the page) so they
+            # appear at the top of the sidebar and are visually distinct.
+            heading_fields = _extract_headings_as_fields(
+                doc.file_path, page_num, zoom, doc_id
+            )
+            fields_out = heading_fields + fields_out
+            unpaired = sum(1 for f in fields_out if not f.get("value") and not f.get("is_heading"))
             return jsonify({
                 "fields": fields_out,
                 "page": page_num,
@@ -309,7 +382,13 @@ def detect_fields(doc_id: int):
             for p in pairs
         ]
 
-        unpaired = sum(1 for f in fields_out if not f["value"])
+        # Prepend heading fields from the top of the page
+        heading_fields = _extract_headings_as_fields(
+            doc.file_path, page_num, zoom, doc_id
+        )
+        fields_out = heading_fields + fields_out
+
+        unpaired = sum(1 for f in fields_out if not f.get("value") and not f.get("is_heading"))
         current_app.logger.info(
             "detect_fields %s pairing: doc=%s page=%s pairs=%d unpaired=%d",
             pairing_mode, doc_id, page_num, len(fields_out), unpaired,

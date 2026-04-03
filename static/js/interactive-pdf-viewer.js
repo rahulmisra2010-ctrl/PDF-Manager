@@ -197,17 +197,68 @@ class InteractivePDFViewer {
     }
   }
 
+  /**
+   * Draw a heading highlight: a solid blue-tinted banner with the heading
+   * text rendered inside it.  Used for form section titles / page headings.
+   *
+   * @param {number} x0    - Left x coordinate
+   * @param {number} y0    - Top y coordinate
+   * @param {number} x1    - Right x coordinate
+   * @param {number} y1    - Bottom y coordinate
+   * @param {string} label - Heading text to display inside the banner
+   */
+  drawHeadingHighlight(x0, y0, x1, y1, label) {
+    if (!this._octx) return;
+    const ctx = this._octx;
+    const width  = x1 - x0;
+    const height = y1 - y0;
+
+    ctx.save();
+
+    // Blue colour scheme for headings
+    ctx.strokeStyle = 'rgba(13, 110, 253, 0.85)';
+    ctx.lineWidth   = 2;
+    ctx.fillStyle   = 'rgba(13, 110, 253, 0.18)';
+    ctx.fillRect(x0, y0, width, height);
+    ctx.strokeRect(x0, y0, width, height);
+
+    // Render heading text inside the rectangle
+    if (label) {
+      const fontSize = Math.max(10, Math.min(16, height * 0.65));
+      ctx.font = `bold ${fontSize}px Arial, sans-serif`;
+      ctx.fillStyle = '#003499';
+      ctx.textBaseline = 'middle';
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x0 + 3, y0 + 1, width - 6, height - 2);
+      ctx.clip();
+      ctx.fillText(label, x0 + 5, y0 + height / 2);
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
   /** Draw all field bounding boxes at once with yellow-colored highlights.
    *
-   * Fields are drawn with their label shown above the rectangle and
-   * the value shown inside the rectangle, using a yellow color scheme.
-   * This provides clear visual identification of extracted field sections.
+   * Heading fields (``is_heading === true``) are drawn with a blue banner
+   * style via ``drawHeadingHighlight``.  All other fields are drawn with the
+   * yellow label/value style via ``drawLabeledHighlight``.
    */
   drawFields(fields) {
     this.clearOverlay();
     for (const f of fields) {
       const label = f.label || f.field_name || '';
       const value = f.value || f.text || '';
+
+      // ── Heading fields: render with blue banner ─────────────────────────
+      if (f.is_heading) {
+        const bb = f.label_bbox || f.bbox;
+        if (bb && bb.x0 !== undefined) {
+          this.drawHeadingHighlight(bb.x0, bb.y0, bb.x1, bb.y1, label);
+        }
+        continue;
+      }
 
       // If field has both label_bbox and bbox, draw them as a combined section
       // with the label shown above the combined bounding box
