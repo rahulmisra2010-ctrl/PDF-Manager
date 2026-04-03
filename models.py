@@ -86,6 +86,9 @@ class Document(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     page_count = db.Column(db.Integer, nullable=True)
     file_size = db.Column(db.Integer, nullable=True)  # bytes
+    # Stable identifier for the PDF template/form structure (sha256 of layout).
+    # NULL for documents uploaded before this feature was added (legacy rows).
+    template_key = db.Column(db.String(64), nullable=True, index=True)
 
     fields = db.relationship(
         "ExtractedField",
@@ -470,6 +473,9 @@ class DocumentSchema(db.Model):
     labels_json = db.Column(db.Text, nullable=False, default="[]")
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    # Template identifier — copied from Document.template_key at schema creation
+    # time. NULL for schemas created before this feature was added (legacy rows).
+    template_key = db.Column(db.String(64), nullable=True, index=True)
 
     @property
     def labels(self) -> list[str]:
@@ -483,4 +489,7 @@ class DocumentSchema(db.Model):
         self.updated_at = datetime.utcnow()
 
     def __repr__(self) -> str:
-        return f"<DocumentSchema doc={self.document_id} n={len(self.labels)}>"
+        return (
+            f"<DocumentSchema doc={self.document_id} n={len(self.labels)}"
+            f" tpl={self.template_key or 'legacy'}>"
+        )
