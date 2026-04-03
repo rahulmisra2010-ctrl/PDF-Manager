@@ -18,6 +18,7 @@ GET  /pdf/<id>/rag-extract          — split-layout RAG extraction UI
 """
 
 import csv
+import hashlib
 import io
 import json
 import os
@@ -43,6 +44,77 @@ from werkzeug.utils import secure_filename
 from models import AuditLog, Document, DocumentSchema, ExtractedField, db
 
 pdf_bp = Blueprint("pdf", __name__, template_folder="../templates/pdf")
+
+# ---------------------------------------------------------------------------
+# Template-key computation
+# ---------------------------------------------------------------------------
+
+# Number of raw file bytes read when PyMuPDF is unavailable (fallback hashing).
+# 4 KB is large enough to cover the PDF header and the start of the first
+# page's content stream, which remains stable across differently-filled copies
+# of the same blank form.
+_FALLBACK_READ_BYTES = 4096
+
+
+def compute_template_key(file_path: str) -> str:
+    """Return a stable sha256 hex identifier for the PDF *template* structure.
+
+    The key is derived from the first page's **layout** (text-block bounding
+    boxes + drawing primitives), not from the actual text content.  This means
+    two filled copies of the same blank form produce the same key, while two
+    structurally different forms (e.g. address-book vs. withdrawal form)
+    produce different keys.
+
+    Falls back to a sha256 of the first 4 KB of file bytes when PyMuPDF is
+    unavailable (e.g. in unit tests that pass ``/tmp/fake.pdf``).
+    """
+    try:
+        import fitz  # type: ignore[import]  # PyMuPDF
+
+        with fitz.open(file_path) as pdf_doc:
+            page_count = len(pdf_doc)
+            if page_count == 0:
+                raise ValueError("Empty PDF")
+            page = pdf_doc[0]
+
+            # Text block bounding boxes — positions only, ignore text content
+            blocks = page.get_text("blocks")  # (x0,y0,x1,y1,text,blk_no,blk_type)
+            bbox_parts = [
+                f"{b[0]:.1f},{b[1]:.1f},{b[2]:.1f},{b[3]:.1f}"
+                for b in sorted(blocks, key=lambda b: (round(b[1]), round(b[0])))
+                if b[6] == 0  # block_type 0 = text
+            ]
+
+            # Drawing primitives (lines / rectangles) — structural skeleton
+            drawings = page.get_drawings() or []
+            draw_parts = [
+                f"{d['rect'].x0:.1f},{d['rect'].y0:.1f},"
+                f"{d['rect'].x1:.1f},{d['rect'].y1:.1f}"
+                for d in sorted(
+                    drawings,
+                    key=lambda d: (round(d["rect"].y0), round(d["rect"].x0)),
+                )
+            ]
+
+            payload = (
+                f"pages={page_count}"
+                f"|blocks={'|'.join(bbox_parts)}"
+                f"|draws={'|'.join(draw_parts)}"
+            )
+    except Exception:
+        # Fallback: hash the first _FALLBACK_READ_BYTES of raw file bytes.
+        # 4 KB is enough to capture PDF header metadata and the start of the
+        # first page's cross-reference structure, which is stable across
+        # different filled copies of the same blank form.
+        try:
+            with open(file_path, "rb") as fh:
+                raw = fh.read(_FALLBACK_READ_BYTES)
+            payload = raw.hex()
+        except OSError:
+            payload = os.path.basename(file_path)
+
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
 
 # ---------------------------------------------------------------------------
 # Role guard
@@ -117,15 +189,22 @@ def upload():
         with open(file_path, "wb") as fh:
             fh.write(content)
 
+        # Compute stable template identifier from the PDF layout structure.
+        tpl_key = compute_template_key(file_path)
+
         doc = Document(
             filename=safe_name,
             file_path=file_path,
             status="uploaded",
             uploaded_by=current_user.id,
             file_size=len(content),
+            template_key=tpl_key,
         )
         db.session.add(doc)
         db.session.flush()  # get doc.id before commit
+        current_app.logger.info(
+            "Uploaded '%s' (doc %s) — template_key=%s", safe_name, doc.id, tpl_key
+        )
         _log(current_user.id, "upload", "document", str(doc.id), safe_name)
         db.session.commit()
 
@@ -198,16 +277,27 @@ def extract(doc_id: int):
             # Load or create the per-document schema
             schema = DocumentSchema.query.filter_by(document_id=doc_id).first()
             if schema is None:
-                # First extraction — build schema from discovered labels
-                schema = DocumentSchema(document_id=doc_id)
+                # First extraction — build schema from discovered labels.
+                # Stamp the schema with this document's template_key so it is
+                # never accidentally reused for a document with a different
+                # template structure.
+                schema = DocumentSchema(
+                    document_id=doc_id,
+                    template_key=doc.template_key,
+                )
                 schema.labels = create_schema_from_pairs(dynamic_pairs)
                 db.session.add(schema)
                 pairs_to_save = dynamic_pairs
                 current_app.logger.info(
-                    "Created new schema for doc %s: %d labels", doc_id, len(schema.labels)
+                    "Created new schema for doc %s (tpl=%s): %d labels",
+                    doc_id, doc.template_key or "legacy", len(schema.labels),
                 )
             else:
-                # Re-extraction — map to existing schema
+                # Re-extraction — map to existing schema.
+                # If the stored schema has no template_key (legacy row), update
+                # it now so it benefits from isolation going forward.
+                if schema.template_key is None and doc.template_key is not None:
+                    schema.template_key = doc.template_key
                 pairs_to_save = map_pairs_to_schema(dynamic_pairs, schema.labels)
                 current_app.logger.info(
                     "Mapped %d discovered pair(s) to schema (%d labels) for doc %s",

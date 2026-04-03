@@ -19,6 +19,17 @@
     {% if doc.page_count %}
       <span class="text-muted ms-2">{{ doc.page_count }} page(s)</span>
     {% endif %}
+    {% if doc.template_key %}
+      <span class="badge bg-dark ms-2 font-monospace"
+            title="Template key: {{ doc.template_key }} — schema and training data are scoped to this template">
+        <i class="bi bi-fingerprint me-1"></i>tpl:{{ doc.template_key[:8] }}
+      </span>
+    {% else %}
+      <span class="badge bg-secondary ms-2"
+            title="No template key — legacy document uploaded before template isolation was introduced">
+        <i class="bi bi-exclamation-circle me-1"></i>legacy
+      </span>
+    {% endif %}
   </div>
   <a href="{{ url_for('pdf.list_documents') }}" class="btn btn-outline-secondary btn-sm">
     <i class="bi bi-arrow-left me-1"></i>Back
@@ -134,6 +145,17 @@
               title="Labels and values were discovered dynamically from this document">
           <i class="bi bi-magic me-1"></i>{{ fields | length }} field(s)
         </span>
+        {% if schema and schema.template_key %}
+          <span class="badge bg-dark ms-2 font-monospace"
+                title="Schema template key: {{ schema.template_key }} — this schema is only applied to documents sharing this template">
+            <i class="bi bi-fingerprint me-1"></i>tpl:{{ schema.template_key[:8] }}
+          </span>
+        {% elif schema %}
+          <span class="badge bg-secondary ms-2"
+                title="Legacy schema — no template key (created before template isolation)">
+            <i class="bi bi-exclamation-circle me-1"></i>legacy schema
+          </span>
+        {% endif %}
       {% else %}
         Extracted Fields — Address Book
         <span class="badge bg-secondary ms-2" title="Fixed address-book schema">

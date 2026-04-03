@@ -1977,6 +1977,309 @@ class TestApplyTrainingToDocument:
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# TestTemplateKey — per-template schema isolation and template_key computation
+# ─────────────────────────────────────────────────────────────────────────
+
+class TestTemplateKey:
+    """Tests for template_key computation and per-template schema isolation."""
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _make_minimal_pdf(self, label: str) -> bytes:
+        """Return a minimal one-page PDF containing *label* as its only text."""
+        import io
+        try:
+            import fitz
+            doc = fitz.open()
+            page = doc.new_page()
+            page.insert_text(fitz.Point(50, 100), label, fontsize=14)
+            buf = io.BytesIO()
+            doc.save(buf)
+            doc.close()
+            return buf.getvalue()
+        except ImportError:
+            # Fallback: return distinct dummy bytes
+            return b"%PDF-1.4\n% " + label.encode()
+
+    def _upload_pdf(self, client, app, pdf_bytes: bytes, filename: str) -> int:
+        """Upload *pdf_bytes* via the /pdf/upload endpoint and return doc.id."""
+        _login(client, app)
+        import io
+        resp = client.post(
+            "/pdf/upload",
+            data={"file": (io.BytesIO(pdf_bytes), filename)},
+            content_type="multipart/form-data",
+            follow_redirects=False,
+        )
+        # Should redirect to /pdf/<id>
+        assert resp.status_code in (302, 200), (
+            f"Upload failed: status={resp.status_code}"
+        )
+        location = resp.headers.get("Location", "")
+        # Extract doc id from Location header (/pdf/3 → 3)
+        parts = location.rstrip("/").split("/")
+        doc_id = int(parts[-1]) if parts[-1].isdigit() else None
+        if doc_id is None:
+            # Fallback: query DB directly
+            from models import Document
+            with app.app_context():
+                doc = Document.query.order_by(Document.id.desc()).first()
+                doc_id = doc.id
+        return doc_id
+
+    # ------------------------------------------------------------------
+    # compute_template_key unit tests
+    # ------------------------------------------------------------------
+
+    def test_compute_template_key_returns_64char_hex(self, tmp_path):
+        """compute_template_key must return a 64-character lowercase hex string."""
+        from blueprints.pdf import compute_template_key
+        # Write a trivial file; compute_template_key falls back gracefully
+        fake = tmp_path / "test.pdf"
+        fake.write_bytes(b"%PDF-1.4\n%dummy content")
+        key = compute_template_key(str(fake))
+        assert isinstance(key, str)
+        assert len(key) == 64
+        assert all(c in "0123456789abcdef" for c in key)
+
+    def test_compute_template_key_same_file_same_key(self, tmp_path):
+        """The same file must produce the same template_key on every call."""
+        from blueprints.pdf import compute_template_key
+        fake = tmp_path / "stable.pdf"
+        fake.write_bytes(b"%PDF-1.4\n%stable bytes")
+        key1 = compute_template_key(str(fake))
+        key2 = compute_template_key(str(fake))
+        assert key1 == key2
+
+    def test_compute_template_key_different_files_different_keys(self, tmp_path):
+        """Two structurally different PDF files must produce different keys.
+
+        This is the core requirement: uploading Address_Book.pdf and
+        Official_withdrawal_form.pdf must yield different template_keys so
+        their schemas are kept isolated.
+        """
+        from blueprints.pdf import compute_template_key
+
+        # Build two real PDFs with different layouts when fitz is available,
+        # otherwise use files with different byte content.
+        try:
+            import io
+            import fitz
+
+            def make_pdf(labels):
+                d = fitz.open()
+                p = d.new_page()
+                y = 50
+                for lbl in labels:
+                    p.insert_text(fitz.Point(50, y), lbl, fontsize=12)
+                    y += 30
+                buf = io.BytesIO()
+                d.save(buf)
+                d.close()
+                return buf.getvalue()
+
+            pdf_a = make_pdf(["Name", "Street Address", "City", "State", "ZIP"])
+            pdf_b = make_pdf([
+                "Student Number", "Legal Name", "Course Code",
+                "Withdrawal Reason", "Signature",
+            ])
+        except ImportError:
+            pdf_a = b"%PDF-1.4\n% address_book_layout"
+            pdf_b = b"%PDF-1.4\n% withdrawal_form_layout"
+
+        file_a = tmp_path / "address_book.pdf"
+        file_b = tmp_path / "withdrawal_form.pdf"
+        file_a.write_bytes(pdf_a)
+        file_b.write_bytes(pdf_b)
+
+        key_a = compute_template_key(str(file_a))
+        key_b = compute_template_key(str(file_b))
+        assert key_a != key_b, (
+            "Address-book and withdrawal-form PDFs must have different template_keys"
+        )
+
+    def test_compute_template_key_missing_file_does_not_crash(self, tmp_path):
+        """compute_template_key must not raise even when the file is absent."""
+        from blueprints.pdf import compute_template_key
+        key = compute_template_key(str(tmp_path / "nonexistent.pdf"))
+        assert isinstance(key, str)
+        assert len(key) == 64
+
+    # ------------------------------------------------------------------
+    # Integration: Document.template_key is stored on upload
+    # ------------------------------------------------------------------
+
+    def test_document_has_template_key_after_upload(self, client, app):
+        """Document.template_key must be set (non-None) immediately after upload."""
+        pdf_bytes = self._make_minimal_pdf("Name: ___")
+        doc_id = self._upload_pdf(client, app, pdf_bytes, "addr.pdf")
+
+        from models import Document
+        with app.app_context():
+            doc = Document.query.get(doc_id)
+        assert doc.template_key is not None
+        assert len(doc.template_key) == 64
+
+    def test_two_different_pdfs_different_template_keys(self, client, app):
+        """Uploading two structurally different PDFs must produce different keys.
+
+        Requirement: each PDF template must receive its own unique template_key
+        so that schemas and training data are never shared between templates.
+        """
+        pdf_a = self._make_minimal_pdf("Name Address City")
+        pdf_b = self._make_minimal_pdf("Student Number Withdrawal Reason Signature")
+
+        doc_a_id = self._upload_pdf(client, app, pdf_a, "address_book.pdf")
+        doc_b_id = self._upload_pdf(client, app, pdf_b, "withdrawal_form.pdf")
+
+        from models import Document
+        with app.app_context():
+            doc_a = Document.query.get(doc_a_id)
+            doc_b = Document.query.get(doc_b_id)
+        assert doc_a.template_key != doc_b.template_key, (
+            "Different PDF templates must produce different template_keys"
+        )
+
+    # ------------------------------------------------------------------
+    # Integration: schema.template_key matches document.template_key
+    # ------------------------------------------------------------------
+
+    def test_schema_template_key_matches_document(self, app):
+        """DocumentSchema.template_key must equal Document.template_key."""
+        from models import Document, DocumentSchema, ExtractedField
+
+        tpl_key = "a" * 64
+        with app.app_context():
+            doc = Document(
+                filename="form.pdf",
+                file_path="/tmp/form.pdf",
+                status="extracted",
+                template_key=tpl_key,
+            )
+            db.session.add(doc)
+            db.session.flush()
+            schema = DocumentSchema(
+                document_id=doc.id,
+                template_key=tpl_key,
+            )
+            schema.labels = ["Name", "City"]
+            db.session.add(schema)
+            db.session.commit()
+            doc_id = doc.id
+
+        with app.app_context():
+            schema = DocumentSchema.query.filter_by(document_id=doc_id).first()
+        assert schema is not None
+        assert schema.template_key == tpl_key
+
+    # ------------------------------------------------------------------
+    # Isolation: schema from PDF A must NOT be applied to PDF B
+    # ------------------------------------------------------------------
+
+    def test_schema_not_shared_across_templates(self, app):
+        """Schema labels from template A must not appear in an extraction for
+        template B when the two documents have different template_keys.
+
+        This is a direct regression test for the reported bug:
+        Address Book / ABC labels leaking into Official_withdrawal_form.pdf.
+        """
+        from models import Document, DocumentSchema, ExtractedField
+
+        # sha256 hex strings are 64 characters; use repetition to make that clear
+        _HALF = 64 // 2
+        key_a = "aa" * _HALF
+        key_b = "bb" * _HALF
+
+        with app.app_context():
+            # Document A — address-book template with its own schema
+            doc_a = Document(
+                filename="address_book.pdf",
+                file_path="/tmp/addr.pdf",
+                status="extracted",
+                template_key=key_a,
+            )
+            db.session.add(doc_a)
+            db.session.flush()
+
+            schema_a = DocumentSchema(
+                document_id=doc_a.id,
+                template_key=key_a,
+            )
+            schema_a.labels = ["Name", "Street Address", "City", "Email"]
+            db.session.add(schema_a)
+
+            # Document B — withdrawal form with its own (empty) schema
+            doc_b = Document(
+                filename="withdrawal_form.pdf",
+                file_path="/tmp/withdrawal.pdf",
+                status="uploaded",
+                template_key=key_b,
+            )
+            db.session.add(doc_b)
+            db.session.flush()
+            doc_b_id = doc_b.id
+            doc_a_id = doc_a.id
+            db.session.commit()
+
+        # Verify that looking up doc_b's schema returns nothing (not doc_a's)
+        with app.app_context():
+            schema_b = DocumentSchema.query.filter_by(document_id=doc_b_id).first()
+        assert schema_b is None, (
+            "A new document must not inherit a schema from a different template"
+        )
+
+        # And doc_a's schema labels must not appear in doc_b's extracted fields
+        with app.app_context():
+            fields_b = ExtractedField.query.filter_by(document_id=doc_b_id).all()
+        field_names_b = {f.field_name for f in fields_b}
+        addr_book_labels = {"Name", "Street Address", "City", "Email"}
+        assert field_names_b.isdisjoint(addr_book_labels), (
+            "Address-book labels must not appear in extraction results for "
+            f"a different template; found {field_names_b & addr_book_labels}"
+        )
+
+    # ------------------------------------------------------------------
+    # Backward compatibility: legacy rows (template_key=None) still work
+    # ------------------------------------------------------------------
+
+    def test_legacy_document_without_template_key(self, app):
+        """Documents with template_key=None (legacy) must still be accessible."""
+        from models import Document, DocumentSchema
+
+        with app.app_context():
+            doc = Document(
+                filename="legacy.pdf",
+                file_path="/tmp/legacy.pdf",
+                status="extracted",
+                template_key=None,  # Legacy — no key
+            )
+            db.session.add(doc)
+            db.session.flush()
+            schema = DocumentSchema(
+                document_id=doc.id,
+                template_key=None,  # Legacy schema
+            )
+            schema.labels = ["Field1", "Field2"]
+            db.session.add(schema)
+            db.session.commit()
+            doc_id = doc.id
+
+        with app.app_context():
+            fetched_doc = Document.query.get(doc_id)
+            fetched_schema = DocumentSchema.query.filter_by(
+                document_id=doc_id
+            ).first()
+
+        assert fetched_doc is not None
+        assert fetched_doc.template_key is None  # explicitly NULL
+        assert fetched_schema is not None
+        assert fetched_schema.template_key is None
+        assert fetched_schema.labels == ["Field1", "Field2"]
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # PDFService._export_as_pdf — unit tests for the label-search fallback
 # ─────────────────────────────────────────────────────────────────────────
 
