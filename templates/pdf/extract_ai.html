@@ -95,6 +95,10 @@
                 title="Toggle: hide label-only detections (fields with no value) that may come from form labels in other PDFs">
           <i class="bi bi-funnel"></i> Hide Labels
         </button>
+        <button id="btn-ocr-overlay" class="btn-toolbar"
+                title="Toggle OCR overlay — show all raw OCR-detected word bounding boxes">
+          <i class="bi bi-grid-3x3"></i> OCR Overlay
+        </button>
       </div>
 
       <div class="ms-auto">
@@ -115,6 +119,9 @@
 
         <!-- Highlights overlay (drawn by InteractivePDFViewer) -->
         <canvas id="overlay-canvas" style="position:absolute;top:0;left:0;pointer-events:none"></canvas>
+
+        <!-- OCR overlay — raw word bboxes shown when OCR Overlay toggle is active -->
+        <canvas id="ocr-overlay-canvas" style="position:absolute;top:0;left:0;pointer-events:none;display:none"></canvas>
 
         <!-- Selection layer (captures mouse events in select mode) -->
         <canvas id="selection-canvas" style="position:absolute;top:0;left:0"></canvas>
@@ -184,6 +191,7 @@
     detectFieldsUrl: "{{ url_for('ai_pdf.detect_fields', doc_id=doc.id) }}",
     extractRegionUrl:"{{ url_for('ai_pdf.extract_region', doc_id=doc.id) }}",
     saveFieldsUrl:   "{{ url_for('ai_pdf.save_fields', doc_id=doc.id) }}",
+    ocrTokensUrl:    "{{ url_for('ai_pdf.ocr_tokens', doc_id=doc.id) }}",
     csrfToken:       "{{ csrf_token() }}",
     // Pre-populated from the database, scoped to this document only.
     // Each entry carries doc_id so the JS can validate ownership on the fly.

@@ -9,9 +9,11 @@ POST /ai-pdf/<doc_id>/extract-region        — extract text from a screen regio
 POST /ai-pdf/<doc_id>/detect-fields         — auto-detect all fields on a page
 POST /ai-pdf/<doc_id>/save-fields           — persist extracted fields to DB
 GET  /ai-pdf/<doc_id>/engines               — list available OCR/AI engines
+GET  /ai-pdf/<doc_id>/ocr-tokens            — raw OCR word bboxes for overlay rendering
 """
 
 import os
+import re
 import sys
 
 from flask import (
@@ -143,6 +145,61 @@ def _extract_headings_as_fields(
 
 
 # ---------------------------------------------------------------------------
+# Input-type inference helper
+# ---------------------------------------------------------------------------
+
+# Keywords in field labels that strongly suggest a specific input widget type.
+_CHECKBOX_KEYWORDS = re.compile(
+    r"\b(check|tick|yes|no|agree|select|choose|option|checkbox|consent)\b",
+    re.IGNORECASE,
+)
+_DATE_KEYWORDS = re.compile(
+    r"\b(date|dob|birth|expir|issued|effective|start|end|from|to)\b",
+    re.IGNORECASE,
+)
+_PHONE_KEYWORDS = re.compile(r"\b(phone|tel|fax|mobile|cell|contact)\b", re.IGNORECASE)
+_EMAIL_KEYWORDS = re.compile(r"\b(email|e-mail|electronic.?mail)\b", re.IGNORECASE)
+_SIGNATURE_KEYWORDS = re.compile(r"\b(sign|signature|initial)\b", re.IGNORECASE)
+_NUMBER_KEYWORDS = re.compile(r"\b(amount|total|qty|quantity|number|no\.?|#|ssn|zip|postal)\b", re.IGNORECASE)
+
+
+def _infer_input_type(label: str, value: str = "") -> str:
+    """Infer the likely HTML input widget type from a field label and value.
+
+    Returns one of: ``"checkbox"``, ``"date"``, ``"tel"``, ``"email"``,
+    ``"signature"``, ``"number"``, or ``"text"`` (default).
+    """
+    lbl = str(label or "").lower()
+    val = str(value or "").strip()
+
+    if _CHECKBOX_KEYWORDS.search(lbl):
+        return "checkbox"
+    if _SIGNATURE_KEYWORDS.search(lbl):
+        return "signature"
+    if _DATE_KEYWORDS.search(lbl):
+        return "date"
+    if _EMAIL_KEYWORDS.search(lbl):
+        return "email"
+    if _PHONE_KEYWORDS.search(lbl):
+        return "tel"
+    if _NUMBER_KEYWORDS.search(lbl):
+        return "number"
+
+    # Fall back to value-based classification when the label is generic
+    if val:
+        if re.fullmatch(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}", val):
+            return "email"
+        if re.fullmatch(r"[\d()+\-\s]{7,}", val):
+            return "tel"
+        if re.fullmatch(
+            r"\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}|\d{4}[/\-]\d{2}[/\-]\d{2}", val
+        ):
+            return "date"
+
+    return "text"
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
@@ -261,15 +318,17 @@ def detect_fields(doc_id: int):
             for pair in pairs:
                 pixel_bbox       = _to_pixel_bbox(pair.get("bbox"))
                 pixel_label_bbox = _to_pixel_bbox(pair.get("label_bbox"))
+                value = pair.get("value", "")
                 fields_out.append({
                     "field_name":  pair["label"],
                     "label":       pair["label"],
-                    "value":       pair.get("value", ""),
+                    "value":       value,
                     "confidence":  pair.get("confidence", 1.0),
                     "bbox":        pixel_bbox,
                     "label_bbox":  pixel_label_bbox,
                     "page":        page_num,
                     "doc_id":      doc_id,
+                    "input_type":  _infer_input_type(pair["label"], value),
                 })
             # Prepend heading fields (from the top of the page) so they
             # appear at the top of the sidebar and are visually distinct.
@@ -385,6 +444,7 @@ def detect_fields(doc_id: int):
                 "label_bbox": p.get("label_bbox"),
                 "page":       page_num,
                 "doc_id":     doc_id,
+                "input_type": _infer_input_type(p["label"], p.get("value", "")),
             }
             for p in pairs
         ]
@@ -504,6 +564,70 @@ def engines(doc_id: int):
     svc = _get_ai_service()
     engine_list = svc.get_available_engines() if svc else []
     return jsonify({"engines": engine_list})
+
+
+@ai_pdf_bp.route("/<int:doc_id>/ocr-tokens")
+@login_required
+def ocr_tokens(doc_id: int):
+    """Return all raw OCR word bounding boxes for a single PDF page.
+
+    These raw tokens are intended for the client-side OCR overlay — a
+    toggleable layer that shows every word PyMuPDF (or Tesseract) detected,
+    independent of the field-pairing logic.  Each token carries its text,
+    pixel-coordinate bounding box, inferred ``input_type``, and a confidence
+    score so the overlay can colour-code tokens by reliability.
+
+    Query parameters
+    ----------------
+    page : int  (default 1)   1-based page number.
+    zoom : float (default 1.5) Render zoom factor; bboxes are in pixel coords
+                               at this zoom level.
+    """
+    doc = Document.query.get_or_404(doc_id)
+
+    if not os.path.exists(doc.file_path):
+        return jsonify({"error": "File not found on disk"}), 404
+
+    page_num = int(request.args.get("page", 1))
+    zoom = float(request.args.get("zoom", 1.5))
+    zoom = max(0.5, min(zoom, 3.0))
+
+    _ensure_backend_on_path()
+    svc = _get_ai_service()
+    if svc is None:
+        return jsonify({"error": "AI service unavailable"}), 503
+
+    try:
+        raw_fields = svc.extract_page_fields(doc.file_path, page_num, zoom=zoom)
+    except Exception:
+        current_app.logger.exception(
+            "OCR token extraction failed for doc %s page %s", doc_id, page_num
+        )
+        return jsonify({"error": "OCR token extraction failed"}), 500
+
+    tokens = []
+    for f in raw_fields:
+        bb = f.get("bbox") or {}
+        text = f.get("text", "")
+        tokens.append({
+            "text":       text,
+            "bbox":       {
+                "x0": float(bb.get("x0", 0)),
+                "y0": float(bb.get("y0", 0)),
+                "x1": float(bb.get("x1", 0)),
+                "y1": float(bb.get("y1", 0)),
+            },
+            "confidence": float(f.get("confidence", 0.5)),
+            "input_type": _infer_input_type("", text),
+            "page":       page_num,
+        })
+
+    return jsonify({
+        "tokens": tokens,
+        "page":   page_num,
+        "doc_id": doc_id,
+        "count":  len(tokens),
+    })
 
 
 # ---------------------------------------------------------------------------

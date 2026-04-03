@@ -228,6 +228,7 @@
 
 .field-type-email    { background: #cff4fc; color: #055160; }
 .field-type-phone    { background: #d1ecf1; color: #0c5460; }
+.field-type-tel      { background: #d1ecf1; color: #0c5460; }
 .field-type-date     { background: #d4edda; color: #155724; }
 .field-type-number   { background: #fff3cd; color: #856404; }
 .field-type-address  { background: #f8d7da; color: #721c24; }
@@ -236,6 +237,8 @@
 .field-type-currency { background: #d1e7dd; color: #0f5132; }
 .field-type-text     { background: #e9ecef; color: #495057; }
 .field-type-zip_code { background: #fef3cd; color: #664d03; }
+.field-type-checkbox  { background: #ffe8cc; color: #7c4000; }
+.field-type-signature { background: #f8d7da; color: #58151c; }
 
 .field-value-input {
   width: 100%;
