@@ -189,7 +189,9 @@ def _infer_input_type(label: str, value: str = "") -> str:
     if val:
         if re.fullmatch(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}", val):
             return "email"
-        if re.fullmatch(r"[\d()+\-\s]{7,}", val):
+        # Require at least 7 digits among the formatting characters to avoid
+        # matching strings that are purely punctuation/whitespace.
+        if re.fullmatch(r"[\d()+\-\s]{7,}", val) and len(re.sub(r"\D", "", val)) >= 7:
             return "tel"
         if re.fullmatch(
             r"\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}|\d{4}[/\-]\d{2}[/\-]\d{2}", val
