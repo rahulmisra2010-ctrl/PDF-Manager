@@ -49,6 +49,13 @@ pdf_bp = Blueprint("pdf", __name__, template_folder="../templates/pdf")
 # Template-key computation
 # ---------------------------------------------------------------------------
 
+# Number of raw file bytes read when PyMuPDF is unavailable (fallback hashing).
+# 4 KB is large enough to cover the PDF header and the start of the first
+# page's content stream, which remains stable across differently-filled copies
+# of the same blank form.
+_FALLBACK_READ_BYTES = 4096
+
+
 def compute_template_key(file_path: str) -> str:
     """Return a stable sha256 hex identifier for the PDF *template* structure.
 
@@ -95,10 +102,13 @@ def compute_template_key(file_path: str) -> str:
                 f"|draws={'|'.join(draw_parts)}"
             )
     except Exception:
-        # Fallback: hash first 4 KB of raw file bytes
+        # Fallback: hash the first _FALLBACK_READ_BYTES of raw file bytes.
+        # 4 KB is enough to capture PDF header metadata and the start of the
+        # first page's cross-reference structure, which is stable across
+        # different filled copies of the same blank form.
         try:
             with open(file_path, "rb") as fh:
-                raw = fh.read(4096)
+                raw = fh.read(_FALLBACK_READ_BYTES)
             payload = raw.hex()
         except OSError:
             payload = os.path.basename(file_path)

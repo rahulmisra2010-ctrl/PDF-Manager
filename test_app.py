@@ -2081,8 +2081,10 @@ class TestTemplateKey:
                 return buf.getvalue()
 
             pdf_a = make_pdf(["Name", "Street Address", "City", "State", "ZIP"])
-            pdf_b = make_pdf(["Student Number", "Legal Name", "Course Code",
-                              "Withdrawal Reason", "Signature"])
+            pdf_b = make_pdf([
+                "Student Number", "Legal Name", "Course Code",
+                "Withdrawal Reason", "Signature",
+            ])
         except ImportError:
             pdf_a = b"%PDF-1.4\n% address_book_layout"
             pdf_b = b"%PDF-1.4\n% withdrawal_form_layout"
@@ -2185,8 +2187,10 @@ class TestTemplateKey:
         """
         from models import Document, DocumentSchema, ExtractedField
 
-        key_a = "aa" * 32  # 64 chars
-        key_b = "bb" * 32  # 64 chars
+        # sha256 hex strings are 64 characters; use repetition to make that clear
+        _HALF = 64 // 2
+        key_a = "aa" * _HALF
+        key_b = "bb" * _HALF
 
         with app.app_context():
             # Document A — address-book template with its own schema
