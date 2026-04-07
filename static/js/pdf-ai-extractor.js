@@ -463,6 +463,18 @@ function _makeFieldCard(field) {
     <div class="confidence-label">Confidence: ${confStr}</div>
   `;
 
+  // Keep the in-memory field object in sync with live input edits so that
+  // any re-render of the panel (filter toggle, remove operations, etc.)
+  // preserves the user's changes rather than reverting to the original
+  // server-side value.
+  const inputEl = card.querySelector('.field-value-input');
+  if (inputEl) {
+    inputEl.addEventListener('input', () => {
+      field.value = inputEl.value;
+      field.text  = inputEl.value;  // keep legacy .text property in sync too
+    });
+  }
+
   // Highlight bounding boxes on card hover: use brown labeled highlights
   card.addEventListener('mouseenter', () => {
     if (field.page && field.page !== viewer.currentPage) return;
