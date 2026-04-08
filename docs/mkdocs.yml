@@ -1,0 +1,51 @@
+site_name: PDF Manager
+site_description: AI-powered PDF manager with OCR and field extraction
+site_author: rahulmisra2010-ctrl
+site_url: https://rahulmisra2010-ctrl.github.io/PDF-Manager/
+
+repo_name: rahulmisra2010-ctrl/PDF-Manager
+repo_url: https://github.com/rahulmisra2010-ctrl/PDF-Manager
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["..", "../backend"]
+
+nav:
+  - Home: index.md
+  - API Reference: api/index.md
+  - Deployment: deployment/index.md
+  - Development: development/index.md
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - admonition
+  - tables
+  - toc:
+      permalink: true
