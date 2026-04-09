@@ -1,0 +1,81 @@
+# =============================================================================
+# PDF-Manager — Docker build exclusions
+# =============================================================================
+
+# Version control
+.git
+.gitignore
+.github
+
+# Python caches
+__pycache__
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv
+venv
+env/
+ENV/
+
+# Testing & coverage
+.pytest_cache
+.coverage
+htmlcov/
+*.cover
+
+# Node / frontend build artefacts
+frontend/node_modules
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+frontend/build
+
+# Development config files — never bake secrets into the image
+.env
+.env.*
+!.env.example
+
+# SQLite database files (use PostgreSQL in production)
+*.db
+*.sqlite
+instance/
+
+# Uploaded files / exports (managed via Docker volumes)
+uploads/
+exports/
+rag_data/
+
+# Logs
+logs/
+*.log
+
+# ML model artefacts (mount as volumes or download at build time if needed)
+models/
+
+# IDE / editor
+.idea
+.vscode
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Documentation (not needed in the production image)
+docs/
+*.md
+!README.md
+
+# SSL / certificate material (mount as volumes)
+ssl/
+certificates/
+
+# Monitoring configs (deployed separately)
+monitoring/

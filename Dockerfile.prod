@@ -1,0 +1,81 @@
+# =============================================================================
+# PDF-Manager — Production Dockerfile (multi-stage)
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Stage 1: Python dependency builder
+# ---------------------------------------------------------------------------
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+# Install build tools for native extensions
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY backend/requirements.txt ./backend/requirements.txt
+RUN pip install --no-cache-dir --prefix=/install -r backend/requirements.txt
+
+# ---------------------------------------------------------------------------
+# Stage 2: Node.js frontend builder
+# ---------------------------------------------------------------------------
+FROM node:18-alpine AS frontend-builder
+
+WORKDIR /frontend
+
+COPY frontend/package*.json ./
+RUN npm ci --legacy-peer-deps
+
+COPY frontend/ ./
+RUN npm run build
+
+# ---------------------------------------------------------------------------
+# Stage 3: Production runtime image
+# ---------------------------------------------------------------------------
+FROM python:3.11-slim AS production
+
+# Security: run as non-root
+RUN groupadd --gid 1001 appgroup \
+    && useradd --uid 1001 --gid appgroup --no-create-home appuser
+
+WORKDIR /app
+
+# Runtime system dependencies (OCR, PDF, OpenCV)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglib2.0-0 \
+    libgl1 \
+    tesseract-ocr \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy pre-built Python packages from builder stage
+COPY --from=builder /install /usr/local
+
+# Copy pre-built React static files
+COPY --from=frontend-builder /frontend/build ./frontend/build
+
+# Copy application source
+COPY . .
+
+# Create required runtime directories and set ownership
+RUN mkdir -p uploads exports instance logs \
+    && chown -R appuser:appgroup /app
+
+# Install gunicorn for production WSGI serving
+RUN pip install --no-cache-dir gunicorn==21.2.0
+
+# Copy and prepare entrypoint
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+USER appuser
+
+EXPOSE 5000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:5000/api/v1/health || exit 1
+
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["gunicorn", "--config", "config/gunicorn.conf.py", "app:create_app()"]

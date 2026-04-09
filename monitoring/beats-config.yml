@@ -1,0 +1,96 @@
+# =============================================================================
+# PDF-Manager — Filebeat Configuration
+# Ships application and Nginx logs to Logstash / Elasticsearch.
+# =============================================================================
+
+filebeat.inputs:
+  # ---------------------------------------------------------------------------
+  # Application logs (Gunicorn / Flask)
+  # ---------------------------------------------------------------------------
+  - type: log
+    enabled: true
+    paths:
+      - /app/logs/gunicorn_access.log
+      - /app/logs/gunicorn_error.log
+    fields:
+      service: pdf-manager
+      log_type: application
+    fields_under_root: true
+    multiline.pattern: '^\d{4}-\d{2}-\d{2}'
+    multiline.negate: true
+    multiline.match: after
+
+  # ---------------------------------------------------------------------------
+  # Nginx access logs
+  # ---------------------------------------------------------------------------
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/nginx/access.log
+      - /var/log/nginx/pdfmanager_access.log
+    fields:
+      service: nginx
+      log_type: access
+    fields_under_root: true
+
+  # ---------------------------------------------------------------------------
+  # Nginx error logs
+  # ---------------------------------------------------------------------------
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/nginx/error.log
+      - /var/log/nginx/pdfmanager_error.log
+    fields:
+      service: nginx
+      log_type: error
+    fields_under_root: true
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL logs
+  # ---------------------------------------------------------------------------
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/postgresql/postgresql-*.log
+    fields:
+      service: postgres
+      log_type: database
+    fields_under_root: true
+
+# ---------------------------------------------------------------------------
+# Processors — enrich every event
+# ---------------------------------------------------------------------------
+processors:
+  - add_host_metadata:
+      when.not.contains.tags: forwarded
+  - add_docker_metadata: ~
+  - add_fields:
+      target: ''
+      fields:
+        environment: production
+        app: pdf-manager
+
+# ---------------------------------------------------------------------------
+# Output — send to Logstash
+# ---------------------------------------------------------------------------
+output.logstash:
+  hosts: ["logstash:5044"]
+
+# Alternatively, send directly to Elasticsearch:
+# output.elasticsearch:
+#   hosts: ["elasticsearch:9200"]
+#   username: elastic
+#   password: "${ELASTIC_PASSWORD}"
+#   index: "pdfmanager-%{+yyyy.MM.dd}"
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging.level: warning
+logging.to_files: true
+logging.files:
+  path: /var/log/filebeat
+  name: filebeat
+  keepfiles: 7
+  permissions: 0644

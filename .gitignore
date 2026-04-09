@@ -40,6 +40,8 @@ yarn-error.log*
 .env
 .env.*
 !.env.example
+!.env.production      # production template (no real secrets — placeholders only)
+!.env.secrets.template  # secrets management guide (no real secrets)
 
 # --- IDE / OS ---
 .idea/
