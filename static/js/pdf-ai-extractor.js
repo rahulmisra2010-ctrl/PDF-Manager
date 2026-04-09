@@ -50,6 +50,7 @@ let fields           = [];     // current extracted fields array (always tagged 
 let mode             = 'view'; // 'view' | 'select'
 let selStart         = null;   // {x, y} drag start in canvas coords
 let filterLabelOnly  = true;   // when true: hide label-only (empty-value) detections
+let ocrOverlayActive = false;  // when true: raw OCR token overlay is visible
 
 // ---------------------------------------------------------------------------
 // Initialise
@@ -78,6 +79,10 @@ function initAIExtractor() {
       viewer.drawFields(pageFields);
       // Update active page highlight in fields panel
       _filterFieldsPanel(pageNum);
+      // Re-draw OCR overlay for the new page if the toggle is active
+      if (ocrOverlayActive) {
+        _fetchAndDrawOcrOverlay(pageNum);
+      }
     },
   });
 
@@ -122,6 +127,22 @@ function initAIExtractor() {
     viewer.drawFields(pageFields);
     _renderFieldsPanel(_visibleFields());
     _filterFieldsPanel(viewer.currentPage);
+  });
+
+  // ---- OCR overlay toggle ----
+  _wire('btn-ocr-overlay', () => {
+    ocrOverlayActive = !ocrOverlayActive;
+    const btn = document.getElementById('btn-ocr-overlay');
+    if (btn) btn.classList.toggle('active', ocrOverlayActive);
+    const ocrCanvas = document.getElementById('ocr-overlay-canvas');
+    if (!ocrCanvas) return;
+    if (ocrOverlayActive) {
+      ocrCanvas.style.display = '';
+      _fetchAndDrawOcrOverlay(viewer.currentPage);
+    } else {
+      viewer.clearOcrOverlay(ocrCanvas);
+      ocrCanvas.style.display = 'none';
+    }
   });
 
   // ---- Drag-to-select on the selection canvas ----
@@ -190,6 +211,26 @@ async function onSelMouseUp(e) {
 // ---------------------------------------------------------------------------
 // API calls
 // ---------------------------------------------------------------------------
+
+/**
+ * Fetch raw OCR tokens for the given page and draw them on the OCR overlay canvas.
+ * Called automatically when the OCR overlay toggle is active and the page changes.
+ */
+async function _fetchAndDrawOcrOverlay(pageNum) {
+  const cfg = window.AI_CONFIG;
+  if (!cfg.ocrTokensUrl) return;
+  const ocrCanvas = document.getElementById('ocr-overlay-canvas');
+  if (!ocrCanvas) return;
+  try {
+    const url = `${cfg.ocrTokensUrl}?page=${pageNum}&zoom=${viewer.zoom}`;
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const data = await res.json();
+    viewer.drawOcrOverlay(ocrCanvas, data.tokens || []);
+  } catch (_err) {
+    // Silently ignore — OCR overlay is best-effort
+  }
+}
 
 async function detectAllFields() {
   const cfg = window.AI_CONFIG;
@@ -399,9 +440,13 @@ function _makeFieldCard(field) {
   // ── Heading fields: distinct card style ───────────────────────────────
   if (field.is_heading) {
     card.className = 'field-card field-card-heading';
+    const level = field.heading_level || 3;
+    const levelBadge = `<span class="badge heading-level-badge heading-level-${level}" title="Heading level ${level}">H${level}</span>`;
+    const sizeStr = field.font_size ? ` <span class="heading-font-size text-muted">${field.font_size.toFixed(1)}pt</span>` : '';
     card.innerHTML = `
       <div class="field-header">
-        <span class="field-heading-tag"><i class="bi bi-type-h1 me-1"></i>${_esc(label)}</span>
+        <span class="field-heading-tag">${levelBadge}<i class="bi bi-type-h1 me-1 ms-1"></i>${_esc(label)}</span>
+        ${sizeStr}
         ${field.page ? `<span class="badge bg-primary" style="font-size:0.6rem">p${field.page}</span>` : ''}
       </div>
     `;
@@ -447,11 +492,17 @@ function _makeFieldCard(field) {
   const confStr = `${conf}%`;
   // Display value: prefer explicit 'value', fall back to 'text' for legacy raw entries
   const displayValue = (field.value !== undefined) ? field.value : (field.text || '');
+  // Show an input-type badge when the field has a specific (non-generic) type
+  const inputType = field.input_type || 'text';
+  const typeBadge = (inputType && inputType !== 'text')
+    ? `<span class="badge field-type-badge field-type-${inputType}" title="Detected input type">${inputType}</span>`
+    : '';
 
   card.innerHTML = `
     <div class="field-header">
       <span class="field-label-tag">${_esc(label)}</span>
       <span class="field-arrow">→</span>
+      ${typeBadge}
       ${field.page ? `<span class="badge bg-secondary" style="font-size:0.6rem">p${field.page}</span>` : ''}
     </div>
     <input class="field-value-input"

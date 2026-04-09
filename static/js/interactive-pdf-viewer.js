@@ -198,6 +198,66 @@ class InteractivePDFViewer {
   }
 
   /**
+   * Draw raw OCR word tokens as a semi-transparent overlay on a separate canvas.
+   *
+   * Each token is drawn as a thin-bordered rectangle whose colour reflects
+   * its inferred ``input_type``:
+   *  - text     → grey
+   *  - date     → green
+   *  - email    → cyan
+   *  - tel      → teal
+   *  - number   → yellow
+   *  - checkbox → orange
+   *  - signature → red
+   *
+   * @param {HTMLCanvasElement} ocrCanvas  The dedicated OCR overlay canvas element.
+   * @param {Array}             tokens     Token objects from the /ocr-tokens endpoint.
+   */
+  drawOcrOverlay(ocrCanvas, tokens) {
+    if (!ocrCanvas) return;
+    const ctx = ocrCanvas.getContext('2d');
+    if (!ctx) return;
+
+    // Ensure the OCR canvas is sized to match the PDF canvas
+    if (this._canvas) {
+      ocrCanvas.width  = this._canvas.width;
+      ocrCanvas.height = this._canvas.height;
+    }
+    ctx.clearRect(0, 0, ocrCanvas.width, ocrCanvas.height);
+
+    const TYPE_COLORS = {
+      date:      { fill: 'rgba(25,135,84,0.10)',   stroke: 'rgba(25,135,84,0.65)'   },
+      email:     { fill: 'rgba(13,202,240,0.10)',  stroke: 'rgba(13,202,240,0.65)'  },
+      tel:       { fill: 'rgba(32,201,151,0.10)',  stroke: 'rgba(32,201,151,0.65)'  },
+      number:    { fill: 'rgba(255,193,7,0.10)',   stroke: 'rgba(255,193,7,0.65)'   },
+      checkbox:  { fill: 'rgba(255,128,0,0.10)',   stroke: 'rgba(255,128,0,0.65)'   },
+      signature: { fill: 'rgba(220,53,69,0.10)',   stroke: 'rgba(220,53,69,0.65)'   },
+      text:      { fill: 'rgba(108,117,125,0.08)', stroke: 'rgba(108,117,125,0.45)' },
+    };
+
+    for (const tok of tokens) {
+      const bb = tok.bbox;
+      if (!bb || bb.x1 <= bb.x0 || bb.y1 <= bb.y0) continue;
+
+      const colors = TYPE_COLORS[tok.input_type] || TYPE_COLORS.text;
+      ctx.save();
+      ctx.fillStyle   = colors.fill;
+      ctx.strokeStyle = colors.stroke;
+      ctx.lineWidth   = 1;
+      ctx.fillRect  (bb.x0, bb.y0, bb.x1 - bb.x0, bb.y1 - bb.y0);
+      ctx.strokeRect(bb.x0, bb.y0, bb.x1 - bb.x0, bb.y1 - bb.y0);
+      ctx.restore();
+    }
+  }
+
+  /** Clear the dedicated OCR overlay canvas. */
+  clearOcrOverlay(ocrCanvas) {
+    if (!ocrCanvas) return;
+    const ctx = ocrCanvas.getContext('2d');
+    if (ctx) ctx.clearRect(0, 0, ocrCanvas.width, ocrCanvas.height);
+  }
+
+  /**
    * Draw a heading highlight: a solid blue-tinted banner with the heading
    * text rendered inside it.  Used for form section titles / page headings.
    *
