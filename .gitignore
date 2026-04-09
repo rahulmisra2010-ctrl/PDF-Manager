@@ -60,3 +60,6 @@ rag_data/
 
 # --- Docker ---
 *.override.yml
+
+# MkDocs generated site
+site/
